@@ -34,18 +34,15 @@ class MULTICAMPROJECT_PT_Infos(bpy.types.Panel):
         layout = self.layout
         props = context.scene.multicamproject_props
 
-        # Row 1: Build info popup + manual reload
+        # Single row: Build info popup + Reload + Debug toggle + Console + Clear
         row = layout.row(align=True)
         row.operator("multicamproject.build", text=_build_label(), icon='RESTRICT_VIEW_ON')
         row.operator("multicamproject.reload", text="", icon='FILE_REFRESH')
-
-        # Row 2: Debug toggle + Console + Clear
-        row2 = layout.row(align=True)
-        sub = row2.row(align=True)
+        sub = row.row(align=True)
         sub.active_default = props.debug_mode
         sub.operator("multicamproject.toggle_debug", text="", icon='INFO')
-        row2.operator("multicamproject.toggle_console", text="", icon='CONSOLE')
-        row2.operator("multicamproject.clear_console", text="", icon='TRASH')
+        row.operator("multicamproject.toggle_console", text="", icon='CONSOLE')
+        row.operator("multicamproject.clear_console", text="", icon='TRASH')
 
         if props.debug_mode:
             layout.label(text="Version: " + props.addon_version,
