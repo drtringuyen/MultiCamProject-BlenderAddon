@@ -13,7 +13,7 @@ from pathlib import Path
 from datetime import datetime
 
 ADDON_NAME = "MultiCamProject"
-BLENDER_VERSION = "5.1"
+BLENDER_VERSION = "5.2"
 MCP_HOST = "localhost"
 MCP_PORT = 9876
 

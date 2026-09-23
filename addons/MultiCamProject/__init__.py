@@ -11,7 +11,7 @@ bl_info = {
 
 # Module registry - easily enable/disable modules
 MODULES = {
-    "example": True,      # Enable/disable modules here
+    "example": False,     # Enable/disable modules here (no example module shipped)
 }
 
 def register():
