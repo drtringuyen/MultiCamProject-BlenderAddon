@@ -5,7 +5,7 @@ camera.data.background_images[0].image (single source of truth).
 """
 import bpy
 from bpy.props import (BoolProperty, CollectionProperty, FloatProperty,
-                       FloatVectorProperty, PointerProperty, StringProperty)
+                       FloatVectorProperty, IntProperty, PointerProperty, StringProperty)
 
 
 def _is_camera(self, obj):
@@ -24,19 +24,21 @@ def _on_shift(self, context):
 
 
 class MULTICAMPROJECT_CamShift(bpy.types.PropertyGroup):
-    """Per-object pixel shift of one camera's photo. Never cleared by Reload All."""
+    """Per-object UV shift of one camera's photo. Never cleared by Reload All."""
     camera: PointerProperty(type=bpy.types.Object, poll=_is_camera)
     shift: FloatVectorProperty(
         name="Shift", size=2, default=(0.0, 0.0), subtype='XYZ',
-        soft_min=-50.0, soft_max=50.0, step=10, precision=1, update=_on_shift,
-        description="Shift of the photo in pixels (moves UV_camN and the camera "
-                    "background offset together)")
+        min=-1.0, max=1.0, step=0.1, precision=5, update=_on_shift,
+        description="Shift of the photo in UV range: -1 = one full photo to the left/down, "
+                    "1 = to the right/up (moves UV_camN and the camera background offset "
+                    "together). Shift+drag for finer steps")
 
 
 class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
     is_setup: BoolProperty(default=False)
     cameras: CollectionProperty(type=MULTICAMPROJECT_CamItem)
     shifts: CollectionProperty(type=MULTICAMPROJECT_CamShift)
+    shift_version: IntProperty(default=0, description="0 = shifts stored in pixels (old), 1 = UV range")
     slot_1: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 1")
     slot_2: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 2")
     slot_3: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 3")

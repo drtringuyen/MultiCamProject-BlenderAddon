@@ -69,31 +69,40 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             self._draw_row(context, box, obj, item, debug)
 
     def _draw_row(self, context, box, obj, item, debug):
+        # Blender scales ui_units_x down proportionally in narrow panels, so fixed
+        # widths are made with splits computed from the region's pixel width:
+        # name and slot buttons keep their size, the image field absorbs the rest.
         cam = item.camera
-        row = box.row(align=True)
+        unit = 20 * context.preferences.system.ui_scale
+        avail = max(1.0, context.region.width - 2.2 * unit)   # box + panel margins
+        slots_f = min(0.6, 4.8 * unit / avail)
+        split = box.row().split(factor=1.0 - slots_f, align=True)
+        left, right = split.row(align=True), split.row(align=True)
+
         solo = is_solo(context, cam)
-        op = row.operator("multicamproject.solo_camera", text="",
-                          icon='HIDE_OFF' if solo else 'HIDE_ON', depress=solo)
+        op = left.operator("multicamproject.solo_camera", text="",
+                           icon='HIDE_OFF' if solo else 'HIDE_ON', depress=solo)
         op.camera = cam.name
 
-        name = row.row(align=True)
-        name.ui_units_x = 6 if debug else 5
-        name.label(text=f"{cam.name} {item.score:.2f}" if debug else cam.name)
+        left_w = max(1.0, avail * (1.0 - slots_f) - unit)       # minus eye button
+        name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
+        nsplit = left.split(factor=name_f, align=True)
+        nsplit.label(text=f"{cam.name} {item.score:.2f}" if debug else cam.name)
+        mid = nsplit.row(align=True)
 
         # image field takes all remaining width
         bg = core.bg_entry(cam)
         if bg:
-            row.prop(bg, "image", text="")
+            mid.prop(bg, "image", text="")
         else:
-            row.label(text="(no background)")
+            mid.label(text="(no background)")
 
-        sub = row.row(align=True)
+        sub = mid.row(align=True)
         sub.alert = not core.image_ok(core.cam_image(cam))
         op = sub.operator("multicamproject.load_cam_image", text="", icon='FILE_FOLDER')
         op.camera = cam.name
 
-        slots = row.row(align=True)
-        slots.ui_units_x = 2.4       # three one-character buttons, right edge
+        slots = right.row(align=True)
         current = core.slot_of(obj, cam)
         for n in (1, 2, 3):
             op = slots.operator("multicamproject.assign_slot", text=str(n), depress=current == n)

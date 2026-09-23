@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Camera Project - shift in UV range, wider slot buttons (2026-09-23)
+- **Shift is now in UV range** (-1..1, 5 decimals): -1 = one full photo to the left/down, 1 = to the
+  right/up. Used as-is for the GN `UV Shift N` input and the camera background offset (no pixel
+  conversion). Shift+drag for finer steps; 1 px on an 8192 px photo is ~0.00012.
+- **Migration**: shifts stored in pixels by the previous version are converted once per object
+  (`shift_version`), on addon load, on file load, and before any rewire.
+- **Slot buttons double width**; row widths now come from the panel's pixel width, so the name and
+  `1 2 3` keep their size in narrow panels and only the image field shrinks.
+
 ### Camera Project - shifting & list layout (2026-09-23)
 - **Sorted camera list**: Camera 1/2/3 pinned on top (slot order), the rest alphabetical.
 - **Per-camera pixel shift** under each slotted camera (`Shift X / Y`, sliders, 0.1 px steps):

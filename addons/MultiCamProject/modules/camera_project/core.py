@@ -324,32 +324,41 @@ def shift_item(obj, cam, create=False):
     return it
 
 
-def _image_px(img, scene):
-    if image_ok(img):
-        w, h = img.size
-        if w and h:
-            return w, h
-    r = scene.render
-    return r.resolution_x, r.resolution_y
+def migrate_shifts(obj, scene):
+    """One-time: shifts used to be stored in pixels, now in UV range (-1..1).
+    Writes the raw ID property so no update callback touches the cameras."""
+    d = data(obj)
+    if d.shift_version >= 1:
+        return
+    for it in d.shifts:
+        if it.camera is None:
+            continue
+        img = cam_image(it.camera)
+        if image_ok(img) and img.size[0] and img.size[1]:
+            w, h = img.size
+        else:
+            w, h = scene.render.resolution_x, scene.render.resolution_y
+        px = it.shift
+        it["shift"] = (max(-1.0, min(1.0, px[0] / w)), max(-1.0, min(1.0, px[1] / h)))
+    d.shift_version = 1
 
 
-def uv_shift(cam, px, scene):
-    """Pixels -> UV units (0..1 across the photo)."""
-    w, h = _image_px(cam_image(cam), scene)
-    return px[0] / w, px[1] / h
+def migrate_all():
+    scene = bpy.context.scene
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and data(obj).is_setup and data(obj).shift_version < 1:
+            migrate_shifts(obj, scene)
+            if get_modifier(obj):
+                apply_slots(obj, scene)
 
 
-def bg_offset(cam, px, scene):
-    """Pixels -> camera background-image offset. Blender measures the offset in
-    frame width (X) and frame height (Y) - measured live in 5.2. The photo fills
-    the frame (same aspect), so this equals the UV shift."""
-    return uv_shift(cam, px, scene)
-
-
-def set_camera_offset(cam, px, scene):
+def set_camera_offset(cam, shift):
+    """The shift is in UV units (-1..1 = one full photo width/height). Blender
+    measures the background offset in frame width (X) / frame height (Y) -
+    measured live in 5.2 - and the photo fills the frame, so it is used as-is."""
     bg = bg_entry(cam)
     if bg:
-        bg.offset = bg_offset(cam, px, scene)
+        bg.offset = tuple(shift)
 
 
 def push_shift(obj, item, scene, to_camera):
@@ -361,10 +370,9 @@ def push_shift(obj, item, scene, to_camera):
     slot = slot_of(obj, cam)
     mod = get_modifier(obj)
     if slot and mod and mod.node_group:
-        du, dv = uv_shift(cam, item.shift, scene)
-        set_input(mod, f"UV Shift {slot}", (du, dv, 0.0))
+        set_input(mod, f"UV Shift {slot}", (*item.shift, 0.0))
     if to_camera:
-        set_camera_offset(cam, item.shift, scene)
+        set_camera_offset(cam, item.shift)
 
 
 def display_order(obj):
@@ -380,6 +388,7 @@ def display_order(obj):
 def apply_slots(obj, scene):
     """Push slots 1/2/3 into the modifier (camera, lens drivers, aspect) and material."""
     d = data(obj)
+    migrate_shifts(obj, scene)
     mod = ensure_modifier(obj)
     mat = ensure_material(obj)
     set_input(mod, "Material", mat)
@@ -391,8 +400,7 @@ def apply_slots(obj, scene):
         img = cam_image(cam) if cam else None
         set_input(mod, f"Aspect {i}", image_aspect(img, scene))
         it = shift_item(obj, cam, create=True) if cam else None
-        du, dv = uv_shift(cam, it.shift, scene) if it else (0.0, 0.0)
-        set_input(mod, f"UV Shift {i}", (du, dv, 0.0))
+        set_input(mod, f"UV Shift {i}", (*it.shift, 0.0) if it else (0.0, 0.0, 0.0))
         tex = mat.node_tree.nodes[f"CamTex_{i}"]
         tex.image = img
         tex.label = f"Cam {i}: {cam.name}" if cam else f"Cam {i}"
@@ -482,5 +490,7 @@ def setup(obj, scene):
     if not d.is_setup:
         set_input(mod, "Mode", "Sharp")
         d.user_picked = False
+        if not len(d.shifts):
+            d.shift_version = 1
     d.is_setup = True
     return refresh(obj, scene)
