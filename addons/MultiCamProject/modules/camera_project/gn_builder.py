@@ -7,7 +7,7 @@ import bpy
 
 SINGLE = "GN-CamProject_Single"
 MAIN = "GN-CameraProject"
-VERSION = 2          # bump when the node layout changes
+VERSION = 3          # bump when the node layout changes
 _VERSION_KEY = "multicamproject_version"
 
 
@@ -182,6 +182,7 @@ def build_main(single):
         _iface(ng, f"Focal {i}", "INPUT", "NodeSocketFloat", 24.0, 0.001, parent=lens)
         _iface(ng, f"Sensor {i}", "INPUT", "NodeSocketFloat", 36.0, 0.001, parent=lens)
         _iface(ng, f"Aspect {i}", "INPUT", "NodeSocketFloat", 1.5, 0.001, parent=lens)
+        _iface(ng, f"UV Shift {i}", "INPUT", "NodeSocketVector", parent=lens)
     _iface(ng, "Geometry", "OUTPUT", "NodeSocketGeometry")
 
     b = B(ng)
@@ -204,7 +205,9 @@ def build_main(single):
                  data_type="FLOAT2", domain="CORNER")
         st.inputs["Name"].default_value = f"UV_cam{i}"
         b.link(geo, st.inputs["Geometry"])
-        b.link(g.outputs["UV"], st.inputs["Value"])
+        # UV shift (photo moved by +shift -> sample at UV - shift)
+        sh = b.vmath("SUBTRACT", g.outputs["UV"], gi.outputs[f"UV Shift {i}"], (-850, y + 150))
+        b.link(sh.outputs[0], st.inputs["Value"])
         geo = st.outputs["Geometry"]
         weights.append(g.outputs["Weight"])
     R, G, Bw = weights

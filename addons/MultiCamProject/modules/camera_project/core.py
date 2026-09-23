@@ -236,11 +236,28 @@ def get_modifier(obj):
     return None
 
 
+_KEEP_INPUTS = ("Mode", "Original Blend", "Occlusion")
+
+
 def ensure_modifier(obj):
+    mod = get_modifier(obj)
+    keep = {}
+    if mod and mod.node_group:     # user settings survive a node-group rebuild
+        for k in _KEEP_INPUTS:
+            try:
+                keep[k] = get_input(mod, k)
+            except (KeyError, AttributeError):
+                pass
     main = gn_builder.ensure_node_groups()
-    mod = get_modifier(obj) or obj.modifiers.new(MOD_NAME, 'NODES')
+    mod = mod or obj.modifiers.new(MOD_NAME, 'NODES')
     if mod.node_group != main:
         mod.node_group = main
+    for k, v in keep.items():
+        try:
+            if get_input(mod, k) != v:
+                set_input(mod, k, v)
+        except (KeyError, AttributeError, TypeError):
+            pass
     return mod
 
 
@@ -292,6 +309,74 @@ def remove_drivers(obj, mod):
         ad.drivers.remove(fc)
 
 
+# ---------------------------------------------------------------- pixel shift
+
+def shift_item(obj, cam, create=False):
+    """The object's remembered pixel shift for `cam` (initialised to 0,0)."""
+    d = data(obj)
+    for it in d.shifts:
+        if it.camera == cam:
+            return it
+    if not create or cam is None:
+        return None
+    it = d.shifts.add()
+    it.camera = cam
+    return it
+
+
+def _image_px(img, scene):
+    if image_ok(img):
+        w, h = img.size
+        if w and h:
+            return w, h
+    r = scene.render
+    return r.resolution_x, r.resolution_y
+
+
+def uv_shift(cam, px, scene):
+    """Pixels -> UV units (0..1 across the photo)."""
+    w, h = _image_px(cam_image(cam), scene)
+    return px[0] / w, px[1] / h
+
+
+def bg_offset(cam, px, scene):
+    """Pixels -> camera background-image offset. Blender measures the offset in
+    frame width (X) and frame height (Y) - measured live in 5.2. The photo fills
+    the frame (same aspect), so this equals the UV shift."""
+    return uv_shift(cam, px, scene)
+
+
+def set_camera_offset(cam, px, scene):
+    bg = bg_entry(cam)
+    if bg:
+        bg.offset = bg_offset(cam, px, scene)
+
+
+def push_shift(obj, item, scene, to_camera):
+    """Write one shift item into the modifier input of its slot and, optionally,
+    into the camera's background offset."""
+    cam = item.camera
+    if cam is None:
+        return
+    slot = slot_of(obj, cam)
+    mod = get_modifier(obj)
+    if slot and mod and mod.node_group:
+        du, dv = uv_shift(cam, item.shift, scene)
+        set_input(mod, f"UV Shift {slot}", (du, dv, 0.0))
+    if to_camera:
+        set_camera_offset(cam, item.shift, scene)
+
+
+def display_order(obj):
+    """Camera list items for the UI: slots 1/2/3 first, the rest alphabetical."""
+    d = data(obj)
+    slots = get_slots(d)
+    items = [it for it in d.cameras if it.camera]
+    top = sorted((it for it in items if it.camera in slots), key=lambda it: slots.index(it.camera))
+    rest = sorted((it for it in items if it.camera not in slots), key=lambda it: it.camera.name.lower())
+    return top, rest
+
+
 def apply_slots(obj, scene):
     """Push slots 1/2/3 into the modifier (camera, lens drivers, aspect) and material."""
     d = data(obj)
@@ -305,6 +390,9 @@ def apply_slots(obj, scene):
         _set_driver(obj, input_path(mod, f"Sensor {i}"), cam, "sensor_width")
         img = cam_image(cam) if cam else None
         set_input(mod, f"Aspect {i}", image_aspect(img, scene))
+        it = shift_item(obj, cam, create=True) if cam else None
+        du, dv = uv_shift(cam, it.shift, scene) if it else (0.0, 0.0)
+        set_input(mod, f"UV Shift {i}", (du, dv, 0.0))
         tex = mat.node_tree.nodes[f"CamTex_{i}"]
         tex.image = img
         tex.label = f"Cam {i}: {cam.name}" if cam else f"Cam {i}"

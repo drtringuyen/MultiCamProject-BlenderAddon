@@ -111,18 +111,21 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         rv3d = space.region_3d
         scene = context.scene
 
-        key = space.as_pointer()
-        state = _solo_state.get(key)
+        key = str(space.as_pointer())
+        state = _load_state(context, key)
         if state and space.local_view is None:   # left local view by hand
             _restore_camera(state, space)
-            state = _solo_state.pop(key)
+            state = None
+            _save_state(context, key, None)
 
         if is_solo(context, cam):
-            _restore_camera(state, space)
+            if state:
+                _restore_camera(state, space)
             bpy.ops.view3d.localview(frame_selected=False)
             rv3d.view_perspective = 'PERSP'
-            space.overlay.show_overlays = state["overlays"]
-            del _solo_state[key]
+            if state:
+                space.overlay.show_overlays = state["overlays"]
+            _save_state(context, key, None)
             return {'FINISHED'}
 
         if space.local_view is None:
@@ -135,10 +138,8 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
             for o in selected:
                 o.select_set(True)
             state = {"overlays": space.overlay.show_overlays}
-            _solo_state[key] = state
         elif state is None:
             state = {"overlays": space.overlay.show_overlays}
-            _solo_state[key] = state
         else:
             _restore_camera(state, space)   # switching camera inside solo
 
@@ -146,7 +147,8 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         # camera object itself is visible in this (local) view.
         bg = core.bg_entry(cam)
         state.update(cam=cam.name, hidden=cam.hide_get(),
-                     depth=bg.display_depth if bg else None)
+                     depth=bg.display_depth if bg else "")
+        _save_state(context, key, state)
         cam.hide_set(False)
         cam.local_view_set(space, True)
         cam.data.show_background_images = True
@@ -164,12 +166,33 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_solo_state = {}   # space pointer -> {"overlays", "cam", "hidden", "depth"}
+# Solo state lives on the window manager (an ID), so it survives addon reloads:
+# wm["multicamproject_solo"][<space pointer>] = {"overlays", "cam", "hidden", "depth"}
+_WM_KEY = "multicamproject_solo"
+
+
+def _load_state(context, key):
+    states = context.window_manager.get(_WM_KEY)
+    if states is None or key not in states:
+        return None
+    return states[key].to_dict()
+
+
+def _save_state(context, key, state):
+    wm = context.window_manager
+    if _WM_KEY not in wm:
+        wm[_WM_KEY] = {}
+    states = wm[_WM_KEY]
+    if state is None:
+        if key in states:
+            del states[key]
+    else:
+        states[key] = state
 
 
 def _restore_camera(state, space):
     """Undo what solo changed on the previously soloed camera."""
-    cam = bpy.data.objects.get(state.pop("cam", "") or "")
+    cam = bpy.data.objects.get(state.pop("cam", ""))
     if cam is None:
         return
     bg = core.bg_entry(cam)
@@ -222,6 +245,30 @@ class MULTICAMPROJECT_OT_LoadCamImage(bpy.types.Operator):
         obj = context.active_object
         if cam in core.get_slots(core.data(obj)):
             core.apply_slots(obj, context.scene)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
+    """Load this object's pixel shift onto the camera's background image offset
+    (use when the camera is shared with other objects)"""
+    bl_idname = "multicamproject.load_shift"
+    bl_label = "Load Shifting"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    camera: StringProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return _setup_poll(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        cam = bpy.data.objects.get(self.camera)
+        it = core.shift_item(obj, cam) if cam else None
+        if it is None:
+            self.report({'ERROR'}, f"No shift stored for '{self.camera}'")
+            return {'CANCELLED'}
+        core.push_shift(obj, it, context.scene, to_camera=True)
         return {'FINISHED'}
 
 
@@ -286,6 +333,7 @@ _classes = (
     MULTICAMPROJECT_OT_AssignSlot,
     MULTICAMPROJECT_OT_SoloCamera,
     MULTICAMPROJECT_OT_LoadCamImage,
+    MULTICAMPROJECT_OT_LoadShift,
     MULTICAMPROJECT_OT_BakeViewMix,
 )
 
