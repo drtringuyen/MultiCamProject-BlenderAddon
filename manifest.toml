@@ -1,0 +1,18 @@
+schema_version = "1.0.0"
+
+id = "multicamproject"
+version = "0.0.1"
+name = "MultiCamProject"
+description = "Project camera background photos onto meshes with blended UVs and vertex-colour weights"
+type = "add-on"
+
+authors = [
+    { name = "" }
+]
+
+blender_version_min = "4.0.0"
+
+url = ""
+license = ["GPL"]
+
+tags = ["Material"]
