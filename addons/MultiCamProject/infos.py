@@ -104,15 +104,28 @@ class MULTICAMPROJECT_OT_ClearConsole(bpy.types.Operator):
         return {'FINISHED'}
 
 
+
+class MULTICAMPROJECT_OT_ToggleCameraProject(bpy.types.Operator):
+    """Toggle CameraProject module on/off"""
+    bl_idname = "multicamproject.toggle_camera_project"
+    bl_label = "CameraProject"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("camera_project")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleDebug)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleConsole)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ClearConsole)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleCameraProject)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleCameraProject)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ClearConsole)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleConsole)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleDebug)

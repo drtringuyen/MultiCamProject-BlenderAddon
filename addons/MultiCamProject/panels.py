@@ -45,6 +45,15 @@ class MULTICAMPROJECT_PT_Infos(bpy.types.Panel):
         row.operator("multicamproject.clear_console", text="", icon='TRASH')
 
         if props.debug_mode:
+            # Modules row — hidden unless debug mode is on
+            from . import module_manager
+            row = layout.row(align=True)
+            row.label(text="Modules:", text_ctxt="extra-info-label")
+            for m in module_manager.ALL_MODULES:
+                sub = row.row(align=True)
+                sub.active_default = module_manager.is_loaded(m["name"])
+                sub.operator(m["op"], text=m["name"].capitalize(), icon=m["icon"])
+            
             layout.label(text="Version: " + props.addon_version,
                          text_ctxt="extra-info-label")
 

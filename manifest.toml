@@ -10,7 +10,7 @@ authors = [
     { name = "" }
 ]
 
-blender_version_min = "4.0.0"
+blender_version_min = "5.2.0"
 
 url = ""
 license = ["GPL"]
