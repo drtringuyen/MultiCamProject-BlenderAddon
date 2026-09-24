@@ -7,8 +7,9 @@ import bpy
 
 SINGLE = "GN-CamProject_Single"
 MIX = "MCP-MixResult"
+MATINDEX = "MCP-MatIndex_to_uv"   # legacy (Convert Material button) - removed by setup
 MAIN = "GN-CameraProject"
-VERSION = 4          # bump when the node layout changes
+VERSION = 6          # bump when the node layout changes
 _VERSION_KEY = "multicamproject_version"
 
 
@@ -23,18 +24,24 @@ class B:
     def __init__(self, tree):
         self.t = tree
 
-    def n(self, typ, loc=(0, 0), **props):
+    def n(self, typ, loc=(0, 0), parent=None, **props):
+        """`loc` is in frame space when `parent` (a frame) is given."""
         node = self.t.nodes.new(typ)
         for k, v in props.items():
             setattr(node, k, v)
+        if parent is not None:
+            node.parent = parent
         node.location = loc
         return node
+
+    def frame(self, label, loc):
+        return self.n("NodeFrame", loc, label=label, label_size=20, shrink=True)
 
     def link(self, a, b):
         self.t.links.new(a, b)
 
-    def math(self, op, a, b=None, loc=(0, 0), label=None):
-        m = self.n("ShaderNodeMath", loc, operation=op)
+    def math(self, op, a, b=None, loc=(0, 0), label=None, parent=None):
+        m = self.n("ShaderNodeMath", loc, parent, operation=op)
         if label:
             m.label = label
         for i, v in enumerate((a, b)):
@@ -46,8 +53,8 @@ class B:
                 self.link(v, m.inputs[i])
         return m.outputs[0]
 
-    def vmath(self, op, a, b=None, loc=(0, 0)):
-        m = self.n("ShaderNodeVectorMath", loc, operation=op)
+    def vmath(self, op, a, b=None, loc=(0, 0), parent=None):
+        m = self.n("ShaderNodeVectorMath", loc, parent, operation=op)
         for i, v in enumerate((a, b)):
             if v is None:
                 continue
@@ -60,13 +67,16 @@ class B:
         return r.outputs[0]
 
 
-def _iface(ng, name, io, typ, default=None, mn=None, mx=None, parent=None, dims=None):
+def _iface(ng, name, io, typ, default=None, mn=None, mx=None, parent=None, dims=None,
+           single=False):
     kw = {"name": name, "in_out": io, "socket_type": typ}
     if parent is not None:
         kw["parent"] = parent
     s = ng.interface.new_socket(**kw)
     if dims is not None:
         s.dimensions = dims
+    if single:                  # a plain value, never a field/grid
+        s.structure_type = 'SINGLE'
     if default is not None:
         s.default_value = default
     if mn is not None:
@@ -184,7 +194,7 @@ def build_mix():
     _iface(ng, "Geometry", "INPUT", "NodeSocketGeometry")
     _iface(ng, "Material", "INPUT", "NodeSocketMaterial")
     _iface(ng, "Mode", "INPUT", "NodeSocketMenu")
-    _iface(ng, "Original Blend", "INPUT", "NodeSocketFloat", 0.0, 0.0, 1.0).subtype = "FACTOR"
+    _iface(ng, "Previous Bake", "INPUT", "NodeSocketFloat", 0.0, 0.0, 1.0).subtype = "FACTOR"
     for i in (1, 2, 3):
         _iface(ng, f"UV Shift {i}", "INPUT", "NodeSocketVector")
     for i in (1, 2, 3):
@@ -235,10 +245,15 @@ def build_mix():
     for s, sk, loc in zip((R, G, Bw), ("Red", "Green", "Blue"), ((-217, -91), (-209, -245), (-216, -404))):
         b.link(b.math("MULTIPLY", s, inv, loc), smooth.inputs[sk])
 
+    # blend mask in alpha: how much the cameras see this face (0 = none -> original scan)
+    cov = b.math("MINIMUM", tot, 1.0, (-509, -150), "Blend Mask")
+    b.link(cov, sharp.inputs["Alpha"])
+    b.link(cov, smooth.inputs["Alpha"])
+
     # ---- Blend with original VCMix ----
     na = b.n("GeometryNodeInputNamedAttribute", (-641, -647), data_type="FLOAT_COLOR")
     na.inputs["Name"].default_value = "VCMix"
-    fac = b.math("MULTIPLY", na.outputs["Exists"], gi.outputs["Original Blend"], (-450, -696), "Blend x Exists")
+    fac = b.math("MULTIPLY", na.outputs["Exists"], gi.outputs["Previous Bake"], (-450, -696), "Previous Bake x Exists")
     fac = b.reroute(fac, (404, 219))
     old = b.reroute(na.outputs["Attribute"], (430, 136))
     geo = b.reroute(geo, (392, 390))
@@ -279,20 +294,20 @@ def build_main(single, mix):
     general = ng.interface.new_panel("General Settings")
     _iface(ng, "Material", "INPUT", "NodeSocketMaterial", parent=general)
     _iface(ng, "Mode", "INPUT", "NodeSocketMenu", parent=general)
-    _iface(ng, "Original Blend", "INPUT", "NodeSocketFloat", 0.0, 0.0, 1.0,
+    _iface(ng, "Previous Bake", "INPUT", "NodeSocketFloat", 0.0, 0.0, 1.0,
            parent=general).subtype = "FACTOR"
-    _iface(ng, "Occlusion", "INPUT", "NodeSocketBool", False, parent=general)
+    _iface(ng, "Occlusion", "INPUT", "NodeSocketBool", False, parent=general, single=True)
     shift = ng.interface.new_panel("Camera Shift")
     for i in (1, 2, 3):
-        _iface(ng, f"UV Shift Cam{i}", "INPUT", "NodeSocketVector", parent=shift, dims=2)
+        _iface(ng, f"UV Shift Cam{i}", "INPUT", "NodeSocketVector", parent=shift, dims=2, single=True)
     cams = ng.interface.new_panel("Cameras")
     for i in (1, 2, 3):
         _iface(ng, f"Camera {i}", "INPUT", "NodeSocketObject", parent=cams)
     lens = ng.interface.new_panel("Lens (driven)", default_closed=True)
     for i in (1, 2, 3):
-        _iface(ng, f"Focal {i}", "INPUT", "NodeSocketFloat", 24.0, 0.001, parent=lens)
-        _iface(ng, f"Sensor {i}", "INPUT", "NodeSocketFloat", 36.0, 0.001, parent=lens)
-        _iface(ng, f"Aspect {i}", "INPUT", "NodeSocketFloat", 1.5, 0.001, parent=lens)
+        _iface(ng, f"Focal {i}", "INPUT", "NodeSocketFloat", 24.0, 0.001, parent=lens, single=True)
+        _iface(ng, f"Sensor {i}", "INPUT", "NodeSocketFloat", 36.0, 0.001, parent=lens, single=True)
+        _iface(ng, f"Aspect {i}", "INPUT", "NodeSocketFloat", 1.5, 0.001, parent=lens, single=True)
 
     b = B(ng)
     gi = b.n("NodeGroupInput", (-440, -246))
@@ -302,7 +317,7 @@ def build_main(single, mix):
 
     mx = b.n("GeometryNodeGroup", (568, 94), node_tree=mix)
     b.link(geo, mx.inputs["Geometry"])
-    for k in ("Material", "Mode", "Original Blend"):
+    for k in ("Material", "Mode", "Previous Bake"):
         b.link(gi.outputs[k], mx.inputs[k])
     for i, loc in enumerate(((261, -200), (265, -444), (265, -676)), 1):
         g = b.n("GeometryNodeGroup", loc, node_tree=single)
@@ -318,6 +333,10 @@ def build_main(single, mix):
         b.link(g.outputs["Weight"], mx.inputs[f"Weight Cam{i}"])
     b.link(mx.outputs["Geometry"], go.inputs["Geometry"])
     return ng
+
+
+def up_to_date():
+    return all(_up_to_date(n) for n in (SINGLE, MIX, MAIN))
 
 
 def ensure_node_groups():

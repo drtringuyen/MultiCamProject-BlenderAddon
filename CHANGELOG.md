@@ -2,6 +2,32 @@
 
 ## Unreleased
 
+### Camera Project - one material for scan + projection (2026-09-24)
+- **Setup Camera Projection** now also merges the scan's materials (was a separate Convert
+  Material button, never released). One button, one GN (`GN-CameraProject`), one material:
+  - `MAT_<object>` sits in material slot 1; the scan materials move down, faces follow.
+  - `uv_index` (face, int) is written into the mesh = the face's material slot. Setup and Reload
+    All refresh it; faces already on slot 1 (after Bake View Mix) keep their value.
+  - The material has three frames: **ORIGINAL MATERIALS** (each scan material's Base Color image,
+    picked per face by `uv_index`, with an explicit UV Map node on the scan UV), **PROJECTION**
+    (Cam 1/2/3 weighted by VCMix) and **BLEND**.
+  - **Original Scan** slider (sidebar, stored in the material): 0 = projection, 1 = scan.
+  - **Blend mask** in VCMix alpha = how much the cameras see the face (R+G+B, max 1). Faces no
+    camera sees always show the scan. Baked with VCMix.
+  - Migration: a `MATMCP_` slot is taken over in place and the material deleted; the
+    `MCP-MatIndex_to_uv` modifier is removed (and its group, once unused).
+- **Original Blend renamed Previous Bake** (value carried over on update).
+- **Reload All** is now an icon at the end of the Folder row.
+- **Camera blocks**: every camera is its own box, 1.25x taller. While a camera is soloed every
+  other block is dimmed. The shift X field starts exactly under the image field.
+- **Paint / Smear / Erase** icon buttons (1.4x) left of the shift fields, in place of the "Shift"
+  label - placeholders, not implemented yet.
+- GN-CameraProject inputs Occlusion, UV Shift Cam1-3 and Focal/Sensor/Aspect 1-3 are single values
+  (structure type `SINGLE`), node group version 6.
+- Fix: rebuilding the shared node groups reset the *other* set-up objects (Mode, Previous Bake,
+  Occlusion, cameras, shifts) and broke their lens drivers. All users are now restored and
+  rewired. Mode also no longer comes back empty after a rebuild.
+
 ### Camera Project - readable node layout, bake fixes (2026-09-24)
 - **GN layout adopted from the hand-cleaned file** (node group version 4):
   - `GN-CameraProject` inputs grouped in panels: General Settings, Camera Shift, Cameras, Lens (driven).

@@ -172,56 +172,256 @@ def scene_cameras(scene):
 
 
 # ---------------------------------------------------------------- material
+# One material per object, MAT_<name>, in material slot 1. Three frames:
+#   ORIGINAL MATERIALS  the scan's Base Color images, picked per face by uv_index
+#   PROJECTION          Cam 1/2/3 on UV_cam1/2/3, weighted by VCMix
+#   BLEND               Original Scan slider (0 = projection, 1 = scan), masked by VCMix alpha
 
-def build_material(obj):
-    name = f"MAT_{obj.name}"
+MAT_TAG = "multicamproject_material"
+LEGACY_PREFIX = "MATMCP_"           # material of the removed Convert Material button
+ORIGINAL_SCAN = "Original Scan"     # name of the slider's Value node
+UV_INDEX = "uv_index"               # face attribute: the face's material slot
+
+
+def material_name(obj):
+    return f"MAT_{obj.name}"
+
+
+def _is_ours(mat):
+    return bool(mat.get(MAT_TAG)) or mat.name.startswith(LEGACY_PREFIX)
+
+
+def _base_color_image(mat):
+    """The Image Texture feeding the Principled BSDF's Base Color (through
+    reroutes/mix nodes), or None."""
+    if mat is None or not mat.use_nodes:
+        return None
+    bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
+    if bsdf is None:
+        return None
+    todo, seen = [bsdf.inputs["Base Color"]], set()
+    while todo:
+        sock = todo.pop()
+        for link in sock.links:
+            node = link.from_node
+            if node.type == 'TEX_IMAGE' and node.image:
+                return node
+            if node.name not in seen:
+                seen.add(node.name)
+                todo.extend(node.inputs)
+    return None
+
+
+def original_textures(obj):
+    """[(slot index, Image Texture node)] of the scan materials. Materials built by the
+    addon (also another object's, e.g. on a duplicate) are never originals."""
+    return [(i, t) for i, s in enumerate(obj.material_slots)
+            if s.material and not _is_ours(s.material) and (t := _base_color_image(s.material))]
+
+
+def _scan_uv(obj, warnings):
+    """The scan's UV map - the mesh's only one besides the addon's UV_camN."""
+    uvs = [u for u in obj.data.uv_layers if not u.name.startswith("UV_cam")]
+    if not uvs:
+        warnings.append("Mesh has no UV map - original scan textures skipped")
+        return None
+    if len(uvs) > 1:
+        uv = next((u for u in uvs if u.active_render), uvs[0])
+        warnings.append(f"Mesh has {len(uvs)} UV maps - the original scan uses '{uv.name}'")
+        return uv.name
+    return uvs[0].name
+
+
+def _build_original(b, uv_name, textures):
+    """ORIGINAL MATERIALS frame (hand-arranged layout). Returns its color output."""
+    f = b.frame("ORIGINAL MATERIALS", (-1730, 411))
+    if not textures or uv_name is None:
+        rgb = b.n("ShaderNodeRGB", (851, -36), f, label="No scan texture")
+        rgb.outputs[0].default_value = (0.8, 0.8, 0.8, 1.0)
+        return rgb.outputs[0]
+    uv = b.n("ShaderNodeUVMap", (29, -572), f, uv_map=uv_name)
+    attr = b.n("ShaderNodeAttribute", (36, -428), f, attribute_type='GEOMETRY', attribute_name=UV_INDEX)
+    uv_out = b.n("NodeReroute", (576, -600), f)
+    b.link(uv.outputs["UV"], uv_out.inputs[0])
+    uv_out = uv_out.outputs[0]
+    slot_out = b.n("NodeReroute", (711, -449), f)
+    b.link(attr.outputs["Fac"], slot_out.inputs[0])
+    slot_out = slot_out.outputs[0]
+    col = None
+    for row, (slot, src) in enumerate(textures):
+        y = -36 - row * 300
+        tex = b.n("ShaderNodeTexImage", (851, y), f, image=src.image,
+                  interpolation=src.interpolation, extension=src.extension)
+        tex.name = tex.label = f"Slot {slot}"
+        b.link(uv_out, tex.inputs["Vector"])
+        if col is None:
+            col = tex.outputs["Color"]
+            continue
+        hit = b.math("COMPARE", slot_out, float(slot), (1151, y + 100), f"uv_index = {slot}", f)
+        hit.node.inputs[2].default_value = 0.5
+        mix = b.n("ShaderNodeMix", (1351, y), f, data_type="RGBA")
+        b.link(hit, mix.inputs[0])
+        b.link(col, gn_builder._sock(mix.inputs, "A"))
+        b.link(tex.outputs["Color"], gn_builder._sock(mix.inputs, "B"))
+        col = gn_builder._sock(mix.outputs, "Result")
+    return col
+
+
+def _build_projection(b):
+    """PROJECTION frame: the 3 camera photos weighted by VCMix (normalised).
+    Returns (color, VCMix alpha)."""
+    f = b.frame("PROJECTION", (-1730, 1500))
+    vc = b.n("ShaderNodeVertexColor", (350, -950), f, layer_name="VCMix")
+    sepc = b.n("ShaderNodeSeparateColor", (550, -950), f)
+    b.link(vc.outputs["Color"], sepc.inputs[0])
+    ws = [sepc.outputs["Red"], sepc.outputs["Green"], sepc.outputs["Blue"]]
+    acc = None
+    for i in range(3):
+        y = -50 - i * 300
+        uvn = b.n("ShaderNodeUVMap", (50, y), f, uv_map=f"UV_cam{i + 1}")
+        uvn.name = f"CamUV_{i + 1}"
+        tex = b.n("ShaderNodeTexImage", (300, y), f, extension="CLIP")
+        tex.name = f"CamTex_{i + 1}"
+        tex.label = f"Cam {i + 1}"
+        b.link(uvn.outputs["UV"], tex.inputs["Vector"])
+        sc = b.vmath("SCALE", tex.outputs["Color"], None, (700, y), f)
+        b.link(ws[i], sc.inputs["Scale"])
+        acc = sc.outputs[0] if acc is None else b.vmath("ADD", acc, sc.outputs[0], (950, -150 - i * 200), f).outputs[0]
+    tot = b.math("ADD", b.math("ADD", ws[0], ws[1], (800, -950), parent=f), ws[2], (950, -950), parent=f)
+    inv = b.math("DIVIDE", 1.0, b.math("MAXIMUM", tot, 1e-6, (1100, -950), parent=f), (1250, -950), parent=f)
+    norm = b.vmath("SCALE", acc, None, (1450, -450), f)
+    b.link(inv, norm.inputs["Scale"])
+    return norm.outputs[0], vc.outputs["Alpha"]
+
+
+def build_material(obj, warnings=None):
+    """(Re)build MAT_<name> in place. Keeps the Original Scan value."""
+    warnings = [] if warnings is None else warnings
+    name = material_name(obj)
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat[MAT_TAG] = True
     mat.use_nodes = True
     nt = mat.node_tree
+    old = nt.nodes.get(ORIGINAL_SCAN)
+    scan = old.outputs[0].default_value if old else 0.0
     nt.nodes.clear()
     b = B(nt)
     out = b.n("ShaderNodeOutputMaterial", (1200, 0))
     bsdf = b.n("ShaderNodeBsdfPrincipled", (900, 0))
     b.link(bsdf.outputs[0], out.inputs["Surface"])
-    vc = b.n("ShaderNodeVertexColor", (-600, -500), layer_name="VCMix")
-    sepc = b.n("ShaderNodeSeparateColor", (-400, -500))
-    b.link(vc.outputs["Color"], sepc.inputs[0])
-    ws = [sepc.outputs["Red"], sepc.outputs["Green"], sepc.outputs["Blue"]]
-    acc = None
-    for i in range(3):
-        uvn = b.n("ShaderNodeUVMap", (-900, 400 - i * 300), uv_map=f"UV_cam{i + 1}")
-        uvn.name = f"CamUV_{i + 1}"
-        tex = b.n("ShaderNodeTexImage", (-650, 400 - i * 300), extension="CLIP")
-        tex.name = f"CamTex_{i + 1}"
-        tex.label = f"Cam {i + 1}"
-        b.link(uvn.outputs["UV"], tex.inputs["Vector"])
-        sc = b.vmath("SCALE", tex.outputs["Color"], None, (-250, 400 - i * 300))
-        b.link(ws[i], sc.inputs["Scale"])
-        acc = sc.outputs[0] if acc is None else b.vmath("ADD", acc, sc.outputs[0], (0, 300 - i * 200)).outputs[0]
-    tot = b.math("ADD", b.math("ADD", ws[0], ws[1], (-150, -500)), ws[2], (0, -500))
-    inv = b.math("DIVIDE", 1.0, b.math("MAXIMUM", tot, 1e-6, (150, -500)), (300, -500))
-    norm = b.vmath("SCALE", acc, None, (500, 0))
-    b.link(inv, norm.inputs["Scale"])
-    b.link(norm.outputs[0], bsdf.inputs["Base Color"])
+
+    original = _build_original(b, _scan_uv(obj, warnings), original_textures(obj))
+    projected, mask = _build_projection(b)
+
+    # projection weight = mask x (1 - Original Scan)
+    f = b.frame("BLEND", (-150, 250))
+    val = b.n("ShaderNodeValue", (20, -40), f, label=ORIGINAL_SCAN)
+    val.name = ORIGINAL_SCAN
+    val.outputs[0].default_value = scan
+    inv = b.math("SUBTRACT", 1.0, val.outputs[0], (220, -40), "Projection", f)
+    inv.node.use_clamp = True
+    w = b.math("MULTIPLY", mask, inv, (420, -40), "x Blend Mask", f)
+    mix = b.n("ShaderNodeMix", (620, -40), f, data_type="RGBA")
+    b.link(w, mix.inputs[0])
+    b.link(original, gn_builder._sock(mix.inputs, "A"))
+    b.link(projected, gn_builder._sock(mix.inputs, "B"))
+    b.link(gn_builder._sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
     return mat
 
 
 def _material_ok(mat):
-    return mat is not None and mat.node_tree and all(
+    return mat is not None and mat.node_tree and mat.node_tree.nodes.get(ORIGINAL_SCAN) and all(
         mat.node_tree.nodes.get(f"CamTex_{i}") for i in (1, 2, 3))
 
 
 def ensure_material(obj):
     """Each object owns MAT_<name>. A duplicated object carries the original's
     pointer, so a material with another name is not reused."""
-    d = data(obj)
-    mat = d.material
-    if mat is None or mat.name != f"MAT_{obj.name}":
-        mat = bpy.data.materials.get(f"MAT_{obj.name}")
+    mat = bpy.data.materials.get(material_name(obj))
     if not _material_ok(mat):
         mat = build_material(obj)
-    d.material = mat
+    data(obj).material = mat
     return mat
+
+
+def _move_slot_to_top(obj, index):
+    obj.active_material_index = index
+    with bpy.context.temp_override(object=obj, active_object=obj):
+        for _ in range(index):
+            bpy.ops.object.material_slot_move(direction='UP')   # also remaps the faces
+
+
+def _remove_legacy(obj):
+    """Drop the Convert Material button's modifier (and its group once unused)."""
+    for m in [m for m in obj.modifiers if m.type == 'NODES' and m.node_group
+              and m.node_group.name == gn_builder.MATINDEX]:
+        obj.modifiers.remove(m)
+    ng = bpy.data.node_groups.get(gn_builder.MATINDEX)
+    if ng and ng.users == 0:
+        bpy.data.node_groups.remove(ng)
+
+
+def place_material(obj):
+    """MAT_<name> in slot 1; the other slots move down. A MATMCP_ slot is taken over
+    in place and the MATMCP_ material deleted."""
+    name = material_name(obj)
+    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat[MAT_TAG] = True
+    slots = obj.material_slots
+    idx = next((i for i, s in enumerate(slots) if s.material == mat), None)
+    legacy = bpy.data.materials.get(LEGACY_PREFIX + obj.name)
+    if legacy:
+        for i, s in enumerate(slots):
+            if s.material == legacy:
+                if idx is None:
+                    s.material, idx = mat, i
+                else:
+                    s.material = None
+    if idx is None:
+        obj.data.materials.append(mat)
+        idx = len(slots) - 1
+    if idx:
+        _move_slot_to_top(obj, idx)
+    if legacy and legacy.users == 0:
+        bpy.data.materials.remove(legacy)
+    obj.active_material_index = 0
+    return mat
+
+
+def write_uv_index(obj):
+    """uv_index (face, int) = the face's material slot, read by ORIGINAL MATERIALS.
+    Faces on slot 1 - the combined material, e.g. after a bake - keep their value."""
+    me = obj.data
+    n = len(me.polygons)
+    mi = np.empty(n, dtype=np.int32)
+    me.polygons.foreach_get("material_index", mi)
+    old = np.zeros(n, dtype=np.int32)
+    attr = me.attributes.get(UV_INDEX)
+    if attr is not None and attr.domain == 'FACE' and attr.data_type == 'INT':
+        attr.data.foreach_get("value", old)
+    elif attr is not None:          # e.g. the 2D corner version baked from the old modifier
+        if attr.domain == 'CORNER' and attr.data_type == 'FLOAT2':
+            buf = np.empty(len(me.loops) * 2, dtype=np.float32)
+            attr.data.foreach_get("vector", buf)
+            starts = np.empty(n, dtype=np.int32)
+            me.polygons.foreach_get("loop_start", starts)
+            old = buf[starts * 2].round().astype(np.int32)
+        me.attributes.remove(attr)
+        attr = None
+    if attr is None:
+        attr = me.attributes.new(UV_INDEX, 'INT', 'FACE')
+    attr.data.foreach_set("value", np.where(mi == 0, old, mi))
+
+
+def combine_materials(obj):
+    """Setup/Reload All step: one material for the scan and the projection.
+    Returns a list of warning strings."""
+    warnings = []
+    _remove_legacy(obj)
+    place_material(obj)
+    write_uv_index(obj)
+    data(obj).material = build_material(obj, warnings)
+    return warnings
 
 
 # ---------------------------------------------------------------- modifier
@@ -236,28 +436,55 @@ def get_modifier(obj):
     return None
 
 
-_KEEP_INPUTS = ("Mode", "Original Blend", "Occlusion")
+KEEP_INPUTS = ("Mode", "Previous Bake", "Occlusion")
+_OLD_NAMES = {"Previous Bake": "Original Blend"}    # before the 2026-09-24 rename
 
 
-def ensure_modifier(obj):
-    mod = get_modifier(obj)
+def _read_keep(mod):
     keep = {}
-    if mod and mod.node_group:     # user settings survive a node-group rebuild
-        for k in _KEEP_INPUTS:
-            try:
-                keep[k] = get_input(mod, k)
-            except (KeyError, AttributeError):
-                pass
-    main = gn_builder.ensure_node_groups()
-    mod = mod or obj.modifiers.new(MOD_NAME, 'NODES')
-    if mod.node_group != main:
-        mod.node_group = main
+    if mod and mod.node_group:
+        for k in KEEP_INPUTS:
+            for name in (k, _OLD_NAMES.get(k)):
+                try:
+                    keep[k] = get_input(mod, name)
+                    break
+                except (KeyError, AttributeError, TypeError):
+                    pass
+    return keep
+
+
+def _write_keep(mod, keep):
     for k, v in keep.items():
         try:
             if get_input(mod, k) != v:
                 set_input(mod, k, v)
         except (KeyError, AttributeError, TypeError):
             pass
+
+
+def ensure_modifier(obj):
+    """The object's GN-CameraProject modifier, with the groups up to date. The groups
+    are shared: a rebuild resets every object's inputs and breaks its lens drivers, so
+    all other set-up objects get their settings back and are rewired too."""
+    mod = get_modifier(obj)
+    rebuilt = not gn_builder.up_to_date()
+    others = []
+    if rebuilt:
+        others = [(o, _read_keep(get_modifier(o))) for o in bpy.data.objects
+                  if o is not obj and o.type == 'MESH' and data(o).is_setup and get_modifier(o)]
+    keep = _read_keep(mod)
+    main = gn_builder.ensure_node_groups()
+    mod = mod or obj.modifiers.new(MOD_NAME, 'NODES')
+    if mod.node_group != main:
+        mod.node_group = main
+    if rebuilt:
+        # a rebuilt group's Mode menu has no items until the next update - restoring
+        # "Sharp" before that fails silently
+        bpy.context.view_layer.update()
+    _write_keep(mod, keep)
+    for o, k in others:     # groups are up to date now, so this does not recurse
+        _write_keep(get_modifier(o), k)
+        apply_slots(o, bpy.context.scene)
     return mod
 
 
@@ -268,7 +495,7 @@ def ident(ng, name):
     raise KeyError(name)
 
 
-REQUIRED_INPUTS = ("Material", "Mode", "Original Blend", "Occlusion") + tuple(
+REQUIRED_INPUTS = ("Material", "Mode", "Previous Bake", "Occlusion") + tuple(
     f"{k} {i}" for i in (1, 2, 3) for k in ("Camera", "Focal", "Sensor", "Aspect")) + tuple(
     f"UV Shift Cam{i}" for i in (1, 2, 3))
 
@@ -443,7 +670,7 @@ def slot_of(obj, cam):
 # ---------------------------------------------------------------- reload all
 
 def refresh(obj, scene):
-    """Reload All: images -> clipping -> scoring -> slot check -> rewire.
+    """Reload All: images -> clipping -> scoring -> slot check -> material -> rewire.
     Returns a list of warning strings."""
     d = data(obj)
     warnings = []
@@ -491,6 +718,7 @@ def refresh(obj, scene):
     if missing:
         warnings.append(f"{len(missing)} camera(s) without image: {', '.join(missing[:5])}"
                         + ("..." if len(missing) > 5 else ""))
+    warnings += combine_materials(obj)
     apply_slots(obj, scene)
     return warnings
 
@@ -498,7 +726,6 @@ def refresh(obj, scene):
 def setup(obj, scene):
     d = data(obj)
     mod = ensure_modifier(obj)
-    ensure_material(obj)
     if not d.is_setup:
         set_input(mod, "Mode", "Sharp")
         d.user_picked = False

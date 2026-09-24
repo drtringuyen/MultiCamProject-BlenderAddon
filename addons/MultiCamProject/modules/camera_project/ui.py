@@ -1,7 +1,9 @@
 import bpy
 
 from . import core
-from .operators import is_solo
+from .operators import SHIFT_BRUSHES, is_solo
+
+TOOL_SCALE = 1.4     # Paint / Smear / Erase buttons
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -41,16 +43,21 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         layout.operator("multicamproject.bake_view_mix", icon='RENDER_STILL')
 
     def _draw_box(self, context, box, obj, d, mod):
-        box.prop(d, "image_folder")
+        row = box.row(align=True)
+        row.prop(d, "image_folder")
+        row.operator("multicamproject.reload_all", text="", icon='FILE_REFRESH')
         row = box.row(align=True)
         row.label(text="Clip")
         row.prop(d, "clip_start")
         row.prop(d, "clip_end")
-        box.operator("multicamproject.reload_all", icon='FILE_REFRESH')
 
         col = box.column(align=True)
         col.prop(core.input_socket(mod, "Mode"), "value", text="Mode")
-        col.prop(core.input_socket(mod, "Original Blend"), "value", text="Original Blend")
+        col.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
+        scan = d.material.node_tree.nodes.get(core.ORIGINAL_SCAN) if d.material else None
+        if scan:
+            # a Value node has no 0..1 range, so no slider (its bar would be wrong)
+            col.prop(scan.outputs[0], "default_value", text="Original Scan")
         col.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion")
 
         box.separator(type='LINE')
@@ -59,39 +66,57 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             return
 
         debug = context.scene.multicamproject_props.debug_mode
+        cam = context.scene.camera
+        solo_cam = cam if is_solo(context, cam) else None
         top, rest = core.display_order(obj)
         if top:
             header, body = box.panel("multicamproject_selected_cams", default_closed=False)
             header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
             if body:
                 for item in top:
-                    self._draw_row(context, body, obj, item, debug)
-                    self._draw_shift(body, obj, item.camera)
+                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=True)
         if rest:
             header, body = box.panel("multicamproject_all_cams", default_closed=False)
             header.label(text=f"All Cameras ({len(rest)})", icon='OUTLINER_OB_CAMERA')
             if body:
                 for item in rest:
-                    self._draw_row(context, body, obj, item, debug)
+                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=False)
 
-    def _draw_row(self, context, box, obj, item, debug):
-        # Blender scales ui_units_x down proportionally in narrow panels, so fixed
-        # widths are made with splits computed from the region's pixel width:
-        # name and slot buttons keep their size, the image field absorbs the rest.
-        cam = item.camera
+    @staticmethod
+    def _metrics(context, debug):
+        """Split factors for a camera block. Blender scales ui_units_x down in narrow
+        panels, so fixed widths are made with splits from the region's pixel width:
+        name and slot buttons keep their size, the image field absorbs the rest."""
         unit = 20 * context.preferences.system.ui_scale
-        avail = max(1.0, context.region.width - 2.2 * unit)   # box + panel margins
+        avail = max(1.0, context.region.width - 2.8 * unit)   # outer box, panel, block box
         slots_f = min(0.6, 4.8 * unit / avail)
-        split = box.row().split(factor=1.0 - slots_f, align=True)
+        left_w = max(1.0, avail * (1.0 - slots_f) - unit)       # minus eye button
+        name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
+        image_x = (unit + name_f * left_w) / avail               # where the image field starts
+        return slots_f, name_f, image_x
+
+    def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift):
+        """One camera = one box. While a camera is soloed every other box is dimmed, so
+        the soloed one stands out (Blender can only tint a whole block red)."""
+        col = layout.box().column()
+        col.scale_y = 1.25
+        solo = item.camera == solo_cam
+        col.active = solo_cam is None or solo
+        m = self._metrics(context, debug)
+        self._draw_row(col, obj, item, debug, m, solo)
+        if shift:
+            self._draw_shift(col, obj, item.camera, m)
+
+    def _draw_row(self, col, obj, item, debug, m, solo):
+        slots_f, name_f = m[:2]
+        cam = item.camera
+        split = col.row().split(factor=1.0 - slots_f, align=True)
         left, right = split.row(align=True), split.row(align=True)
 
-        solo = is_solo(context, cam)
         op = left.operator("multicamproject.solo_camera", text="",
                            icon='HIDE_OFF' if solo else 'HIDE_ON', depress=solo)
         op.camera = cam.name
 
-        left_w = max(1.0, avail * (1.0 - slots_f) - unit)       # minus eye button
-        name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
         nsplit = left.split(factor=name_f, align=True)
         nsplit.label(text=f"{cam.name} {item.score:.2f}" if debug else cam.name)
         mid = nsplit.row(align=True)
@@ -115,15 +140,18 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             op.camera = cam.name
             op.slot = n
 
-    def _draw_shift(self, box, obj, cam):
+    def _draw_shift(self, col, obj, cam, m):
         it = core.shift_item(obj, cam)
         if it is None:
             return
-        row = box.row(align=True)
-        row.separator(factor=2.0)
-        lab = row.row(align=True)
-        lab.ui_units_x = 2.5
-        lab.label(text="Shift")
+        image_x = m[2]
+        split = col.row().split(factor=image_x, align=True)   # X starts under the image field
+        tools = split.row(align=True)            # placeholders for upcoming camera brushes
+        tools.scale_x = tools.scale_y = TOOL_SCALE
+        for mode, _name, icon in SHIFT_BRUSHES:
+            op = tools.operator("multicamproject.shift_brush", text="", icon=icon)
+            op.camera, op.mode = cam.name, mode
+        row = split.row(align=True)
         row.prop(it, "shift", index=0, text="X", slider=True)
         row.prop(it, "shift", index=1, text="Y", slider=True)
         op = row.operator("multicamproject.load_shift", text="", icon='PASTEDOWN')

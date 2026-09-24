@@ -1,7 +1,7 @@
 import os
 
 import bpy
-from bpy.props import IntProperty, StringProperty
+from bpy.props import EnumProperty, IntProperty, StringProperty
 
 from . import core, gn_builder
 
@@ -272,10 +272,32 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
         return {'FINISHED'}
 
 
+SHIFT_BRUSHES = (('PAINT', "Paint", 'BRUSH_DATA'),
+                 ('SMEAR', "Smear", 'MOD_SMOOTH'),
+                 ('ERASE', "Erase", 'EVENT_TABLET_ERASER'))
+
+
+class MULTICAMPROJECT_OT_ShiftBrush(bpy.types.Operator):
+    """Placeholder for the upcoming per-camera Paint / Smear / Erase tools"""
+    bl_idname = "multicamproject.shift_brush"
+    bl_label = "Camera Brush"
+
+    camera: StringProperty()
+    mode: EnumProperty(items=[(k, n, "", i, idx) for idx, (k, n, i) in enumerate(SHIFT_BRUSHES)])
+
+    @classmethod
+    def description(cls, context, props):
+        return f"{props.mode.title()} (coming soon)"
+
+    def execute(self, context):
+        self.report({'INFO'}, f"{self.mode.title()} is not implemented yet")
+        return {'CANCELLED'}
+
+
 class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
     """Apply the projection modifier (bakes UV_cam1/2/3 + VCMix into the mesh) and
     re-add it with the same settings, so the baked VCMix becomes the base for the
-    next blend (Original Blend)"""
+    next blend (Previous Bake)"""
     bl_idname = "multicamproject.bake_view_mix"
     bl_label = "Bake View Mix"
     bl_options = {'REGISTER', 'UNDO'}
@@ -307,7 +329,9 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
             self.report({'ERROR'}, "Mesh data is shared by several objects - make it single user first")
             return {'CANCELLED'}
         # check before applying - a failure after the apply leaves the modifier half-wired
-        missing = core.missing_inputs(gn_builder.ensure_node_groups())
+        # (ensure_modifier also updates an outdated group, keeping the user's settings)
+        mod = core.ensure_modifier(obj)
+        missing = core.missing_inputs(mod.node_group)
         if missing:
             self.report({'ERROR'}, f"Node group '{gn_builder.MAIN}' is missing inputs: "
                                    f"{', '.join(missing)}")
@@ -317,7 +341,7 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         if None in slots or not all(core.image_ok(core.cam_image(c)) for c in slots):
             self.report({'WARNING'}, "Some slots are empty or without image - baked areas may be black")
 
-        keep = {k: core.get_input(mod, k) for k in ("Mode", "Original Blend", "Occlusion")}
+        keep = {k: core.get_input(mod, k) for k in core.KEEP_INPUTS}
         name = mod.name
         core.remove_drivers(obj, mod)
         with context.temp_override(object=obj, active_object=obj):
@@ -330,7 +354,7 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         for k, v in keep.items():
             core.set_input(new, k, v)
         core.apply_slots(obj, context.scene)
-        self.report({'INFO'}, "View mix baked - raise Original Blend to blend on top of it")
+        self.report({'INFO'}, "View mix baked - raise Previous Bake to blend on top of it")
         return {'FINISHED'}
 
 
@@ -341,6 +365,7 @@ _classes = (
     MULTICAMPROJECT_OT_SoloCamera,
     MULTICAMPROJECT_OT_LoadCamImage,
     MULTICAMPROJECT_OT_LoadShift,
+    MULTICAMPROJECT_OT_ShiftBrush,
     MULTICAMPROJECT_OT_BakeViewMix,
 )
 
