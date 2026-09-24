@@ -1,9 +1,21 @@
 import bpy
+from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
 from . import core
-from .operators import SHIFT_BRUSHES, is_solo
+from .operators import CAM_BRUSHES, flood_ready, is_solo
 
-TOOL_SCALE = 1.4     # Paint / Smear / Erase buttons
+
+def _icon(icon):
+    """Keyword for layout.operator: a UI icon name, or "tool:<handle>" for a toolbar icon."""
+    if icon.startswith("tool:"):
+        value = ToolSelectPanelHelper._icon_value_from_icon_handle(icon[5:])
+        if value:
+            return {"icon_value": value}
+        return {"icon": 'QUESTION'}
+    return {"icon": icon}
+
+
+TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -68,19 +80,20 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         debug = context.scene.multicamproject_props.debug_mode
         cam = context.scene.camera
         solo_cam = cam if is_solo(context, cam) else None
+        flood = flood_ready(context, obj)
         top, rest = core.display_order(obj)
         if top:
             header, body = box.panel("multicamproject_selected_cams", default_closed=False)
             header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
             if body:
                 for item in top:
-                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=True)
+                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
         if rest:
             header, body = box.panel("multicamproject_all_cams", default_closed=False)
             header.label(text=f"All Cameras ({len(rest)})", icon='OUTLINER_OB_CAMERA')
             if body:
                 for item in rest:
-                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=False)
+                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=False, flood=flood)
 
     @staticmethod
     def _metrics(context, debug):
@@ -95,7 +108,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         image_x = (unit + name_f * left_w) / avail               # where the image field starts
         return slots_f, name_f, image_x
 
-    def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift):
+    def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift, flood):
         """One camera = one box. While a camera is soloed every other box is dimmed, so
         the soloed one stands out (Blender can only tint a whole block red)."""
         col = layout.box().column()
@@ -105,7 +118,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         m = self._metrics(context, debug)
         self._draw_row(col, obj, item, debug, m, solo)
         if shift:
-            self._draw_shift(col, obj, item.camera, m)
+            self._draw_shift(col, obj, item.camera, m, flood)
 
     def _draw_row(self, col, obj, item, debug, m, solo):
         slots_f, name_f = m[:2]
@@ -113,8 +126,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         split = col.row().split(factor=1.0 - slots_f, align=True)
         left, right = split.row(align=True), split.row(align=True)
 
-        op = left.operator("multicamproject.solo_camera", text="",
-                           icon='HIDE_OFF' if solo else 'HIDE_ON', depress=solo)
+        eye = left.row(align=True)
+        eye.active = True       # never dimmed: clicking another eye switches the solo camera
+        op = eye.operator("multicamproject.solo_camera", text="",
+                          icon='HIDE_OFF' if solo else 'HIDE_ON', depress=solo)
         op.camera = cam.name
 
         nsplit = left.split(factor=name_f, align=True)
@@ -140,18 +155,21 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             op.camera = cam.name
             op.slot = n
 
-    def _draw_shift(self, col, obj, cam, m):
+    def _draw_shift(self, col, obj, cam, m, flood):
         it = core.shift_item(obj, cam)
         if it is None:
             return
         image_x = m[2]
         split = col.row().split(factor=image_x, align=True)   # X starts under the image field
-        tools = split.row(align=True)            # placeholders for upcoming camera brushes
+        tools = split.row(align=True)            # vertex paint VCMix with this camera's color
         tools.scale_x = tools.scale_y = TOOL_SCALE
-        for mode, _name, icon in SHIFT_BRUSHES:
-            op = tools.operator("multicamproject.shift_brush", text="", icon=icon)
+        for mode, _name, icon in CAM_BRUSHES:
+            sub = tools.row(align=True)
+            sub.enabled = mode != 'FLOOD' or flood
+            op = sub.operator("multicamproject.cam_paint", text="", **_icon(icon))
             op.camera, op.mode = cam.name, mode
         row = split.row(align=True)
+        row.scale_y = TOOL_SCALE                 # same height: bottoms line up with the buttons
         row.prop(it, "shift", index=0, text="X", slider=True)
         row.prop(it, "shift", index=1, text="Y", slider=True)
         op = row.operator("multicamproject.load_shift", text="", icon='PASTEDOWN')

@@ -1,7 +1,7 @@
 import os
 
 import bpy
-from bpy.props import EnumProperty, IntProperty, StringProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
 from . import core, gn_builder
 
@@ -99,7 +99,11 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _mesh_poll(context) and context.area and context.area.type == 'VIEW_3D'
+        # also while painting/editing, to switch the camera being painted through
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH'
+                and context.mode in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX'}
+                and context.area and context.area.type == 'VIEW_3D')
 
     def execute(self, context):
         cam = bpy.data.objects.get(self.camera)
@@ -272,26 +276,78 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
         return {'FINISHED'}
 
 
-SHIFT_BRUSHES = (('PAINT', "Paint", 'BRUSH_DATA'),
-                 ('SMEAR', "Smear", 'MOD_SMOOTH'),
-                 ('ERASE', "Erase", 'EVENT_TABLET_ERASER'))
+# Smooth is Shift+drag while painting (Blender keymap). A panel cannot see held keys,
+# so the icons do not change with Shift - the tooltips tell.
+# icon: a UI icon name, or "tool:<handle>" for one of Blender's toolbar icons
+CAM_BRUSHES = (('PAINT', "Paint", 'BRUSH_DATA'),
+               ('FLOOD', "Flood", "tool:brush.paint_texture.fill"),       # bucket
+               ('ERASE', "Erase", "tool:brush.gpencil_draw.erase"))       # eraser
 
 
-class MULTICAMPROJECT_OT_ShiftBrush(bpy.types.Operator):
-    """Placeholder for the upcoming per-camera Paint / Smear / Erase tools"""
-    bl_idname = "multicamproject.shift_brush"
-    bl_label = "Camera Brush"
+def flood_ready(context, obj):
+    """Flood needs selected faces: Edit Mode with faces selected, or Vertex Paint with
+    the face selection mask on."""
+    if context.mode == 'EDIT_MESH':
+        return obj.data.count_selected_items()[2] > 0
+    return context.mode == 'PAINT_VERTEX' and obj.data.use_paint_mask
 
-    camera: StringProperty()
-    mode: EnumProperty(items=[(k, n, "", i, idx) for idx, (k, n, i) in enumerate(SHIFT_BRUSHES)])
+
+class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
+    """Vertex Paint the VCMix layer with this camera's color"""
+    bl_idname = "multicamproject.cam_paint"
+    bl_label = "Paint Camera"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    camera: StringProperty(options={'HIDDEN'})
+    mode: EnumProperty(items=[(k, n, "", idx) for idx, (k, n, _) in enumerate(CAM_BRUSHES)],
+                       options={'HIDDEN'})
+    shift: BoolProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
+                and context.mode in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX'})
 
     @classmethod
     def description(cls, context, props):
-        return f"{props.mode.title()} (coming soon)"
+        return {
+            'PAINT': "Paint this camera's color into VCMix.\nShift+drag while painting: smooth",
+            'FLOOD': "Fill the selected faces with this camera's color (Edit Mode, faces selected)",
+            'ERASE': "Erase VCMix alpha - the original scan shows.\n"
+                     "Shift+click: add alpha - the projection shows",
+        }[props.mode]
+
+    def invoke(self, context, event):
+        self.shift = event.shift
+        return self.execute(context)
 
     def execute(self, context):
-        self.report({'INFO'}, f"{self.mode.title()} is not implemented yet")
-        return {'CANCELLED'}
+        obj = context.active_object
+        cam = bpy.data.objects.get(self.camera)
+        slot = core.slot_of(obj, cam) if cam else 0
+        if not slot:
+            self.report({'ERROR'}, f"'{self.camera}' is not in Camera 1/2/3")
+            return {'CANCELLED'}
+        if self.mode == 'FLOOD' and not flood_ready(context, obj):
+            self.report({'ERROR'}, "Select faces in Edit Mode first")
+            return {'CANCELLED'}
+
+        if context.mode != 'OBJECT':        # edit-mode selection syncs to the mesh here
+            bpy.ops.object.mode_set(mode='OBJECT')
+        for msg in core.ensure_paint_layer(obj):
+            self.report({'INFO'}, msg)
+        bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+
+        color = core.SLOT_COLORS[slot]
+        if self.mode == 'ERASE':
+            core.set_paint_brush(context, blend='ADD_ALPHA' if self.shift else 'ERASE_ALPHA')
+        else:
+            core.set_paint_brush(context, color)
+        if self.mode == 'FLOOD':
+            obj.data.use_paint_mask = True
+            bpy.ops.paint.vertex_color_set(use_alpha=True)
+        return {'FINISHED'}
 
 
 class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
@@ -358,23 +414,68 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
+    """Solo the camera above/below the soloed one in the camera list"""
+    bl_idname = "multicamproject.solo_step"
+    bl_label = "Solo Next Camera"
+
+    step: IntProperty(default=1, options={'HIDDEN'})
+
+    @classmethod
+    def poll(cls, context):
+        # only over this addon's sidebar tab and while a camera is soloed; otherwise
+        # the arrow keys keep their usual job (keyframe jumps)
+        region = context.region
+        return (region is not None and region.type == 'UI'
+                and region.active_panel_category == "MultiCamProject"
+                and MULTICAMPROJECT_OT_SoloCamera.poll(context)
+                and core.data(context.active_object).is_setup
+                and is_solo(context, context.scene.camera))
+
+    def execute(self, context):
+        top, rest = core.display_order(context.active_object)
+        cams = [it.camera for it in top + rest]
+        cur = context.scene.camera
+        i = cams.index(cur) + self.step if cur in cams else 0
+        if not 0 <= i < len(cams):
+            return {'CANCELLED'}        # already at the top/bottom of the list
+        return bpy.ops.multicamproject.solo_camera(camera=cams[i].name)
+
+
 _classes = (
     MULTICAMPROJECT_OT_Setup,
     MULTICAMPROJECT_OT_ReloadAll,
     MULTICAMPROJECT_OT_AssignSlot,
     MULTICAMPROJECT_OT_SoloCamera,
+    MULTICAMPROJECT_OT_SoloStep,
     MULTICAMPROJECT_OT_LoadCamImage,
     MULTICAMPROJECT_OT_LoadShift,
-    MULTICAMPROJECT_OT_ShiftBrush,
+    MULTICAMPROJECT_OT_CamPaint,
     MULTICAMPROJECT_OT_BakeViewMix,
 )
+
+_keymaps = []
 
 
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:      # None in background mode
+        # "Frames" (every region) binds Up/Down to Jump to Keyframe and is handled before
+        # the 3D view's own keymaps, eating the keys even with no keyframe to jump to.
+        # Add-on items come first in a keymap, so here the poll decides: sidebar + solo
+        # -> step the camera, anything else -> falls through to Jump to Keyframe.
+        km = kc.keymaps.new(name="Frames")
+        for key, step in (('UP_ARROW', -1), ('DOWN_ARROW', 1)):
+            kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloStep.bl_idname, key, 'PRESS')
+            kmi.properties.step = step
+            _keymaps.append((km, kmi))
 
 
 def unregister():
+    for km, kmi in _keymaps:
+        km.keymap_items.remove(kmi)
+    _keymaps.clear()
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

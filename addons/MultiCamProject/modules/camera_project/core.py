@@ -667,6 +667,51 @@ def slot_of(obj, cam):
     return slots.index(cam) + 1 if cam in slots else 0
 
 
+# ---------------------------------------------------------------- vertex paint
+
+SLOT_COLORS = {1: (1.0, 0.0, 0.0), 2: (0.0, 1.0, 0.0), 3: (0.0, 0.0, 1.0)}   # VCMix R/G/B
+PAINT_BRUSH = "brushes/essentials_brushes-mesh_vertex.blend/Brush/Paint Hard"
+
+
+def ensure_paint_layer(obj):
+    """Painting edits the mesh's own VCMix - the layer Previous Bake blends in, since
+    the modifier recomputes VCMix. Without one (never baked), it starts as a copy of
+    what the modifier shows now. Previous Bake goes to 1 so strokes show 1:1.
+    Object mode only. Returns a list of info strings."""
+    info = []
+    me = obj.data
+    base = me.color_attributes.get("VCMix")
+    if base is None:
+        ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
+        src = ev.color_attributes.get("VCMix")
+        base = me.color_attributes.new("VCMix", 'FLOAT_COLOR', src.domain if src else 'CORNER')
+        if src is not None and len(src.data) == len(base.data):
+            buf = np.empty(len(src.data) * 4, dtype=np.float32)
+            src.data.foreach_get("color", buf)
+            base.data.foreach_set("color", buf)
+            info.append("VCMix copied into the mesh to paint on")
+    me.color_attributes.active_color = base
+    mod = get_modifier(obj)
+    if mod and get_input(mod, "Previous Bake") < 1.0:
+        set_input(mod, "Previous Bake", 1.0)
+        info.append("Previous Bake set to 1 so the paint shows")
+    return info
+
+
+def set_paint_brush(context, color=None, blend='MIX'):
+    """Vertex Paint brush for VCMix: a Draw brush (Shift+drag smooths, Blender's own
+    keymap) with the camera's color and the given blend."""
+    vp = context.tool_settings.vertex_paint
+    if vp.brush is None or vp.brush.vertex_brush_type != 'DRAW':
+        bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
+                                     relative_asset_identifier=PAINT_BRUSH)
+    br = vp.brush
+    br.blend = blend
+    if color is not None:
+        br.color = color
+        vp.unified_paint_settings.color = color     # used when the color is unified
+
+
 # ---------------------------------------------------------------- reload all
 
 def refresh(obj, scene):

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Camera Project - paint VCMix per camera (2026-09-24)
+- The placeholder buttons on each selected camera now paint the mesh's **VCMix** in Vertex Paint
+  (switching there from Object/Edit Mode), in the camera's channel: Camera 1 red, 2 green, 3 blue.
+  - **Paint**: Draw brush with the camera color. Shift+drag smooths (Blender's own keymap).
+  - **Flood**: fills the selected faces (Edit Mode with faces selected, or Vertex Paint with the
+    face mask on) with the camera color, alpha 1.
+  - **Erase**: brush erases VCMix alpha (original scan shows); Shift+click adds alpha instead.
+  - The strokes go into the mesh's VCMix - the layer Previous Bake blends in. Without one it is
+    copied from what the modifier shows, and Previous Bake is set to 1 so the paint shows 1:1.
+- The shift X/Y fields have the buttons' height, so both rows end on the same line.
+- Solo works in Edit Mode and Vertex Paint too, so the solo camera can be switched while
+  painting; the eye buttons are never dimmed.
+- **Up/Down arrows** over the MultiCamProject sidebar tab solo the camera above/below the soloed
+  one (list order: Selected, then All). Elsewhere, or with no camera soloed, the keys keep their
+  usual job. Bound in the "Frames" keymap: it handles Up/Down (Jump to Keyframe) before any 3D
+  view keymap, so a binding anywhere else never sees the keys.
+- Flood and Erase icons: a paint bucket and an eraser (Blender toolbar icons).
+
 ### Camera Project - one material for scan + projection (2026-09-24)
 - **Setup Camera Projection** now also merges the scan's materials (was a separate Convert
   Material button, never released). One button, one GN (`GN-CameraProject`), one material:
