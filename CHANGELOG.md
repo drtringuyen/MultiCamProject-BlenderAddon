@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Camera Project - readable node layout, bake fixes (2026-09-24)
+- **GN layout adopted from the hand-cleaned file** (node group version 4):
+  - `GN-CameraProject` inputs grouped in panels: General Settings, Camera Shift, Cameras, Lens (driven).
+    Shift inputs renamed `UV Shift Cam1/2/3` and are 2D vectors.
+  - New sub-group `MCP-MixResult` holds the UV_cam store, Sharp/Smooth/Combined mix, VCMix blend and
+    material. Output is identical to version 3.
+- **Bake View Mix**: checks the node group's inputs *before* applying, so a mismatch can no longer
+  leave the re-added modifier half-wired (lost cameras). A fake user on the mesh no longer counts
+  as "shared by several objects".
+- **Camera list** split into foldable *Selected Cameras* and *All Cameras* sections.
+
 ### Camera Project - shift in UV range, wider slot buttons (2026-09-23)
 - **Shift is now in UV range** (-1..1, 5 decimals): -1 = one full photo to the left/down, 1 = to the
   right/up. Used as-is for the GN `UV Shift N` input and the camera background offset (no pixel

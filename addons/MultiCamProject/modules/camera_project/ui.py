@@ -60,13 +60,19 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
         debug = context.scene.multicamproject_props.debug_mode
         top, rest = core.display_order(obj)
-        for item in top:
-            self._draw_row(context, box, obj, item, debug)
-            self._draw_shift(box, obj, item.camera)
-        if top and rest:
-            box.separator(type='LINE')
-        for item in rest:
-            self._draw_row(context, box, obj, item, debug)
+        if top:
+            header, body = box.panel("multicamproject_selected_cams", default_closed=False)
+            header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
+            if body:
+                for item in top:
+                    self._draw_row(context, body, obj, item, debug)
+                    self._draw_shift(body, obj, item.camera)
+        if rest:
+            header, body = box.panel("multicamproject_all_cams", default_closed=False)
+            header.label(text=f"All Cameras ({len(rest)})", icon='OUTLINER_OB_CAMERA')
+            if body:
+                for item in rest:
+                    self._draw_row(context, body, obj, item, debug)
 
     def _draw_row(self, context, box, obj, item, debug):
         # Blender scales ui_units_x down proportionally in narrow panels, so fixed

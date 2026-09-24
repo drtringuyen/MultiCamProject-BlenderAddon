@@ -268,6 +268,18 @@ def ident(ng, name):
     raise KeyError(name)
 
 
+REQUIRED_INPUTS = ("Material", "Mode", "Original Blend", "Occlusion") + tuple(
+    f"{k} {i}" for i in (1, 2, 3) for k in ("Camera", "Focal", "Sensor", "Aspect")) + tuple(
+    f"UV Shift Cam{i}" for i in (1, 2, 3))
+
+
+def missing_inputs(ng):
+    """Inputs apply_slots needs but a hand-edited group no longer has."""
+    names = {it.name for it in ng.interface.items_tree
+             if getattr(it, "in_out", None) == "INPUT"}
+    return [n for n in REQUIRED_INPUTS if n not in names]
+
+
 def input_socket(mod, name):
     """Blender 5.2: modifier inputs live on mod.properties.inputs.<Socket_N>.
     Returns the RNA holder with `.value`."""
@@ -370,7 +382,7 @@ def push_shift(obj, item, scene, to_camera):
     slot = slot_of(obj, cam)
     mod = get_modifier(obj)
     if slot and mod and mod.node_group:
-        set_input(mod, f"UV Shift {slot}", (*item.shift, 0.0))
+        set_input(mod, f"UV Shift Cam{slot}", tuple(item.shift))
     if to_camera:
         set_camera_offset(cam, item.shift)
 
@@ -400,7 +412,7 @@ def apply_slots(obj, scene):
         img = cam_image(cam) if cam else None
         set_input(mod, f"Aspect {i}", image_aspect(img, scene))
         it = shift_item(obj, cam, create=True) if cam else None
-        set_input(mod, f"UV Shift {i}", (*it.shift, 0.0) if it else (0.0, 0.0, 0.0))
+        set_input(mod, f"UV Shift Cam{i}", tuple(it.shift) if it else (0.0, 0.0))
         tex = mat.node_tree.nodes[f"CamTex_{i}"]
         tex.image = img
         tex.label = f"Cam {i}: {cam.name}" if cam else f"Cam {i}"

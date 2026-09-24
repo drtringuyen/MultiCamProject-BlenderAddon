@@ -3,7 +3,7 @@ import os
 import bpy
 from bpy.props import IntProperty, StringProperty
 
-from . import core
+from . import core, gn_builder
 
 
 def _mesh_poll(context):
@@ -302,8 +302,15 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         if me.shape_keys:
             self.report({'ERROR'}, "Mesh has shape keys - cannot apply a modifier")
             return {'CANCELLED'}
-        if me.users > 1:
+        # count objects, not me.users - a fake user would inflate that
+        if sum(o.data == me for o in bpy.data.objects) > 1:
             self.report({'ERROR'}, "Mesh data is shared by several objects - make it single user first")
+            return {'CANCELLED'}
+        # check before applying - a failure after the apply leaves the modifier half-wired
+        missing = core.missing_inputs(gn_builder.ensure_node_groups())
+        if missing:
+            self.report({'ERROR'}, f"Node group '{gn_builder.MAIN}' is missing inputs: "
+                                   f"{', '.join(missing)}")
             return {'CANCELLED'}
         d = core.data(obj)
         slots = core.get_slots(d)
