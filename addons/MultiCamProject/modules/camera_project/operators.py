@@ -3,7 +3,7 @@ import os
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import core, gn_builder
+from . import core, gn_builder, paint_sync
 
 
 def _mesh_poll(context):
@@ -62,13 +62,13 @@ class MULTICAMPROJECT_OT_ReloadAll(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
-    """Use this camera for projection slot 1/2/3 (swaps if it is already in another slot)"""
+    """Use this camera for projection slot 1-6 (swaps if it is already in another slot)"""
     bl_idname = "multicamproject.assign_slot"
     bl_label = "Assign Camera Slot"
     bl_options = {'REGISTER', 'UNDO'}
 
     camera: StringProperty()
-    slot: IntProperty(min=1, max=3, default=1)
+    slot: IntProperty(min=1, max=6, default=1)
 
     @classmethod
     def poll(cls, context):
@@ -86,6 +86,35 @@ class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
         if not core.image_ok(core.cam_image(cam)):
             self.report({'WARNING'}, f"'{cam.name}' has no loaded image - it will project black")
         core.assign_slot(context.active_object, cam, self.slot, context.scene)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_ToggleGlobal(bpy.types.Operator):
+    """Global camera (globe): shared by every object with one UV shift, image and clipping
+    left alone by Reload All. Object camera: shift per object"""
+    bl_idname = "multicamproject.toggle_global"
+    bl_label = "Toggle Global Camera"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    camera: StringProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return _setup_poll(context)
+
+    @classmethod
+    def description(cls, context, props):
+        cam = bpy.data.objects.get(props.camera)
+        if core.is_global(cam):
+            return "Global camera - click to attach it to the objects (shift per object)"
+        return "Object camera - click to make it global (one shift for every object)"
+
+    def execute(self, context):
+        cam = bpy.data.objects.get(self.camera)
+        if cam is None or cam.type != 'CAMERA':
+            self.report({'ERROR'}, f"Camera '{self.camera}' not found")
+            return {'CANCELLED'}
+        core.set_global(cam, not core.is_global(cam), context.active_object, context.scene)
         return {'FINISHED'}
 
 
@@ -114,6 +143,11 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         space = context.space_data
         rv3d = space.region_3d
         scene = context.scene
+        if scene.objects.get(cam.name) != cam:
+            # e.g. its collection was deleted - only the slots still reference it
+            self.report({'ERROR'}, f"'{cam.name}' is no longer in this scene - "
+                                   "Reload All removes it from the list")
+            return {'CANCELLED'}
 
         key = str(space.as_pointer())
         state = _load_state(context, key)
@@ -352,6 +386,9 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         cam = bpy.data.objects.get(self.camera)
+        if core.is_global(cam):
+            core.push_global_shift(cam)
+            return {'FINISHED'}
         it = core.shift_item(obj, cam) if cam else None
         if it is None:
             self.report({'ERROR'}, f"No shift stored for '{self.camera}'")
@@ -363,9 +400,10 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
 # Smooth is Shift+drag while painting (Blender keymap). A panel cannot see held keys,
 # so the icons do not change with Shift - the tooltips tell.
 # icon: a UI icon name, or "tool:<handle>" for one of Blender's toolbar icons
+# standard UI icons: they sit centered in a button (toolbar icons are drawn large and clip)
 CAM_BRUSHES = (('PAINT', "Paint", 'BRUSH_DATA'),
-               ('FLOOD', "Flood", "tool:brush.paint_texture.fill"),       # bucket
-               ('ERASE', "Erase", "tool:brush.gpencil_draw.erase"))       # eraser
+               ('FLOOD', "Flood", 'GP_DRAW_FILL'),
+               ('ERASE', "Erase", 'EVENT_TABLET_ERASER'))
 
 
 def flood_ready(context, obj):
@@ -377,7 +415,7 @@ def flood_ready(context, obj):
 
 
 class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
-    """Vertex Paint the VCMix layer with this camera's color"""
+    """Vertex Paint this camera's color: cameras 1-3 into VCMix, 4-6 into VCMix2"""
     bl_idname = "multicamproject.cam_paint"
     bl_label = "Paint Camera"
     bl_options = {'REGISTER', 'UNDO'}
@@ -395,11 +433,18 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, props):
+        obj = context.active_object
+        cam = bpy.data.objects.get(props.camera)
+        slot = core.slot_of(obj, cam) if obj and cam else 0
+        layer = core.slot_layer(slot) if slot else "VCMix"
         return {
-            'PAINT': "Paint this camera's color into VCMix.\nShift+drag while painting: smooth",
-            'FLOOD': "Fill the selected faces with this camera's color (Edit Mode, faces selected)",
-            'ERASE': "Erase VCMix alpha - the original scan shows.\n"
-                     "Shift+click: add alpha - the projection shows",
+            'PAINT': f"Paint this camera's color into {layer}.\nShift+drag while painting: smooth"
+                     + ("\nA stroke also clears cameras 1-3 under it (on faces this camera sees)"
+                        if slot > 3 else ""),
+            'FLOOD': f"Fill the selected faces with this camera's color in {layer} "
+                     "(Edit Mode, faces selected)",
+            'ERASE': "Erase the projection (all cameras, VCMix and VCMix2) - the original "
+                     "scan shows.\nShift+click: bring the projection back",
         }[props.mode]
 
     def invoke(self, context, event):
@@ -411,26 +456,40 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         cam = bpy.data.objects.get(self.camera)
         slot = core.slot_of(obj, cam) if cam else 0
         if not slot:
-            self.report({'ERROR'}, f"'{self.camera}' is not in Camera 1/2/3")
+            self.report({'ERROR'}, f"'{self.camera}' is not in a camera slot")
             return {'CANCELLED'}
         if self.mode == 'FLOOD' and not flood_ready(context, obj):
             self.report({'ERROR'}, "Select faces in Edit Mode first")
             return {'CANCELLED'}
 
+        if obj.mode == 'VERTEX_PAINT':
+            paint_sync.sync(obj)            # a stroke not synced yet belongs to the old layer
         if context.mode != 'OBJECT':        # edit-mode selection syncs to the mesh here
             bpy.ops.object.mode_set(mode='OBJECT')
-        for msg in core.ensure_paint_layer(obj):
+        # Erase works on every layer at once: VCMix alpha is the blend mask of all cameras
+        layer = "VCMix" if self.mode == 'ERASE' else core.slot_layer(slot)
+        for msg in core.ensure_paint_layer(obj, layer):
             self.report({'INFO'}, msg)
+        claims = layer == paint_sync.L2 and self.mode != 'ERASE'
+        if claims:
+            paint_sync.clear_marker(obj)    # the brush's alpha then marks the stroke
         bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+        paint_sync.reset(obj)
 
         color = core.SLOT_COLORS[slot]
         if self.mode == 'ERASE':
             core.set_paint_brush(context, blend='ADD_ALPHA' if self.shift else 'ERASE_ALPHA')
         else:
             core.set_paint_brush(context, color)
+        if claims:
+            context.tool_settings.vertex_paint.brush.use_alpha = True     # Affect Alpha: the marker
+        if self.mode != 'ERASE':
+            # strokes stop at the visible surface - never through the mesh to its far side
+            context.tool_settings.vertex_paint.brush.use_frontface = True
         if self.mode == 'FLOOD':
             obj.data.use_paint_mask = True
             bpy.ops.paint.vertex_color_set(use_alpha=True)
+            paint_sync.sync(obj)
         return {'FINISHED'}
 
 
@@ -471,9 +530,9 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         # check before applying - a failure after the apply leaves the modifier half-wired
         # (ensure_modifier also updates an outdated group, keeping the user's settings)
         mod = core.ensure_modifier(obj)
-        missing = core.missing_inputs(mod.node_group)
+        missing = core.missing_inputs(mod.node_group, core.slot_count(core.data(obj)))
         if missing:
-            self.report({'ERROR'}, f"Node group '{gn_builder.MAIN}' is missing inputs: "
+            self.report({'ERROR'}, f"Node group '{mod.node_group.name}' is missing inputs: "
                                    f"{', '.join(missing)}")
             return {'CANCELLED'}
         d = core.data(obj)
@@ -510,18 +569,20 @@ def _sidebar_solo_poll(context):
 
 
 class MULTICAMPROJECT_OT_SoloAssign(bpy.types.Operator):
-    """Use the soloed camera as Camera 1/2/3"""
+    """Use the soloed camera as Camera 1-6"""
     bl_idname = "multicamproject.solo_assign"
     bl_label = "Assign Soloed Camera"
     bl_options = {'REGISTER', 'UNDO'}
 
-    slot: IntProperty(min=1, max=3, default=1, options={'HIDDEN'})
+    slot: IntProperty(min=1, max=6, default=1, options={'HIDDEN'})
 
     @classmethod
     def poll(cls, context):
         return _sidebar_solo_poll(context)
 
     def execute(self, context):
+        if self.slot > core.slot_count(core.data(context.active_object)):
+            return {'PASS_THROUGH'}     # slot not in use: the key keeps its usual job
         cam = context.scene.camera
         if not core.image_ok(core.cam_image(cam)):
             self.report({'WARNING'}, f"'{cam.name}' has no loaded image - it will project black")
@@ -567,6 +628,7 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
 
 _classes = (
     MULTICAMPROJECT_OT_Setup,
+    MULTICAMPROJECT_OT_ToggleGlobal,
     MULTICAMPROJECT_OT_ReloadAll,
     MULTICAMPROJECT_OT_AssignSlot,
     MULTICAMPROJECT_OT_SoloCamera,
@@ -598,8 +660,9 @@ def register():
             _keymaps.append((km, kmi))
         kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloFrame.bl_idname, 'NUMPAD_PERIOD', 'PRESS')
         _keymaps.append((km, kmi))
-        # 1/2/3 on the number row or numpad: soloed camera -> Camera 1/2/3
-        for slot, keys in ((1, ('ONE', 'NUMPAD_1')), (2, ('TWO', 'NUMPAD_2')), (3, ('THREE', 'NUMPAD_3'))):
+        # 1-6 on the number row or numpad: soloed camera -> Camera 1-6
+        for slot, keys in ((1, ('ONE', 'NUMPAD_1')), (2, ('TWO', 'NUMPAD_2')), (3, ('THREE', 'NUMPAD_3')),
+                           (4, ('FOUR', 'NUMPAD_4')), (5, ('FIVE', 'NUMPAD_5')), (6, ('SIX', 'NUMPAD_6'))):
             for key in keys:
                 kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloAssign.bl_idname, key, 'PRESS')
                 kmi.properties.slot = slot

@@ -25,7 +25,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 0
+    bl_order = 1
 
     def draw(self, context):
         layout = self.layout
@@ -82,12 +82,15 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         solo_cam = cam if is_solo(context, cam) else None
         flood = flood_ready(context, obj)
         top, rest = core.display_order(obj)
-        if top:
-            header, body = box.panel("multicamproject_selected_cams", default_closed=False)
-            header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
-            if body:
-                for item in top:
-                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
+        # always drawn: its header holds the slot count
+        header, body = box.panel("multicamproject_selected_cams", default_closed=False)
+        header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
+        sub = header.row()
+        sub.ui_units_x = 3
+        sub.prop(d, "slot_count", text="")
+        if body:
+            for item in top:
+                self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
         if rest:
             header, body = box.panel("multicamproject_all_cams", default_closed=False)
             header.label(text=f"All Cameras ({len(rest)})", icon='OUTLINER_OB_CAMERA')
@@ -97,13 +100,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
                                    rows=12)
 
     @staticmethod
-    def _metrics(context, debug, margin=2.8):
+    def _metrics(context, debug, n, margin=2.8):
         """Split factors for a camera block. Blender scales ui_units_x down in narrow
         panels, so fixed widths are made with splits from the region's pixel width:
         name and slot buttons keep their size, the image field absorbs the rest."""
         unit = 20 * context.preferences.system.ui_scale
         avail = max(1.0, context.region.width - margin * unit)   # boxes, panel, list frame
-        slots_f = min(0.6, 4.8 * unit / avail)
+        per = 1.4 if n == 3 else 1.15                             # width of one slot button
+        slots_f = min(0.6, (n + 1) * per * unit / avail)         # 1..n + global toggle, same width
         left_w = max(1.0, avail * (1.0 - slots_f) - unit)       # minus eye button
         name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
         image_x = (unit + name_f * left_w) / avail               # where the image field starts
@@ -116,7 +120,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         col.scale_y = 1.25
         solo = item.camera == solo_cam
         col.active = solo_cam is None or solo
-        m = self._metrics(context, debug)
+        m = self._metrics(context, debug, core.slot_count(core.data(obj)))
         self._draw_row(col, obj, item, debug, m, solo)
         if shift:
             self._draw_shift(col, obj, item.camera, m, flood)
@@ -150,15 +154,21 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         op = sub.operator("multicamproject.load_cam_image", text="", icon='FILE_FOLDER')
         op.camera = cam.name
 
-        slots = right.row(align=True)
+        count = core.slot_count(core.data(obj))
+        # equal columns: the global toggle gets the same width as a slot button
+        slots = right.grid_flow(row_major=True, columns=count + 1, even_columns=True, align=True)
         current = core.slot_of(obj, cam)
-        for n in (1, 2, 3):
+        for n in range(1, count + 1):
             op = slots.operator("multicamproject.assign_slot", text=str(n), depress=current == n)
             op.camera = cam.name
             op.slot = n
+        glob = core.is_global(cam)
+        op = slots.operator("multicamproject.toggle_global", text="",
+                            icon='WORLD' if glob else 'OBJECT_DATA', depress=glob)
+        op.camera = cam.name
 
     def _draw_shift(self, col, obj, cam, m, flood):
-        it = core.shift_item(obj, cam)
+        it = core.shift_holder(obj, cam)      # a global camera's shift is shared by every object
         if it is None:
             return
         image_x = m[2]
@@ -179,7 +189,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
 
 class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
-    """All Cameras: the cameras not in Camera 1/2/3, alphabetical. Its active row is the
+    """All Cameras: the cameras not in a slot, alphabetical. Its active row is the
     soloed camera; clicking a name solos that camera."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
@@ -191,7 +201,8 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
         col = layout.column()
         col.active = solo or not is_solo(context, context.scene.camera)
         panel._draw_row(col, context.active_object, item, debug,
-                        panel._metrics(context, debug, margin=4.2), solo)   # + list frame, scrollbar
+                        panel._metrics(context, debug, core.slot_count(data), margin=4.2),
+                        solo)   # + list frame, scrollbar
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)

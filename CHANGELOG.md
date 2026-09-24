@@ -2,6 +2,79 @@
 
 ## Unreleased
 
+### Project from Sides, up to 6 cameras, adaptive paint (2026-09-24)
+
+#### Project from Sides (new module `project_sides`)
+- Own collapsible sub-panel **Project from Sides**, above Camera Project. Its settings live on
+  the scene, so they are saved with the file and shared by every object:
+  - **Sheet** image - a reference sheet with the views side by side (Left, Right, Front, Back).
+  - **Orthographic / Perspective**, **Height**, **Distance**, **Ortho Scale** or **Focal Length** -
+    one set for all sides cameras. Dragging a field moves the cameras live.
+- **Project from 4 Sides** creates any missing camera **Ortho.Front / Left / Right / Back**
+  (`Persp.*` when perspective; Blender view names, Right = +X) in `Sides.Cameras` and resets all of
+  them to the panel: image, type, lens, position around the active object's origin, looking level
+  at it. It does not score or assign cameras - Setup / Reload All pick them up.
+- **Defaults** (first Project, or the reframe button next to it): Height = half the Z of the
+  object's highest point, Distance = Height, Ortho Scale / Focal Length fit ground..top into 85%
+  of the sheet's height.
+- **The camera frame has the sheet's aspect**: Blender has no per-camera resolution, so Project
+  keeps the scene's resolution X and sets Y to the sheet's aspect (warns when it changes).
+- Each sides camera shows the whole sheet; its UV shift starts on its panel (equal panels:
+  Left +0.375, Right +0.125, Front -0.125, Back -0.375) and a re-run keeps a tuned shift.
+
+#### Global cameras (Camera Project)
+- A toggle at the end of every camera's slot buttons: **globe = global**, box = attached to the
+  objects (default). Stored on the camera, so it belongs to the file.
+- A global camera has **one UV shift for every object**; switching carries the active object's
+  shift over, so the photo does not jump. **Reload All** leaves its image and clipping alone.
+- Sides cameras are created global and tagged with their side. Switched to object-attached, a
+  sides camera keeps its tag: Project neither resets it nor makes a new one.
+- Otherwise they are ordinary cameras: scored, slotted, shifted, painted, soloed.
+
+#### Orthographic projection
+- The projection and camera scoring support **orthographic cameras**: per slot `Ortho N` and
+  `Ortho Scale N` inputs, driven from the camera; facing and occlusion use the camera's view axis.
+  Perspective is unchanged, and both types can be mixed on one object.
+
+#### Up to 6 cameras
+- **Cameras 3-6 dropdown** per object, in the Selected Cameras header. Slot buttons `1..N` and
+  keys 1-6 over the sidebar tab follow it (keys above the count keep their usual job). Raising the
+  count fills the new slots with the best-scoring unused cameras; lowering it keeps cameras 4-6
+  stored, not projected.
+- **VCMix2**: R, G, B = cameras 4-6. **Cameras 1-3 (VCMix) stay on top of 4-6** where both have
+  weight; the GN stores VCMix2 first and VCMix last. Automatic weights: VCMix holds cameras 1-3's
+  share of all cameras, VCMix2 the best of 4-6 - so the result is exactly the plain 6-way Sharp /
+  Smooth blend, and a mesh painted with 3 cameras keeps its paint when the count goes up.
+- **Node groups per count**: `GN-CameraProject` / `MCP-MixResult` for 3 (as before),
+  `GN-CameraProject_N` / `MCP-MixResult_N` for 4-6, built when first used (node group version 12).
+  The material is rebuilt with CamTex_1..N when the count changes (material version 5). A rebuild
+  rewires every set-up object, whatever its count.
+- Soft edges blend 1-3 into 4-6 without dark seams; where no camera covers a face the original
+  scan shows.
+
+#### Adaptive paint (4+ cameras)
+- Switched by the camera painted with:
+  - **Cameras 4-6: on** - a stroke into VCMix2 clears VCMix (cameras 1-3) under it, so 4-6 show.
+  - **Cameras 1-3: off** - they are on top anyway; VCMix2 underneath is kept.
+- Blender paints one color layer per stroke, so the clear runs right after each stroke (a timer
+  that never touches the mesh while a stroke runs): a camera 4-6 stroke over painted 1-3 appears
+  when the mouse is released. Soft strokes clear in proportion.
+- **Only faces turned toward the painted camera are claimed**, so a brush reaching through the
+  mesh or around its silhouette cannot hand the far side to a camera that cannot see it. Paint and
+  Flood also turn on the brush's **Front Faces Only**.
+- VCMix2 alpha (otherwise unused) marks where a stroke went, so painting a camera 4-6 over its own
+  color still claims the area.
+- **Undo: two steps per stroke** - Ctrl+Z once undoes the clear, twice the stroke.
+- **Erase works on all layers**, from any camera row: it erases VCMix alpha, the blend mask of
+  every camera, so the original scan shows (Shift+click brings the projection back).
+
+#### UI and fixes
+- Flood and Erase use standard UI icons (fill, eraser), centered like the brush - the toolbar
+  icons were drawn large and clipped.
+- Slot buttons and the global toggle are equal-width columns, so nothing is clipped at 4-6 slots.
+- Solo refuses a camera that is no longer in the scene (e.g. its collection was deleted) with a
+  clear message, instead of a misleading "hidden collection" warning.
+
 ### Camera Project - paint VCMix per camera (2026-09-24)
 - The placeholder buttons on each selected camera now paint the mesh's **VCMix** in Vertex Paint
   (switching there from Object/Edit Mode), in the camera's channel: Camera 1 red, 2 green, 3 blue.

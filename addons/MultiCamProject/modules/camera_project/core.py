@@ -18,12 +18,19 @@ def data(obj):
     return obj.multicamproject_cam
 
 
+def slot_count(d):
+    return int(d.slot_count)
+
+
 def get_slots(d):
-    return [d.slot_1, d.slot_2, d.slot_3]
+    """The active slots (Camera 1..slot_count). Slots above the count keep their camera
+    but are not projected."""
+    return [getattr(d, f"slot_{i}") for i in range(1, slot_count(d) + 1)]
 
 
 def set_slots(d, cams):
-    d.slot_1, d.slot_2, d.slot_3 = cams
+    for i, cam in enumerate(cams, 1):
+        setattr(d, f"slot_{i}", cam)
 
 
 # ---------------------------------------------------------------- images
@@ -145,24 +152,29 @@ def score_camera(cam, co_w, nr_w, scene):
     """Same projection as the GN group: coverage (share of vertices in frame)
     x mean facing of those vertices."""
     cd = cam.data
-    if cd.type != 'PERSP':
+    if cd.type not in {'PERSP', 'ORTHO'}:
         return 0.0
+    ortho = cd.type == 'ORTHO'
     cmi = np.array(cam.matrix_world.inverted_safe(), dtype=np.float32)
     p = co_w @ cmi[:3, :3].T + cmi[:3, 3]
     depth = -p[:, 2]
     front = depth > 1e-6
     if not front.any():
         return 0.0
-    scale = cd.lens / cd.sensor_width
+    # frame width at each point (sensor fit horizontal)
+    width = cd.ortho_scale if ortho else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens
     aspect = image_aspect(cam_image(cam), scene, load=False)
-    d = np.where(front, depth, 1.0)
-    u = p[:, 0] / d * scale + 0.5
-    v = p[:, 1] / d * scale * aspect + 0.5
+    u = p[:, 0] / width + 0.5
+    v = p[:, 1] / width * aspect + 0.5
     inside = front & (u > 0) & (u < 1) & (v > 0) & (v < 1)
     if not inside.any():
         return 0.0
-    to_cam = np.array(cam.matrix_world.translation, dtype=np.float32) - co_w[inside]
-    to_cam /= np.maximum(np.linalg.norm(to_cam, axis=1, keepdims=True), 1e-9)
+    if ortho:       # every point looks along the camera's back axis
+        back = np.array(cam.matrix_world.to_3x3().col[2], dtype=np.float32)
+        to_cam = np.broadcast_to(back / max(np.linalg.norm(back), 1e-9), (int(inside.sum()), 3))
+    else:
+        to_cam = np.array(cam.matrix_world.translation, dtype=np.float32) - co_w[inside]
+        to_cam /= np.maximum(np.linalg.norm(to_cam, axis=1, keepdims=True), 1e-9)
     facing = np.clip((nr_w[inside] * to_cam).sum(axis=1), 0.0, None).mean()
     return float(inside.mean() * facing)
 
@@ -174,10 +186,12 @@ def scene_cameras(scene):
 # ---------------------------------------------------------------- material
 # One material per object, MAT_<name>, in material slot 1. Three frames:
 #   ORIGINAL MATERIALS  the scan's Base Color images, picked per face by uv_index
-#   PROJECTION          Cam 1/2/3 on UV_cam1/2/3, weighted by VCMix
+#   PROJECTION          Cam 1..N on UV_cam1..N, weighted by VCMix (1-3) and VCMix2 (4-6)
 #   BLEND               Original Scan slider (0 = projection, 1 = scan), masked by VCMix alpha
 
 MAT_TAG = "multicamproject_material"
+MAT_VERSION_KEY = "multicamproject_mat_version"
+MAT_VERSION = 5         # bump when the material's node setup changes
 LEGACY_PREFIX = "MATMCP_"           # material of the removed Convert Material button
 ORIGINAL_SCAN = "Original Scan"     # name of the slider's Value node
 UV_INDEX = "uv_index"               # face attribute: the face's material slot
@@ -267,31 +281,78 @@ def _build_original(b, uv_name, textures):
     return col
 
 
-def _build_projection(b):
-    """PROJECTION frame: the 3 camera photos weighted by VCMix (normalised).
-    Returns (color, VCMix alpha)."""
-    f = b.frame("PROJECTION", (-1730, 1500))
-    vc = b.n("ShaderNodeVertexColor", (350, -950), f, layer_name="VCMix")
-    sepc = b.n("ShaderNodeSeparateColor", (550, -950), f)
-    b.link(vc.outputs["Color"], sepc.inputs[0])
-    ws = [sepc.outputs["Red"], sepc.outputs["Green"], sepc.outputs["Blue"]]
-    acc = None
-    for i in range(3):
-        y = -50 - i * 300
-        uvn = b.n("ShaderNodeUVMap", (50, y), f, uv_map=f"UV_cam{i + 1}")
-        uvn.name = f"CamUV_{i + 1}"
-        tex = b.n("ShaderNodeTexImage", (300, y), f, extension="CLIP")
-        tex.name = f"CamTex_{i + 1}"
-        tex.label = f"Cam {i + 1}"
-        b.link(uvn.outputs["UV"], tex.inputs["Vector"])
-        sc = b.vmath("SCALE", tex.outputs["Color"], None, (700, y), f)
-        b.link(ws[i], sc.inputs["Scale"])
-        acc = sc.outputs[0] if acc is None else b.vmath("ADD", acc, sc.outputs[0], (950, -150 - i * 200), f).outputs[0]
-    tot = b.math("ADD", b.math("ADD", ws[0], ws[1], (800, -950), parent=f), ws[2], (950, -950), parent=f)
-    inv = b.math("DIVIDE", 1.0, b.math("MAXIMUM", tot, 1e-6, (1100, -950), parent=f), (1250, -950), parent=f)
-    norm = b.vmath("SCALE", acc, None, (1450, -450), f)
+def _weighted(b, f, ws, cams, x, label):
+    """sum(w_i * photo_i) / sum(w_i) over one layer's cameras; returns (color, sum)."""
+    acc, tot = None, None
+    for w, (i, tex) in zip(ws, cams):
+        y = -50 - (i - 1) * 300
+        sc = b.vmath("SCALE", tex.outputs["Color"], None, (x, y), f)
+        b.link(w, sc.inputs["Scale"])
+        acc = sc.outputs[0] if acc is None else b.vmath("ADD", acc, sc.outputs[0], (x + 250, y), f).outputs[0]
+        tot = w if tot is None else b.math("ADD", tot, w, (x + 250, y - 150), parent=f)
+    inv = b.math("DIVIDE", 1.0, b.math("MAXIMUM", tot, 1e-6, (x + 450, -950), parent=f),
+                 (x + 600, -950), parent=f)
+    norm = b.vmath("SCALE", acc, None, (x + 750, -450), f)
+    norm.label = label
     b.link(inv, norm.inputs["Scale"])
-    return norm.outputs[0], vc.outputs["Alpha"]
+    return norm.outputs[0], tot
+
+
+def _build_projection(b, n):
+    """PROJECTION frame: cameras 1-3 weighted by VCMix, 4-6 by VCMix2 (each normalised).
+    Cameras 1-3 win (VCMix on top): s1 = sum(VCMix), w2 = sum(VCMix2) x (1 - s1), color =
+    (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
+    mask = VCMix alpha x (s1 + w2): where no camera covers the face, the scan shows.
+    Returns (color, blend mask)."""
+    f = b.frame("PROJECTION", (-1730, 1500))
+    texs = []
+    for i in range(1, n + 1):
+        y = -50 - (i - 1) * 300
+        uvn = b.n("ShaderNodeUVMap", (50, y), f, uv_map=f"UV_cam{i}")
+        uvn.name = f"CamUV_{i}"
+        tex = b.n("ShaderNodeTexImage", (300, y), f, extension="CLIP")
+        tex.name = f"CamTex_{i}"
+        tex.label = f"Cam {i}"
+        b.link(uvn.outputs["UV"], tex.inputs["Vector"])
+        texs.append((i, tex))
+    layers = []
+    for layer, name in enumerate(gn_builder.LAYERS):
+        cams = texs[layer * 3:layer * 3 + 3]
+        if not cams:
+            break
+        vc = b.n("ShaderNodeVertexColor", (350, -950 - layer * 250), f, layer_name=name)
+        sepc = b.n("ShaderNodeSeparateColor", (550, -950 - layer * 250), f)
+        b.link(vc.outputs["Color"], sepc.inputs[0])
+        ws = [sepc.outputs[k] for k in ("Red", "Green", "Blue")]
+        col, _tot = _weighted(b, f, ws, cams, 700 + layer * 1000, f"{name} cameras")
+        layers.append((col, vc, ws))
+    color, vc1, ws1 = layers[0]
+    mask = vc1.outputs["Alpha"]
+    if len(layers) > 1:
+        col2, _vc2, ws2 = layers[1]
+
+        def layer_sum(ws, y, label):
+            t = b.math("ADD", b.math("ADD", ws[0], ws[1], (2700, y), parent=f), ws[2], (2850, y), label, f)
+            t.node.use_clamp = True
+            return t
+
+        s1 = layer_sum(ws1, -1200, "1-3 Cover")
+        s2 = layer_sum(ws2, -1400, "4-6 Weight")
+        w2 = b.math("MULTIPLY", s2, b.math("SUBTRACT", 1.0, s1, (3050, -1300), parent=f),
+                    (3200, -1400), "4-6 Share (1-3 on top)", f)
+        both = b.math("ADD", s1, w2, (3350, -1300), "Cameras Cover", f)
+        both.node.use_clamp = True
+        share = b.math("DIVIDE", w2, b.math("MAXIMUM", both, 1e-6, (3500, -1300), parent=f),
+                       (3650, -1300), "4-6 Fraction", f)
+        mx = b.n("ShaderNodeMix", (3800, -450), f, data_type="RGBA")
+        mx.label = "VCMix on top"
+        b.link(share, mx.inputs[0])
+        b.link(color, gn_builder._sock(mx.inputs, "A"))
+        b.link(col2, gn_builder._sock(mx.inputs, "B"))
+        color = gn_builder._sock(mx.outputs, "Result")
+        # nothing covers the face (1-3 cleared, 4-6 do not see it): the scan shows
+        mask = b.math("MULTIPLY", mask, both, (3800, -1200), "Blend Mask", f)
+    return color, mask
 
 
 def build_material(obj, warnings=None):
@@ -300,6 +361,7 @@ def build_material(obj, warnings=None):
     name = material_name(obj)
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     mat[MAT_TAG] = True
+    mat[MAT_VERSION_KEY] = MAT_VERSION
     mat.use_nodes = True
     nt = mat.node_tree
     old = nt.nodes.get(ORIGINAL_SCAN)
@@ -311,7 +373,7 @@ def build_material(obj, warnings=None):
     b.link(bsdf.outputs[0], out.inputs["Surface"])
 
     original = _build_original(b, _scan_uv(obj, warnings), original_textures(obj))
-    projected, mask = _build_projection(b)
+    projected, mask = _build_projection(b, slot_count(data(obj)))
 
     # projection weight = mask x (1 - Original Scan)
     f = b.frame("BLEND", (-150, 250))
@@ -329,16 +391,20 @@ def build_material(obj, warnings=None):
     return mat
 
 
-def _material_ok(mat):
-    return mat is not None and mat.node_tree and mat.node_tree.nodes.get(ORIGINAL_SCAN) and all(
-        mat.node_tree.nodes.get(f"CamTex_{i}") for i in (1, 2, 3))
+def _material_ok(mat, n):
+    """Built for exactly `n` cameras (CamTex_1..n, no CamTex_n+1)."""
+    if mat is None or not mat.node_tree or not mat.node_tree.nodes.get(ORIGINAL_SCAN):
+        return False
+    nodes = mat.node_tree.nodes
+    return (mat.get(MAT_VERSION_KEY) == MAT_VERSION
+            and all(nodes.get(f"CamTex_{i}") for i in range(1, n + 1)) and not nodes.get(f"CamTex_{n + 1}"))
 
 
 def ensure_material(obj):
     """Each object owns MAT_<name>. A duplicated object carries the original's
     pointer, so a material with another name is not reused."""
     mat = bpy.data.materials.get(material_name(obj))
-    if not _material_ok(mat):
+    if not _material_ok(mat, slot_count(data(obj))):
         mat = build_material(obj)
     data(obj).material = mat
     return mat
@@ -431,7 +497,7 @@ def get_modifier(obj):
     if mod and mod.type == 'NODES':
         return mod
     for m in obj.modifiers:
-        if m.type == 'NODES' and m.node_group and m.node_group.name == gn_builder.MAIN:
+        if m.type == 'NODES' and gn_builder.is_main(m.node_group):
             return m
     return None
 
@@ -462,21 +528,32 @@ def _write_keep(mod, keep):
             pass
 
 
+def _setup_objects(exclude=None):
+    return [o for o in bpy.data.objects
+            if o is not exclude and o.type == 'MESH' and data(o).is_setup and get_modifier(o)]
+
+
 def ensure_modifier(obj):
-    """The object's GN-CameraProject modifier, with the groups up to date. The groups
-    are shared: a rebuild resets every object's inputs and breaks its lens drivers, so
-    all other set-up objects get their settings back and are rewired too."""
+    """The object's modifier on the group for its slot count, with the groups up to date.
+    The groups are shared (and all use the single-camera group): a rebuild resets every
+    object's inputs and breaks its lens drivers, so every group in use is rebuilt and all
+    other set-up objects get their settings back and are rewired too."""
     mod = get_modifier(obj)
-    rebuilt = not gn_builder.up_to_date()
-    others = []
-    if rebuilt:
-        others = [(o, _read_keep(get_modifier(o))) for o in bpy.data.objects
-                  if o is not obj and o.type == 'MESH' and data(o).is_setup and get_modifier(o)]
+    n = slot_count(data(obj))
+    others = _setup_objects(exclude=obj)
+    counts = {n} | {slot_count(data(o)) for o in others}
+    rebuilt = not all(gn_builder.up_to_date(k) for k in counts)
+    others = [(o, _read_keep(get_modifier(o))) for o in others] if rebuilt else []
     keep = _read_keep(mod)
-    main = gn_builder.ensure_node_groups()
-    mod = mod or obj.modifiers.new(MOD_NAME, 'NODES')
+    for k in counts - {n}:
+        gn_builder.ensure_node_groups(k)
+    main = gn_builder.ensure_node_groups(n)
+    if mod is None:
+        mod = obj.modifiers.new(MOD_NAME, 'NODES')
+        rebuilt = True      # a fresh modifier's Mode menu needs the update below too
     if mod.node_group != main:
         mod.node_group = main
+        rebuilt = True      # other group: its Mode menu needs the update below too
     if rebuilt:
         # a rebuilt group's Mode menu has no items until the next update - restoring
         # "Sharp" before that fails silently
@@ -495,16 +572,18 @@ def ident(ng, name):
     raise KeyError(name)
 
 
-REQUIRED_INPUTS = ("Material", "Mode", "Previous Bake", "Occlusion") + tuple(
-    f"{k} {i}" for i in (1, 2, 3) for k in ("Camera", "Focal", "Sensor", "Aspect")) + tuple(
-    f"UV Shift Cam{i}" for i in (1, 2, 3))
+def required_inputs(n):
+    return ("Material", "Mode", "Previous Bake", "Occlusion") + tuple(
+        f"{k} {i}" for i in range(1, n + 1)
+        for k in ("Camera", "Focal", "Sensor", "Aspect", "Ortho", "Ortho Scale")) + tuple(
+        f"UV Shift Cam{i}" for i in range(1, n + 1))
 
 
-def missing_inputs(ng):
-    """Inputs apply_slots needs but a hand-edited group no longer has."""
+def missing_inputs(ng, n):
+    """Inputs apply_slots needs (for `n` slots) but a hand-edited group no longer has."""
     names = {it.name for it in ng.interface.items_tree
              if getattr(it, "in_out", None) == "INPUT"}
-    return [n for n in REQUIRED_INPUTS if n not in names]
+    return [k for k in required_inputs(n) if k not in names]
 
 
 def input_socket(mod, name):
@@ -549,6 +628,59 @@ def remove_drivers(obj, mod):
 
 
 # ---------------------------------------------------------------- pixel shift
+
+def cam_data(cam):
+    return cam.multicamproject_camera
+
+
+def is_global(cam):
+    return cam is not None and cam_data(cam).is_global
+
+
+def shift_holder(obj, cam, create=False):
+    """What holds the shift of `cam` for `obj` (has `.shift`): the camera itself when it is
+    global (one shift for every object), else the object's shift item."""
+    if is_global(cam):
+        return cam_data(cam)
+    return shift_item(obj, cam, create)
+
+
+def users(cam):
+    """Set-up objects that have `cam` in one of their slots."""
+    return [o for o in bpy.data.objects
+            if o.type == 'MESH' and data(o).is_setup and cam in get_slots(data(o))]
+
+
+def push_global_shift(cam):
+    """A global camera's shift into every object that slots it, and its background offset."""
+    shift = tuple(cam_data(cam).shift)
+    for o in users(cam):
+        mod = get_modifier(o)
+        if mod and mod.node_group:
+            set_input(mod, f"UV Shift Cam{slot_of(o, cam)}", shift)
+    set_camera_offset(cam, shift)
+
+
+def set_global(cam, value, obj, scene):
+    """Mark `cam` global / object-attached. The shift carries over from / to `obj`'s own
+    shift, so the photo does not jump; every object using the camera is rewired."""
+    if is_global(cam) == value:
+        return
+    cd = cam_data(cam)
+    if value:
+        it = shift_item(obj, cam) if obj else None
+        cd.is_global = True
+        if it:
+            cd["shift"] = tuple(it.shift)     # raw write: rewire below pushes it
+    else:
+        cd.is_global = False
+        if obj:
+            shift_item(obj, cam, create=True)["shift"] = tuple(cd.shift)
+    for o in users(cam):
+        apply_slots(o, scene)
+    holder = shift_holder(obj, cam) if obj else cd
+    set_camera_offset(cam, holder.shift)
+
 
 def shift_item(obj, cam, create=False):
     """The object's remembered pixel shift for `cam` (initialised to 0,0)."""
@@ -636,9 +768,11 @@ def apply_slots(obj, scene):
         set_input(mod, f"Camera {i}", cam)
         _set_driver(obj, input_path(mod, f"Focal {i}"), cam, "lens")
         _set_driver(obj, input_path(mod, f"Sensor {i}"), cam, "sensor_width")
+        _set_driver(obj, input_path(mod, f"Ortho {i}"), cam, "type")    # enum -> 0 persp, 1 ortho
+        _set_driver(obj, input_path(mod, f"Ortho Scale {i}"), cam, "ortho_scale")
         img = cam_image(cam) if cam else None
         set_input(mod, f"Aspect {i}", image_aspect(img, scene))
-        it = shift_item(obj, cam, create=True) if cam else None
+        it = shift_holder(obj, cam, create=True) if cam else None
         set_input(mod, f"UV Shift Cam{i}", tuple(it.shift) if it else (0.0, 0.0))
         tex = mat.node_tree.nodes[f"CamTex_{i}"]
         tex.image = img
@@ -647,7 +781,7 @@ def apply_slots(obj, scene):
 
 
 def assign_slot(obj, cam, slot, scene):
-    """Put `cam` in slot 1..3. A camera lives in one slot only - if it already sat in
+    """Put `cam` in slot 1..slot_count. A camera lives in one slot only - if it already sat in
     another slot, the two slots swap."""
     d = data(obj)
     slots = get_slots(d)
@@ -667,29 +801,62 @@ def slot_of(obj, cam):
     return slots.index(cam) + 1 if cam in slots else 0
 
 
+def change_slot_count(obj, scene):
+    """After the Cameras dropdown: empty new slots get the best-scoring unused cameras
+    with an image, then the modifier moves to the group for the new count and the
+    material is rebuilt for it. Slots above the count keep their camera."""
+    d = data(obj)
+    if not d.is_setup:
+        return
+    slots = get_slots(d)
+    free = [it.camera for it in d.cameras            # score order
+            if it.camera and it.camera not in slots and image_ok(cam_image(it.camera))]
+    for i, cam in enumerate(slots):
+        if cam is None and free:
+            slots[i] = free.pop(0)
+    set_slots(d, slots)
+    apply_slots(obj, scene)
+
+
 # ---------------------------------------------------------------- vertex paint
 
-SLOT_COLORS = {1: (1.0, 0.0, 0.0), 2: (0.0, 1.0, 0.0), 3: (0.0, 0.0, 1.0)}   # VCMix R/G/B
+_RGB = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))
+SLOT_COLORS = {i: _RGB[(i - 1) % 3] for i in range(1, 7)}  # R/G/B of VCMix (1-3), VCMix2 (4-6)
+
+
+def slot_layer(slot):
+    """Color layer a slot paints into."""
+    return gn_builder.LAYERS[(slot - 1) // 3]
 PAINT_BRUSH = "brushes/essentials_brushes-mesh_vertex.blend/Brush/Paint Hard"
 
 
-def ensure_paint_layer(obj):
-    """Painting edits the mesh's own VCMix - the layer Previous Bake blends in, since
-    the modifier recomputes VCMix. Without one (never baked), it starts as a copy of
-    what the modifier shows now. Previous Bake goes to 1 so strokes show 1:1.
+def ensure_paint_layer(obj, layer="VCMix"):
+    """Painting edits the mesh's own VCMix / VCMix2 - the layers Previous Bake blends in,
+    since the modifier recomputes them. Without one (never baked), each starts as a copy
+    of what the modifier shows now. Previous Bake goes to 1 so strokes show 1:1.
     Object mode only. Returns a list of info strings."""
     info = []
     me = obj.data
-    base = me.color_attributes.get("VCMix")
-    if base is None:
+    # both layers at once (Previous Bake blends every layer the mesh has); read what the
+    # modifier shows before adding anything to the mesh
+    missing = [n for n in gn_builder.LAYERS[:1 + (slot_count(data(obj)) > 3)]
+               if me.color_attributes.get(n) is None]
+    copies = {}
+    if missing:
         ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
-        src = ev.color_attributes.get("VCMix")
-        base = me.color_attributes.new("VCMix", 'FLOAT_COLOR', src.domain if src else 'CORNER')
-        if src is not None and len(src.data) == len(base.data):
-            buf = np.empty(len(src.data) * 4, dtype=np.float32)
-            src.data.foreach_get("color", buf)
-            base.data.foreach_set("color", buf)
-            info.append("VCMix copied into the mesh to paint on")
+        for name in missing:
+            src = ev.color_attributes.get(name)
+            if src is not None:
+                buf = np.empty(len(src.data) * 4, dtype=np.float32)
+                src.data.foreach_get("color", buf)
+                copies[name] = (src.domain, buf)
+    for name in missing:
+        domain, buf = copies.get(name, ('CORNER', None))
+        new = me.color_attributes.new(name, 'FLOAT_COLOR', domain)
+        if buf is not None and len(buf) == len(new.data) * 4:
+            new.data.foreach_set("color", buf)
+            info.append(f"{name} copied into the mesh to paint on")
+    base = me.color_attributes.get(layer)
     me.color_attributes.active_color = base
     mod = get_modifier(obj)
     if mod and get_input(mod, "Previous Bake") < 1.0:
@@ -725,6 +892,8 @@ def refresh(obj, scene):
     if d.image_folder and not listing:
         warnings.append(f"Image folder not found or empty: {d.image_folder}")
     for cam in cams:
+        if is_global(cam):      # image and clipping belong to the global setup
+            continue
         resolve_cam_image(cam, folder, listing)
         cam.data.clip_start = d.clip_start
         cam.data.clip_end = d.clip_end
@@ -745,7 +914,8 @@ def refresh(obj, scene):
     usable = [c for c in hitting if image_ok(cam_image(c))]
     slots = get_slots(d)
     if not d.user_picked:
-        slots = (usable + [None, None, None])[:3]
+        n = slot_count(d)
+        slots = (usable + [None] * n)[:n]
     else:
         for i, cam in enumerate(slots):
             if cam is not None and cam in usable:

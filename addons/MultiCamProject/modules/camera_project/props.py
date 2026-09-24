@@ -1,10 +1,10 @@
-"""Per-object data: the cameras that hit the object and the Camera 1/2/3 slots.
+"""Per-object data: the cameras that hit the object and the Camera 1-6 slots.
 
 Images are NOT stored here - each image lives on its camera as
 camera.data.background_images[0].image (single source of truth).
 """
 import bpy
-from bpy.props import (BoolProperty, CollectionProperty, FloatProperty,
+from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
                        FloatVectorProperty, IntProperty, PointerProperty, StringProperty)
 
 
@@ -47,6 +47,11 @@ def _on_cam_index(self, context):
         bpy.ops.multicamproject.solo_camera(camera=cam.name)
 
 
+def _on_slot_count(self, context):
+    from . import core
+    core.change_slot_count(self.id_data, context.scene)
+
+
 class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
     is_setup: BoolProperty(default=False)
     cameras: CollectionProperty(type=MULTICAMPROJECT_CamItem)
@@ -57,6 +62,16 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
     slot_1: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 1")
     slot_2: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 2")
     slot_3: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 3")
+    slot_4: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 4")
+    slot_5: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 5")
+    slot_6: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 6")
+    slot_count: EnumProperty(
+        name="Cameras", default='3', update=_on_slot_count,
+        items=[(str(n), str(n), f"Project {n} cameras at once"
+                + ("" if n == 3 else " - cameras 4-6 paint into VCMix2, on top of 1-3"), n)
+               for n in (3, 4, 5, 6)],
+        description="How many cameras project at once. Cameras 4-6 paint into VCMix2, "
+                    "which covers cameras 1-3 where it is painted")
     user_picked: BoolProperty(
         default=False,
         description="True once the user chose a slot - auto-fill then keeps their choice")
@@ -70,16 +85,43 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
                             description="Clip end applied to every camera on Reload All")
 
 
-_classes = (MULTICAMPROJECT_CamItem, MULTICAMPROJECT_CamShift, MULTICAMPROJECT_ObjectData)
+def _on_global_shift(self, context):
+    # fires on every step while the slider is dragged
+    from . import core
+    core.push_global_shift(self.id_data)
+
+
+class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
+    """Per-camera data (on the camera object, so it belongs to the file, not to a mesh).
+    A global camera is shared by every object: one UV shift for all of them, and Reload
+    All leaves its image and clipping alone."""
+    is_global: BoolProperty(
+        name="Global", default=False,
+        description="Global camera: one shift for every object, image and clipping not "
+                    "touched by Reload All. Off = attached to the objects (shift per object)")
+    side: StringProperty(
+        description="View this camera was created for by Project from Sides (Front, Left, ...). "
+                    "Empty = not a sides camera")
+    shift: FloatVectorProperty(
+        name="Shift", size=2, default=(0.0, 0.0), subtype='XYZ',
+        min=-1.0, max=1.0, step=0.1, precision=5, update=_on_global_shift,
+        description="Shift of the photo in UV range, shared by every object (global camera): "
+                    "-1 = one full photo to the left/down, 1 = to the right/up")
+
+
+_classes = (MULTICAMPROJECT_CamItem, MULTICAMPROJECT_CamShift, MULTICAMPROJECT_ObjectData,
+            MULTICAMPROJECT_CameraData)
 
 
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.types.Object.multicamproject_cam = PointerProperty(type=MULTICAMPROJECT_ObjectData)
+    bpy.types.Object.multicamproject_camera = PointerProperty(type=MULTICAMPROJECT_CameraData)
 
 
 def unregister():
+    del bpy.types.Object.multicamproject_camera
     del bpy.types.Object.multicamproject_cam
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

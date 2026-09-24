@@ -1,7 +1,7 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import props, operators, ui
+from . import props, operators, ui, paint_sync
 
 
 @persistent
@@ -23,6 +23,7 @@ def register():
     props.register()
     operators.register()
     ui.register()
+    paint_sync.register()
     bpy.app.handlers.load_post.append(_on_load)
     bpy.app.timers.register(_migrate_now, first_interval=0.1)
 
@@ -30,6 +31,7 @@ def register():
 def unregister():
     if _on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load)
+    paint_sync.unregister()
     ui.unregister()
     operators.unregister()
     props.unregister()

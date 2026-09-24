@@ -115,6 +115,17 @@ class MULTICAMPROJECT_OT_ToggleCameraProject(bpy.types.Operator):
         module_manager.toggle("camera_project")
         return {'FINISHED'}
 
+
+class MULTICAMPROJECT_OT_ToggleProjectSides(bpy.types.Operator):
+    """Toggle ProjectSides module on/off"""
+    bl_idname = "multicamproject.toggle_project_sides"
+    bl_label = "ProjectSides"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("project_sides")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
@@ -122,9 +133,11 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleConsole)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ClearConsole)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleCameraProject)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleProjectSides)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleProjectSides)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleCameraProject)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ClearConsole)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleConsole)
