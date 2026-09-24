@@ -92,16 +92,17 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             header, body = box.panel("multicamproject_all_cams", default_closed=False)
             header.label(text=f"All Cameras ({len(rest)})", icon='OUTLINER_OB_CAMERA')
             if body:
-                for item in rest:
-                    self._draw_block(context, body, obj, item, debug, solo_cam, shift=False, flood=flood)
+                # a list widget: it scrolls itself to its active row = the soloed camera
+                body.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
+                                   rows=12)
 
     @staticmethod
-    def _metrics(context, debug):
+    def _metrics(context, debug, margin=2.8):
         """Split factors for a camera block. Blender scales ui_units_x down in narrow
         panels, so fixed widths are made with splits from the region's pixel width:
         name and slot buttons keep their size, the image field absorbs the rest."""
         unit = 20 * context.preferences.system.ui_scale
-        avail = max(1.0, context.region.width - 2.8 * unit)   # outer box, panel, block box
+        avail = max(1.0, context.region.width - margin * unit)   # boxes, panel, list frame
         slots_f = min(0.6, 4.8 * unit / avail)
         left_w = max(1.0, avail * (1.0 - slots_f) - unit)       # minus eye button
         name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
@@ -120,7 +121,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         if shift:
             self._draw_shift(col, obj, item.camera, m, flood)
 
-    def _draw_row(self, col, obj, item, debug, m, solo):
+    @staticmethod
+    def _draw_row(col, obj, item, debug, m, solo):
         slots_f, name_f = m[:2]
         cam = item.camera
         split = col.row().split(factor=1.0 - slots_f, align=True)
@@ -176,9 +178,42 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         op.camera = cam.name
 
 
+class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
+    """All Cameras: the cameras not in Camera 1/2/3, alphabetical. Its active row is the
+    soloed camera; clicking a name solos that camera."""
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
+        if item.camera is None:
+            return
+        panel = MULTICAMPROJECT_PT_CameraProject
+        debug = context.scene.multicamproject_props.debug_mode
+        solo = is_solo(context, item.camera)
+        col = layout.column()
+        col.active = solo or not is_solo(context, context.scene.camera)
+        panel._draw_row(col, context.active_object, item, debug,
+                        panel._metrics(context, debug, margin=4.2), solo)   # + list frame, scrollbar
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        slots = core.get_slots(data)
+        pattern = self.filter_name.lower()
+        flags = [self.bitflag_filter_item
+                 if it.camera and it.camera not in slots and pattern in it.camera.name.lower() else 0
+                 for it in items]
+        order = bpy.types.UI_UL_list.sort_items_helper(
+            [(i, it.camera.name.lower() if it.camera else "") for i, it in enumerate(items)],
+            lambda e: e[1])
+        return flags, order
+
+
+_classes = (MULTICAMPROJECT_PT_CameraProject, MULTICAMPROJECT_UL_cameras)
+
+
 def register():
-    bpy.utils.register_class(MULTICAMPROJECT_PT_CameraProject)
+    for c in _classes:
+        bpy.utils.register_class(c)
 
 
 def unregister():
-    bpy.utils.unregister_class(MULTICAMPROJECT_PT_CameraProject)
+    for c in reversed(_classes):
+        bpy.utils.unregister_class(c)

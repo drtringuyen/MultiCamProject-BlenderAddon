@@ -119,6 +119,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         state = _load_state(context, key)
         if state and space.local_view is None:   # left local view by hand
             _restore_camera(state, space)
+            _restore_collections(context, state)
             state = None
             _save_state(context, key, None)
 
@@ -129,6 +130,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
             rv3d.view_perspective = 'PERSP'
             if state:
                 space.overlay.show_overlays = state["overlays"]
+                _restore_collections(context, state)
             _save_state(context, key, None)
             return {'FINISHED'}
 
@@ -152,6 +154,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         bg = core.bg_entry(cam)
         state.update(cam=cam.name, hidden=cam.hide_get(),
                      depth=bg.display_depth if bg else "")
+        _reveal_collections(context, cam, state, space, keep=(obj, cam))
         _save_state(context, key, state)
         cam.hide_set(False)
         cam.local_view_set(space, True)
@@ -164,6 +167,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         scene.camera = cam
         space.camera = cam   # local view looks through the view's own camera
         rv3d.view_perspective = 'CAMERA'
+        show_in_list(obj, cam)
         if not cam.visible_get():
             self.report({'WARNING'}, f"'{cam.name}' is in a hidden collection - "
                                      "its background image cannot be drawn")
@@ -171,7 +175,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
 
 
 # Solo state lives on the window manager (an ID), so it survives addon reloads:
-# wm["multicamproject_solo"][<space pointer>] = {"overlays", "cam", "hidden", "depth"}
+# wm["multicamproject_solo"][<space pointer>] = {"overlays", "cam", "hidden", "depth", "colls"}
 _WM_KEY = "multicamproject_solo"
 
 
@@ -205,6 +209,86 @@ def _restore_camera(state, space):
     if space.local_view is not None:
         cam.local_view_set(space, False)
     cam.hide_set(state.get("hidden", False))
+
+
+def _layer_path(layer, coll):
+    """Layer collections from the view layer's root down to `coll` (root excluded)."""
+    for child in layer.children:
+        if child.collection == coll:
+            return [child]
+        sub = _layer_path(child, coll)
+        if sub:
+            return [child] + sub
+    return []
+
+
+def _reveal_collections(context, cam, state, space, keep):
+    """A camera in an excluded/hidden collection is not drawn, and neither is its
+    background image. Solo includes the collection (and its parents) while soloed;
+    the local view still shows only the object and this camera. The first state seen
+    is kept in state["colls"] for _restore_collections."""
+    saved = state.setdefault("colls", {})
+    opened = []
+    for coll in cam.users_collection:
+        for lc in _layer_path(context.view_layer.layer_collection, coll):
+            c = lc.collection
+            if lc.exclude or lc.hide_viewport or c.hide_viewport:
+                saved.setdefault(c.name, [lc.exclude, lc.hide_viewport, c.hide_viewport])
+                lc.exclude = lc.hide_viewport = c.hide_viewport = False
+                opened.append(c)
+    if not opened:
+        return
+    context.view_layer.update()     # the camera needs its base before local_view_set
+    # re-including a collection during local view puts ALL its objects into the view
+    for c in opened:
+        for o in c.all_objects:
+            if o not in keep and o.local_view_get(space):
+                o.local_view_set(space, False)
+
+
+def _restore_collections(context, state):
+    """Put the collections _reveal_collections opened back as they were."""
+    for name, (exclude, hide, coll_hide) in state.get("colls", {}).items():
+        coll = bpy.data.collections.get(name)
+        path = _layer_path(context.view_layer.layer_collection, coll) if coll else []
+        if path:
+            lc = path[-1]
+            lc.hide_viewport, coll.hide_viewport = hide, coll_hide
+            lc.exclude = exclude
+
+
+def _redraw_sidebars():
+    for win in bpy.context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type == 'VIEW_3D':
+                for region in area.regions:
+                    if region.type == 'UI':
+                        region.tag_redraw()
+
+
+def show_in_list(obj, cam, force=False):
+    """Make `cam` the active row of the All Cameras list. Blender scrolls a list to its
+    active row only when a redraw sees that row change - so with `force` (the row is
+    already active but scrolled away) the list is drawn once without an active row and
+    the row is set back right after."""
+    d = core.data(obj)
+    i = next((n for n, it in enumerate(d.cameras) if it.camera == cam), None)
+    if i is None:
+        return
+    if force and d.cam_index == i:
+        d["cam_index"] = -1     # raw ID writes: no update callback
+        _redraw_sidebars()
+        name = obj.name
+
+        def _restore():
+            o = bpy.data.objects.get(name)
+            if o is not None:
+                core.data(o)["cam_index"] = i
+                _redraw_sidebars()
+
+        bpy.app.timers.register(_restore, first_interval=0.05)
+        return
+    d.cam_index = i     # its update skips: the camera is already soloed
 
 
 def is_solo(context, cam):
@@ -414,6 +498,52 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _sidebar_solo_poll(context):
+    """Keyboard shortcuts act only over this addon's sidebar tab while a camera is
+    soloed; otherwise the keys keep their usual job."""
+    region = context.region
+    return (region is not None and region.type == 'UI'
+            and region.active_panel_category == "MultiCamProject"
+            and MULTICAMPROJECT_OT_SoloCamera.poll(context)
+            and core.data(context.active_object).is_setup
+            and is_solo(context, context.scene.camera))
+
+
+class MULTICAMPROJECT_OT_SoloAssign(bpy.types.Operator):
+    """Use the soloed camera as Camera 1/2/3"""
+    bl_idname = "multicamproject.solo_assign"
+    bl_label = "Assign Soloed Camera"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    slot: IntProperty(min=1, max=3, default=1, options={'HIDDEN'})
+
+    @classmethod
+    def poll(cls, context):
+        return _sidebar_solo_poll(context)
+
+    def execute(self, context):
+        cam = context.scene.camera
+        if not core.image_ok(core.cam_image(cam)):
+            self.report({'WARNING'}, f"'{cam.name}' has no loaded image - it will project black")
+        core.assign_slot(context.active_object, cam, self.slot, context.scene)
+        self.report({'INFO'}, f"'{cam.name}' is Camera {self.slot}")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_SoloFrame(bpy.types.Operator):
+    """Scroll the camera list to the soloed camera"""
+    bl_idname = "multicamproject.solo_frame"
+    bl_label = "Show Soloed Camera"
+
+    @classmethod
+    def poll(cls, context):
+        return _sidebar_solo_poll(context)
+
+    def execute(self, context):
+        show_in_list(context.active_object, context.scene.camera, force=True)
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
     """Solo the camera above/below the soloed one in the camera list"""
     bl_idname = "multicamproject.solo_step"
@@ -423,14 +553,7 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        # only over this addon's sidebar tab and while a camera is soloed; otherwise
-        # the arrow keys keep their usual job (keyframe jumps)
-        region = context.region
-        return (region is not None and region.type == 'UI'
-                and region.active_panel_category == "MultiCamProject"
-                and MULTICAMPROJECT_OT_SoloCamera.poll(context)
-                and core.data(context.active_object).is_setup
-                and is_solo(context, context.scene.camera))
+        return _sidebar_solo_poll(context)
 
     def execute(self, context):
         top, rest = core.display_order(context.active_object)
@@ -448,6 +571,8 @@ _classes = (
     MULTICAMPROJECT_OT_AssignSlot,
     MULTICAMPROJECT_OT_SoloCamera,
     MULTICAMPROJECT_OT_SoloStep,
+    MULTICAMPROJECT_OT_SoloAssign,
+    MULTICAMPROJECT_OT_SoloFrame,
     MULTICAMPROJECT_OT_LoadCamImage,
     MULTICAMPROJECT_OT_LoadShift,
     MULTICAMPROJECT_OT_CamPaint,
@@ -471,6 +596,14 @@ def register():
             kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloStep.bl_idname, key, 'PRESS')
             kmi.properties.step = step
             _keymaps.append((km, kmi))
+        kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloFrame.bl_idname, 'NUMPAD_PERIOD', 'PRESS')
+        _keymaps.append((km, kmi))
+        # 1/2/3 on the number row or numpad: soloed camera -> Camera 1/2/3
+        for slot, keys in ((1, ('ONE', 'NUMPAD_1')), (2, ('TWO', 'NUMPAD_2')), (3, ('THREE', 'NUMPAD_3'))):
+            for key in keys:
+                kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloAssign.bl_idname, key, 'PRESS')
+                kmi.properties.slot = slot
+                _keymaps.append((km, kmi))
 
 
 def unregister():

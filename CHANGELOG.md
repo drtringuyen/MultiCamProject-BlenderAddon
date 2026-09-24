@@ -18,6 +18,15 @@
   one (list order: Selected, then All). Elsewhere, or with no camera soloed, the keys keep their
   usual job. Bound in the "Frames" keymap: it handles Up/Down (Jump to Keyframe) before any 3D
   view keymap, so a binding anywhere else never sees the keys.
+- **1 / 2 / 3** (number row or numpad) over the same tab make the soloed camera Camera 1/2/3,
+  like its 1/2/3 buttons (swapping if it already sits in another slot).
+- **All Cameras is a list widget** (12 rows, resizable, own scrollbar, name filter). Its active
+  row is the soloed camera, so the list scrolls to every new solo; clicking a name solos it.
+  **Numpad .** over the tab scrolls the list back to the soloed camera.
+- **Solo shows the photo even when the cameras' collection is excluded/hidden**: the collection
+  (and its parents) is included while soloed and restored on leaving solo. Only the object and
+  the soloed camera stay in the solo view - Blender puts every object of a collection that gets
+  re-included during local view into that view, so the others are taken out again.
 - Flood and Erase icons: a paint bucket and an eraser (Blender toolbar icons).
 
 ### Camera Project - one material for scan + projection (2026-09-24)
