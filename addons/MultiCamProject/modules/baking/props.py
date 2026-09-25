@@ -21,6 +21,27 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     prev_uv_render: StringProperty()
 
 
+VIEW_ITEMS = (('PROJECTION', "Projection", "The camera projection setup, editable", 'CAMERA_DATA', 0),
+              ('FINAL', "Final", "The baked result: MAT_, Color and uv_normal only - the projection "
+                                 "is switched off", 'SHADING_TEXTURE', 1))
+
+
+def _get_obj_view(self):
+    from . import gn_final
+    return 1 if gn_final.is_final(self) else 0
+
+
+def _set_obj_view(self, value):
+    """Clicking the toggle of the active object switches every selected mesh with it."""
+    from . import common, gn_final
+    ctx = bpy.context
+    objs = common.selected_meshes(ctx)
+    if self not in objs:
+        objs.append(self)
+    for o in objs:
+        gn_final.set_final(o, ctx.scene, bool(value))
+
+
 _nor_items = []     # Blender needs the item strings to stay alive
 
 
@@ -90,11 +111,15 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_BakeData)
     bpy.utils.register_class(MULTICAMPROJECT_BakeSettings)
     bpy.types.Object.multicamproject_bake = PointerProperty(type=MULTICAMPROJECT_BakeData)
+    bpy.types.Object.multicamproject_view = EnumProperty(
+        name="View", items=VIEW_ITEMS, get=_get_obj_view, set=_set_obj_view,
+        options={'SKIP_SAVE'}, description="Projection setup or Final baked result (GN-Final)")
     bpy.types.Scene.multicamproject_bake_settings = PointerProperty(type=MULTICAMPROJECT_BakeSettings)
 
 
 def unregister():
     del bpy.types.Scene.multicamproject_bake_settings
+    del bpy.types.Object.multicamproject_view
     del bpy.types.Object.multicamproject_bake
     bpy.utils.unregister_class(MULTICAMPROJECT_BakeSettings)
     bpy.utils.unregister_class(MULTICAMPROJECT_BakeData)

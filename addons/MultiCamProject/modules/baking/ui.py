@@ -7,15 +7,9 @@ def _res(n):
     return f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
 
 
-def draw_final_toggle(layout, obj, scope='SELECTED'):
-    final = gn_final.is_final(obj) if obj else False
-    row = layout.row(align=True)
-    op = row.operator("multicamproject.bake_set_final", text="Projection", icon='CAMERA_DATA',
-                      depress=obj is not None and not final)
-    op.state, op.scope = False, scope
-    op = row.operator("multicamproject.bake_set_final", text="Final", icon='SHADING_TEXTURE',
-                      depress=final)
-    op.state, op.scope = True, scope
+def draw_final_toggle(layout, data, prop):
+    """Projection | Final as a two-state toggle: the current state stays highlighted."""
+    layout.row(align=True).prop(data, prop, expand=True)
 
 
 class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
@@ -39,7 +33,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             return
         d = common.data(obj)
 
-        draw_final_toggle(layout, obj)
+        draw_final_toggle(layout, obj, "multicamproject_view")
         if not common.has_uv_normal(obj):
             box = layout.box()
             box.alert = True

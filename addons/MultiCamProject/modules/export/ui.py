@@ -10,6 +10,22 @@ from . import checks, status
 _ROW_STATUS = {}    # object name -> Status of the current draw (the list reads it)
 
 
+def _severe(per, code):
+    return any(i.severity != checks.INFO for st in per.values() for i in st.issues if i.code == code)
+
+
+def _scene_label(layout, scene, es):
+    """Scene: <name> - red, with a details arrow, when the file has other scenes."""
+    others = checks.other_scenes(scene)
+    if not others:
+        layout.label(text=scene.name, icon='SCENE_DATA')
+        return
+    sub = layout.row(align=True)
+    sub.alert = True
+    sub.label(text=f"{scene.name} +{len(others)}", icon='ERROR')     # details: the arrow
+    layout.prop(es, "show_scenes", text="", icon='DOWNARROW_HLT' if es.show_scenes else 'RIGHTARROW')
+
+
 def tri_text(n, unit=True):
     """Triangle count, short: 236.4k tris, 1.2M tris (unit=False: 236.4k)."""
     u = " tris" if unit else ""
@@ -90,41 +106,36 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         es = scene.multicamproject_export
 
         self._draw_prefix(layout, scene, es)
-        row = layout.row(align=True)
-        row.label(text="EXPORT", icon='COLLECTION_COLOR_03')
-        row.operator("multicamproject.export_add", text="Add", icon='ADD')
-        row.operator("multicamproject.export_remove", text="Remove", icon='REMOVE')
-
-        self._draw_scenes(layout, scene, es)
-        unused = checks.unused_textures(scene)
-        if unused:
-            row = layout.row(align=True)
-            sub = row.row()
-            sub.alert = True
-            sub.label(text=f"{len(unused)} unused ALB_/NOR_ PNG(s) in the Textures folder", icon='ERROR')
-            row.operator("multicamproject.export_clean_textures", text="Clean", icon='TRASH')
 
         coll = common.export_collection(scene)
         if coll is None:
+            self._draw_export_row(layout)
+            self._draw_info(layout, scene, es)
             layout.label(text="Select meshes and click Add", icon='INFO')
             return
         objs, per, grouped = status.scene_status(scene)
         _ROW_STATUS.clear()
         _ROW_STATUS.update(per)
-        self._draw_summary(layout, objs, per, grouped)
 
-        draw_final_toggle(layout, context.active_object if context.active_object in objs else None,
-                          scope='EXPORT')
         row = layout.row()
-        row.template_list("MULTICAMPROJECT_UL_export", "", coll, "all_objects", es,
+        lst = row.column(align=True)
+        self._draw_list_header(lst, scene, es, objs, per, grouped)
+        lst.template_list("MULTICAMPROJECT_UL_export", "", coll, "all_objects", es,
                           "active_index", rows=6)
         side = row.column(align=True)
+        side.separator(factor=2.4)          # lines the buttons up with the list, below its header
+        side.operator("multicamproject.export_add", text="", icon='ADD')
+        side.operator("multicamproject.export_remove", text="", icon='REMOVE')
+        side.separator()
         op = side.operator("multicamproject.export_move", text="", icon='TRIA_UP')
         op.step = -1
         op = side.operator("multicamproject.export_move", text="", icon='TRIA_DOWN')
         op.step = 1
         side.separator()
         side.operator("multicamproject.export_renumber", text="", icon='SORTSIZE')
+        # scene details, textures folder, problems with a fix: under the list
+        self._draw_info(layout, scene, es, scene_row=False)
+        self._draw_summary(layout, per, grouped)
         self._draw_active(layout, context, per)
 
         # [One FBX v] Folder [path.........][dir]
@@ -137,6 +148,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         lbl.alignment = 'RIGHT'
         lbl.label(text="Folder")
         row.prop(es, "folder", text="")
+        draw_final_toggle(layout, es, "view")
         to_fix = sum(st.stage != 'READY' for st in per.values())
         files = f"{naming.fbx_name(scene)}.fbx" if es.split == 'ONE' else f"{len(objs)} FBX files"
         row = layout.row()
@@ -171,20 +183,45 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         hint.label(text=f"MAT_{core}   ·   ALB_/NOR_{core}")
 
     @staticmethod
-    def _draw_scenes(layout, scene, es):
-        others = checks.other_scenes(scene)
+    def _draw_export_row(layout):
         row = layout.row(align=True)
-        if not others:
-            row.label(text=f"Scene: {scene.name}", icon='SCENE_DATA')
-            return
-        cams = sum(o.cameras for o in others)
-        imgs = sum(o.images for o in others)
-        sub = row.row()
-        sub.alert = True
-        sub.label(text=f"Scene: {scene.name}  ·  {len(others)} other scene(s) "
-                       f"({cams} cameras, {imgs} images)", icon='ERROR')
-        row.prop(es, "show_scenes", text="", icon='DOWNARROW_HLT' if es.show_scenes else 'RIGHTARROW')
-        if es.show_scenes:
+        row.label(text="EXPORT", icon='COLLECTION_COLOR_03')
+        row.operator("multicamproject.export_add", text="Add", icon='ADD')
+        row.operator("multicamproject.export_remove", text="Remove", icon='REMOVE')
+
+    @staticmethod
+    def _draw_list_header(layout, scene, es, objs, per, grouped):
+        """EXPORT (meshes · ready · tris · warnings) ........ Scene: <name>"""
+        ready = sum(st.stage == 'READY' for st in per.values())
+        tris = sum(checks.mesh_counts(o)[0] for o in objs)
+        notes = sum(1 for code in grouped if not _severe(per, code))
+        # notes (e.g. n-gons) are counted here; their texts show under the list for the
+        # active object
+        warn = f" · {notes} warn" if notes else ""
+        split = layout.split(factor=0.72, align=True)       # the counts get most of the row
+        split.label(text=f"EXPORT ({ready}/{len(objs)} ready · {tri_text(tris)}{warn})",
+                    icon='COLLECTION_COLOR_03')
+        right = split.row(align=True)
+        right.alignment = 'RIGHT'
+        _scene_label(right, scene, es)
+
+    def _draw_info(self, layout, scene, es, scene_row=True):
+        if scene_row:
+            _scene_label(layout.row(align=True), scene, es)
+        self._draw_scenes(layout, scene, es)
+        unused = checks.unused_textures(scene)
+        if unused:
+            row = layout.row(align=True)
+            sub = row.row()
+            sub.alert = True
+            sub.label(text=f"{len(unused)} unused ALB_/NOR_ PNG(s) in the Textures folder", icon='ERROR')
+            row.operator("multicamproject.export_clean_textures", text="Clean", icon='TRASH')
+
+    @staticmethod
+    def _draw_scenes(layout, scene, es):
+        """The other scenes' details, when opened from the scene label."""
+        others = checks.other_scenes(scene)
+        if others and es.show_scenes:
             box = layout.box().column(align=True)
             for o in others:
                 r = box.row(align=True)
@@ -196,23 +233,18 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
                 op.scene_name = o.name
 
     @staticmethod
-    def _draw_summary(layout, objs, per, grouped):
-        ready = sum(st.stage == 'READY' for st in per.values())
-        bad = len(objs) - ready
-        box = layout.box()
-        row = box.row()
-        total = sum(checks.mesh_counts(o)[0] for o in objs)
-        row.label(text=f"{len(objs)} meshes  ·  {ready} ready"
-                       + (f"  ·  {bad} not ready" if bad else "") + f"  ·  {tri_text(total)}",
-                  icon='CHECKMARK' if not bad else 'INFO')
-        col = box.column(align=True)
-        for code, names in grouped.items():
+    def _draw_summary(layout, per, grouped):
+        """Only the problems (warnings / errors); notes are counted in the list header."""
+        codes = [code for code in grouped if _severe(per, code)]
+        if not codes:
+            return
+        col = layout.box().column(align=True)
+        for code in codes:
+            names = grouped[code]
             text, op, fix_label = checks.SUMMARY[code]
-            severe = any(i.severity != checks.INFO for st in per.values()
-                         for i in st.issues if i.code == code)
             r = col.row(align=True)
-            r.alert = severe
-            r.label(text=text.format(n=len(names)), icon='ERROR' if severe else 'INFO')
+            r.alert = True
+            r.label(text=text.format(n=len(names)), icon='ERROR')
             if op:
                 r.operator(op, text=fix_label)
             elif fix_label:

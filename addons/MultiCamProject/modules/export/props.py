@@ -9,6 +9,19 @@ def _on_row(self, context):
     operators.select_and_frame_row(context, self)
 
 
+def _get_export_view(self):
+    from ..baking import common, gn_final
+    objs = common.export_objects(self.id_data)
+    return 1 if objs and all(gn_final.is_final(o) for o in objs) else 0
+
+
+def _set_export_view(self, value):
+    from ..baking import common, gn_final
+    scene = self.id_data
+    for o in common.export_objects(scene):
+        gn_final.set_final(o, scene, bool(value))
+
+
 def _on_prefix(self, context):
     from . import live
     live.schedule()
@@ -52,6 +65,13 @@ class MULTICAMPROJECT_ExportSettings(bpy.types.PropertyGroup):
     write_report: BoolProperty(name="Report", default=True,
                                description="Write export_report.txt (objects, stages, issues, timings)")
     active_index: IntProperty(default=-1, update=_on_row)
+    view: EnumProperty(
+        name="View", get=_get_export_view, set=_set_export_view, options={'SKIP_SAVE'},
+        items=(('PROJECTION', "Projection", "Every EXPORT object shows its camera projection setup",
+                'CAMERA_DATA', 0),
+               ('FINAL', "Final", "Every EXPORT object shows the baked result (what the FBX gets). "
+                                  "Export switches to Final by itself", 'SHADING_TEXTURE', 1)),
+        description="Projection setup or Final baked result for every EXPORT object")
     show_scenes: BoolProperty(name="Details", default=False)
 
 
