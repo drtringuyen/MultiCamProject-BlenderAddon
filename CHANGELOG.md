@@ -2,6 +2,62 @@
 
 ## Unreleased
 
+### Baking + Export modules (2026-09-25)
+Plan: `docs/PLAN_baking_export.md`.
+
+#### Camera Project
+- The projection material is now **`MCP_<object>`** (was `MAT_<object>`), renamed on file load.
+  `MAT_<object>` is the baked export material. The leftover `MCP-MatIndex_to_uv` group is removed.
+- The scan UV lookup skips `uv_normal`, the user's bake UV.
+
+#### Baking (new module `baking`)
+- **GN-Final** modifier, always last: **Projection / Final**. Final = `Color` (corner, byte) from
+  the scan's `Attribute` (or sampled from ALB), `UV_cam*` / `VCMix*` / `uv_index` / scan UV / scan
+  color removed, Set Material `MAT_`. The projection modifier is switched off and `uv_normal`
+  becomes the active + render UV while Final is on; Projection puts everything back.
+- **Bake Albedo**: Cycles Diffuse Color into `ALB_<name>.png` (8-bit, sRGB) on `uv_normal`, always
+  the same file and image (no `.001`). Render settings are saved and restored (BakeLab 2 subset).
+- **Normal map** `NOR_<name>.png` (16-bit, Non-Color, OpenGL): High-pass from the albedo, Bake from
+  mesh (Selected to Active, optional smoothed copy); Full build adds Mesh + Albedo (RNM) and AI
+  (onnxruntime). Preview at 2K; each run shows its size, source and time.
+- **MAT_<name>**: ALB -> Base Color, NOR -> Normal Map, both on `uv_normal`. Nodes the user adds
+  survive a rebuild.
+- **Outdated** detection: a fingerprint of cameras, photos, shifts, Mode, Previous Bake, Original
+  Scan, VCMix and `uv_normal` at the bake.
+
+#### Export (new module `export`)
+- **EXPORT** collection (yellow), active scene only, meshes only; Add links, Remove unlinks.
+- Status list (click = select + frame) with stages, summary box with one fix per problem:
+  **Rename objects** (object, mesh, MCP_, MAT_, ALB_/NOR_ images and files), **Fix transforms**
+  (applied, origin at the bottom center; projection unchanged), **Update outdated**, **Bake
+  missing**, per-scene **Delete** (the only confirm dialog). All warnings stay in the panel.
+- **Export FBX** from temporary copies: one material `MAT_`, one UV `uv_normal`, one color `Color`,
+  original names; textures copied to `Textures/`, `Editor/MCPTexturePostprocessor.cs` for Unity,
+  `export_report.txt`. One FBX or one per object.
+- **Fix + Export**: one confirm dialog lists the plan, then Export renames, fixes transforms,
+  makes a Smart UV `uv_normal` where missing, rebakes outdated / not baked objects, exports, and
+  leaves every exported object in Final. What cannot be fixed is warned about (dialog + report).
+- **Name Prefix** `<code>_<scene>` (top of the Export panel, saved in the .blend), e.g. `00_30stBR`:
+  objects `30stBR.00_Desk` (`##` numbered by the add-on), `MAT_00_30stBR.00_Desk`,
+  `ALB_/NOR_00_30stBR.00_Desk`, FBX `ENV_00_30stBR.fbx` (the FBX Name field is gone). Only the
+  `<name>` part is typed: F2 / Outliner renames are fixed live, and double-clicking a name in the
+  status list edits just that part (the rest is shown greyed). MCP_, MAT_, ALB_/NOR_ and the
+  texture files follow every rename. A copied object (Shift+D) lets go of the original's bake.
+  Older names ending in `_##_Name` keep their number.
+- **Textures folders stay clean**: `ALB_*`/`NOR_*` PNGs in the bake folder that no image of the
+  .blend uses are warned about (Clean button) and removed by Fix + Export; `<export>/Textures/`
+  keeps only the textures of the last export. Removed files go to the Recycle Bin. Other PNGs are
+  never touched - the folder may be shared with other assets.
+
+- **Normal Map: Lite | AI switch** with the last time of each source and size, to compare
+  speed. **Set up AI** installs onnxruntime (PyPI, into Blender's user modules) and copies a chosen
+  `.onnx` model into Blender's user data folder (survives add-on reinstalls).
+
+#### Build
+- `build_extension.py` puts `blender_manifest.toml` and `__init__.py` at the zip root (the old
+  layout failed `extension validate`); `--full` bundles `./wheels/*.whl` and the model.
+- `manifest.toml` follows the extension schema (tagline, maintainer, SPDX license, file permission).
+
 ### Project from Sides, up to 6 cameras, adaptive paint (2026-09-24)
 
 #### Project from Sides (new module `project_sides`)

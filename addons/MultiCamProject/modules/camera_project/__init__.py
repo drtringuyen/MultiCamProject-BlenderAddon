@@ -15,7 +15,7 @@ def _migrate_now():
     try:
         core.migrate_all()
     except Exception as e:  # never block addon startup
-        print(f"[MultiCamProject] shift migration skipped: {e}")
+        print(f"[MultiCamProject] migration skipped: {e}")
     return None
 
 

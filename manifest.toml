@@ -3,16 +3,18 @@ schema_version = "1.0.0"
 id = "multicamproject"
 version = "0.0.1"
 name = "MultiCamProject"
-description = "Project camera background photos onto meshes with blended UVs and vertex-colour weights"
+tagline = "Project camera photos onto scans, bake them and export to Unity"
+maintainer = "drtringuyen"
 type = "add-on"
-
-authors = [
-    { name = "" }
-]
 
 blender_version_min = "5.2.0"
 
-url = ""
-license = ["GPL"]
+license = ["SPDX:GPL-3.0-or-later"]
 
-tags = ["Material"]
+tags = ["Material", "Bake", "Import-Export"]
+
+[permissions]
+files = "Save baked textures, FBX files and the Unity import script"
+
+# build_extension.py writes this file into the zip as blender_manifest.toml.
+# --full adds: wheels = [...] and platforms = ["windows-x64"]

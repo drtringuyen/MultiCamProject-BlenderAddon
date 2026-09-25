@@ -17,6 +17,7 @@ env/
 !*.txt
 !*.toml
 !*.skill
+!*.cs
 
 # Always ignore build outputs and Blender temp files
 *.zip

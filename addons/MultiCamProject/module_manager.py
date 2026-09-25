@@ -8,6 +8,8 @@ _LOADED = {}
 # Edit entries here via blender-addon-modules — panels.py reads this list
 ALL_MODULES = [    {"name": "camera_project", "op": "multicamproject.toggle_camera_project", "icon": "CAMERA_DATA"},
     {"name": "project_sides", "op": "multicamproject.toggle_project_sides", "icon": "VIEW_CAMERA"},
+    {"name": "baking", "op": "multicamproject.toggle_baking", "icon": "RENDER_STILL"},
+    {"name": "export", "op": "multicamproject.toggle_export", "icon": "EXPORT"},
 ]
 
 

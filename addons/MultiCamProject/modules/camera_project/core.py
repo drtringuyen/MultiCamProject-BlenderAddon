@@ -184,7 +184,8 @@ def scene_cameras(scene):
 
 
 # ---------------------------------------------------------------- material
-# One material per object, MAT_<name>, in material slot 1. Three frames:
+# One projection material per object, MCP_<name>, in material slot 1 (MAT_<name> is the
+# baked export material of the baking module). Three frames:
 #   ORIGINAL MATERIALS  the scan's Base Color images, picked per face by uv_index
 #   PROJECTION          Cam 1..N on UV_cam1..N, weighted by VCMix (1-3) and VCMix2 (4-6)
 #   BLEND               Original Scan slider (0 = projection, 1 = scan), masked by VCMix alpha
@@ -192,17 +193,21 @@ def scene_cameras(scene):
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
 MAT_VERSION = 5         # bump when the material's node setup changes
+PREFIX = "MCP_"
+OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
+BAKED_TAG = "multicamproject_baked"     # MAT_<name> built by the baking module
 LEGACY_PREFIX = "MATMCP_"           # material of the removed Convert Material button
 ORIGINAL_SCAN = "Original Scan"     # name of the slider's Value node
 UV_INDEX = "uv_index"               # face attribute: the face's material slot
+UV_NORMAL = "uv_normal"             # the user's non-overlapping bake UV (never touched here)
 
 
 def material_name(obj):
-    return f"MAT_{obj.name}"
+    return f"{PREFIX}{obj.name}"
 
 
 def _is_ours(mat):
-    return bool(mat.get(MAT_TAG)) or mat.name.startswith(LEGACY_PREFIX)
+    return bool(mat.get(MAT_TAG) or mat.get(BAKED_TAG)) or mat.name.startswith(LEGACY_PREFIX)
 
 
 def _base_color_image(mat):
@@ -234,8 +239,9 @@ def original_textures(obj):
 
 
 def _scan_uv(obj, warnings):
-    """The scan's UV map - the mesh's only one besides the addon's UV_camN."""
-    uvs = [u for u in obj.data.uv_layers if not u.name.startswith("UV_cam")]
+    """The scan's UV map - the mesh's only one besides the addon's UV_camN and the
+    bake target uv_normal."""
+    uvs = [u for u in obj.data.uv_layers if not u.name.startswith("UV_cam") and u.name != UV_NORMAL]
     if not uvs:
         warnings.append("Mesh has no UV map - original scan textures skipped")
         return None
@@ -356,7 +362,7 @@ def _build_projection(b, n):
 
 
 def build_material(obj, warnings=None):
-    """(Re)build MAT_<name> in place. Keeps the Original Scan value."""
+    """(Re)build MCP_<name> in place. Keeps the Original Scan value."""
     warnings = [] if warnings is None else warnings
     name = material_name(obj)
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
@@ -401,7 +407,7 @@ def _material_ok(mat, n):
 
 
 def ensure_material(obj):
-    """Each object owns MAT_<name>. A duplicated object carries the original's
+    """Each object owns MCP_<name>. A duplicated object carries the original's
     pointer, so a material with another name is not reused."""
     mat = bpy.data.materials.get(material_name(obj))
     if not _material_ok(mat, slot_count(data(obj))):
@@ -428,7 +434,7 @@ def _remove_legacy(obj):
 
 
 def place_material(obj):
-    """MAT_<name> in slot 1; the other slots move down. A MATMCP_ slot is taken over
+    """MCP_<name> in slot 1; the other slots move down. A MATMCP_ slot is taken over
     in place and the MATMCP_ material deleted."""
     name = material_name(obj)
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
@@ -714,8 +720,27 @@ def migrate_shifts(obj, scene):
     d.shift_version = 1
 
 
+def migrate_material_names():
+    """One-time (2026-09-25): the projection material MAT_<obj> is now MCP_<obj>, MAT_ is
+    the baked export material. An untagged MCP_ already holding the name steps aside -
+    the tagged (addon-built) one wins."""
+    for mat in [m for m in bpy.data.materials
+                if m.get(MAT_TAG) and m.name.startswith(OLD_PREFIX) and not m.library]:
+        new = PREFIX + mat.name[len(OLD_PREFIX):]
+        other = bpy.data.materials.get(new)
+        if other is not None:
+            if other.get(MAT_TAG):
+                continue        # already migrated - the MAT_ one is a stale copy
+            other.name = new + ".old"
+        mat.name = new
+    ng = bpy.data.node_groups.get(gn_builder.MATINDEX)
+    if ng and ng.users == 0:
+        bpy.data.node_groups.remove(ng)
+
+
 def migrate_all():
     scene = bpy.context.scene
+    migrate_material_names()
     for obj in bpy.data.objects:
         if obj.type == 'MESH' and data(obj).is_setup and data(obj).shift_version < 1:
             migrate_shifts(obj, scene)
