@@ -52,25 +52,30 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         if body:
             self._draw_box(context, body.box(), obj, d, mod)
 
-        layout.operator("multicamproject.bake_view_mix", icon='RENDER_STILL')
-
     def _draw_box(self, context, box, obj, d, mod):
         row = box.row(align=True)
         row.prop(d, "image_folder")
         row.operator("multicamproject.reload_all", text="", icon='FILE_REFRESH')
+        # one row: clipping of every camera + the projection mode
         row = box.row(align=True)
-        row.label(text="Clip")
-        row.prop(d, "clip_start")
-        row.prop(d, "clip_end")
+        split = row.split(factor=0.68, align=True)
+        clip = split.row(align=True)
+        clip.label(text="Clip")
+        clip.prop(d, "clip_start")
+        clip.prop(d, "clip_end")
+        split.prop(core.input_socket(mod, "Mode"), "value", text="")
 
-        col = box.column(align=True)
-        col.prop(core.input_socket(mod, "Mode"), "value", text="Mode")
-        col.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
+        # one row: blend controls
+        row = box.row(align=True)
+        row.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         scan = d.material.node_tree.nodes.get(core.ORIGINAL_SCAN) if d.material else None
         if scan:
             # a Value node has no 0..1 range, so no slider (its bar would be wrong)
-            col.prop(scan.outputs[0], "default_value", text="Original Scan")
-        col.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion")
+            row.prop(scan.outputs[0], "default_value", text="Original Scan")
+        occ = row.row(align=True)
+        occ.ui_units_x = 1.4
+        occ.prop(core.input_socket(mod, "Occlusion"), "value", text="", toggle=True,
+                 icon='MOD_MASK')      # tooltip: Occlusion
 
         box.separator(type='LINE')
         if not d.cameras:
@@ -85,29 +90,50 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
         header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
-        sub = header.row()
-        sub.ui_units_x = 3
-        sub.prop(d, "slot_count", text="")
+        # slot count dropdown + Auto (re-pick by axis) as an icon at the end, like All Cameras
+        sub = header.row(align=True)
+        cnt = sub.row(align=True)
+        cnt.ui_units_x = 3.2
+        cnt.prop(d, "slot_count", text="")
+        sub.operator("multicamproject.auto_pick", text="", icon='FILE_REFRESH')
         if body:
             for item in top:
                 self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
-        if rest:
+            body.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
+                          icon='RENDER_STILL')
+        if any(it.camera and it.camera not in core.get_slots(d) for it in d.cameras):
             header, body = box.panel("multicamproject_all_cams", default_closed=False)
-            header.label(text=f"All Cameras ({len(rest)})", icon='OUTLINER_OB_CAMERA')
-            if body:
+            slots = core.get_slots(d)
+            total = sum(1 for it in d.cameras if it.camera and it.camera not in slots)
+            removed = f" - {len(d.removed)} removed" if len(d.removed) else ""
+            header.label(text=f"All Cameras ({len(rest)}/{total}{removed})", icon='OUTLINER_OB_CAMERA')
+            # coverage filter (how much of the object a camera must see) + measure again
+            flt = header.row(align=True)
+            drop = flt.row(align=True)
+            drop.ui_units_x = 3.2
+            drop.prop(d, "coverage_filter", text="")
+            flt.operator("multicamproject.restore_cameras", text="", icon='LOOP_BACK')
+            flt.operator("multicamproject.measure_coverage", text="", icon='FILE_REFRESH')
+            if body and not core.measured(d):
+                r = body.row()
+                r.alert = True
+                r.label(text="Coverage not measured yet - press Auto or Reload All", icon='ERROR')
+            elif body and not rest:
+                body.label(text="No camera passes the coverage filter", icon='INFO')
+            elif body:
                 # a list widget: it scrolls itself to its active row = the soloed camera
                 body.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
                                    rows=12)
 
     @staticmethod
-    def _metrics(context, debug, n, margin=2.8):
+    def _metrics(context, debug, n, margin=2.8, extra=0):
         """Split factors for a camera block. Blender scales ui_units_x down in narrow
         panels, so fixed widths are made with splits from the region's pixel width:
         name and slot buttons keep their size, the image field absorbs the rest."""
         unit = 20 * context.preferences.system.ui_scale
         avail = max(1.0, context.region.width - margin * unit)   # boxes, panel, list frame
         per = 1.4 if n == 3 else 1.15                             # width of one slot button
-        slots_f = min(0.6, (n + 1) * per * unit / avail)         # 1..n + global toggle, same width
+        slots_f = min(0.6, (n + 1 + extra) * per * unit / avail)  # 1..n + global (+ remove)
         left_w = max(1.0, avail * (1.0 - slots_f) - unit)       # minus eye button
         name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
         image_x = (unit + name_f * left_w) / avail               # where the image field starts
@@ -126,7 +152,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             self._draw_shift(col, obj, item.camera, m, flood)
 
     @staticmethod
-    def _draw_row(col, obj, item, debug, m, solo):
+    def _draw_row(col, obj, item, debug, m, solo, removable=False):
         slots_f, name_f = m[:2]
         cam = item.camera
         split = col.row().split(factor=1.0 - slots_f, align=True)
@@ -139,7 +165,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         op.camera = cam.name
 
         nsplit = left.split(factor=name_f, align=True)
-        nsplit.label(text=f"{cam.name} {item.score:.2f}" if debug else cam.name)
+        nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
         mid = nsplit.row(align=True)
 
         # image field takes all remaining width
@@ -156,7 +182,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
         count = core.slot_count(core.data(obj))
         # equal columns: the global toggle gets the same width as a slot button
-        slots = right.grid_flow(row_major=True, columns=count + 1, even_columns=True, align=True)
+        slots = right.grid_flow(row_major=True, columns=count + 1 + removable, even_columns=True,
+                                align=True)
         current = core.slot_of(obj, cam)
         for n in range(1, count + 1):
             op = slots.operator("multicamproject.assign_slot", text=str(n), depress=current == n)
@@ -166,6 +193,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         op = slots.operator("multicamproject.toggle_global", text="",
                             icon='WORLD' if glob else 'OBJECT_DATA', depress=glob)
         op.camera = cam.name
+        if removable:
+            op = slots.operator("multicamproject.remove_camera", text="", icon='X')
+            op.camera = cam.name
 
     def _draw_shift(self, col, obj, cam, m, flood):
         it = core.shift_holder(obj, cam)      # a global camera's shift is shared by every object
@@ -189,8 +219,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
 
 class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
-    """All Cameras: the cameras not in a slot, alphabetical. Its active row is the
-    soloed camera; clicking a name solos that camera."""
+    """All Cameras: the cameras not in a slot that pass the coverage filter, most coverage
+    first. Its active row is the soloed camera; clicking a name solos that camera."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if item.camera is None:
@@ -201,19 +231,21 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
         col = layout.column()
         col.active = solo or not is_solo(context, context.scene.camera)
         panel._draw_row(col, context.active_object, item, debug,
-                        panel._metrics(context, debug, core.slot_count(data), margin=4.2),
-                        solo)   # + list frame, scrollbar
+                        panel._metrics(context, debug, core.slot_count(data), margin=4.2, extra=1),
+                        solo, removable=True)   # margin: + list frame, scrollbar
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
         slots = core.get_slots(data)
         pattern = self.filter_name.lower()
         flags = [self.bitflag_filter_item
-                 if it.camera and it.camera not in slots and pattern in it.camera.name.lower() else 0
+                 if it.camera and it.camera not in slots and core.passes(data, it)
+                 and pattern in it.camera.name.lower() else 0
                  for it in items]
+        # most coverage first (the same order as the arrow keys step through)
         order = bpy.types.UI_UL_list.sort_items_helper(
-            [(i, it.camera.name.lower() if it.camera else "") for i, it in enumerate(items)],
-            lambda e: e[1])
+            [(i, (-it.coverage, it.camera.name.lower() if it.camera else ""))
+             for i, it in enumerate(items)], lambda e: e[1])
         return flags, order
 
 

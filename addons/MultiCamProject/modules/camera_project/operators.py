@@ -15,6 +15,16 @@ def _setup_poll(context):
     return _mesh_poll(context) and core.data(context.active_object).is_setup
 
 
+LIST_MODES = {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX', 'SCULPT'}
+
+
+def _list_poll(context):
+    """The camera list's buttons: also while editing, vertex painting or sculpting."""
+    obj = context.active_object
+    return (obj is not None and obj.type == 'MESH' and context.mode in LIST_MODES
+            and core.data(obj).is_setup)
+
+
 def _report_warnings(op, warnings):
     for w in warnings:
         op.report({'WARNING'}, w)
@@ -72,7 +82,7 @@ class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _setup_poll(context)
+        return _list_poll(context)
 
     @classmethod
     def description(cls, context, props):
@@ -89,6 +99,98 @@ class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
+    """Pick the slots again: Camera 1 looks most along +-Y, 2 along +-X, 3 along +-Z, 4-6 the
+    most coverage left - only cameras that pass the coverage filter"""
+    bl_idname = "multicamproject.auto_pick"
+    bl_label = "Auto Pick Cameras"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        warning = core.auto_pick(obj, context.scene)
+        if warning:
+            self.report({'WARNING'}, warning)
+        names = [c.name if c else "-" for c in core.get_slots(core.data(obj))]
+        self.report({'INFO'}, "Cameras: " + ", ".join(names))
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_MeasureCoverage(bpy.types.Operator):
+    """Measure again how much of the object each camera sees (the list and its filter).
+    Photos are not loaded and the Camera 1-6 slots stay as they are"""
+    bl_idname = "multicamproject.measure_coverage"
+    bl_label = "Measure Coverage"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        core.rescore(obj, context.scene)
+        d = core.data(obj)
+        shown = sum(core.passes(d, it) for it in d.cameras)
+        self.report({'INFO'}, f"{len(d.cameras)} camera(s) see '{obj.name}', "
+                              f"{shown} pass the coverage filter")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_RemoveCamera(bpy.types.Operator):
+    """Remove this camera from the object's list - Reload All and the coverage refresh
+    leave it out until Restore. Shortcut: X over the sidebar while a camera is soloed"""
+    bl_idname = "multicamproject.remove_camera"
+    bl_label = "Remove Camera from List"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    camera: StringProperty()
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context)
+
+    def execute(self, context):
+        cam = bpy.data.objects.get(self.camera)
+        if cam is None:
+            return {'CANCELLED'}
+        obj = context.active_object
+        _top, rest = core.display_order(obj)
+        cams = [it.camera for it in rest]
+        i = cams.index(cam) if cam in cams else -1
+        core.remove_camera(obj, cam)
+        # the camera below takes its place (the one above at the end of the list)
+        nxt = cams[i + 1] if 0 <= i < len(cams) - 1 else (cams[i - 1] if i > 0 else None)
+        if nxt is not None and MULTICAMPROJECT_OT_SoloCamera.poll(context):
+            bpy.ops.multicamproject.solo_camera(camera=nxt.name)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_RestoreCameras(bpy.types.Operator):
+    """Bring the removed cameras back into this object's list"""
+    bl_idname = "multicamproject.restore_cameras"
+    bl_label = "Restore Removed Cameras"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context) and len(core.data(context.active_object).removed) > 0
+
+    @classmethod
+    def description(cls, context, props):
+        obj = context.active_object
+        n = len(core.data(obj).removed) if obj and obj.type == 'MESH' else 0
+        return f"Bring the {n} removed camera(s) back into this object's list"
+
+    def execute(self, context):
+        core.restore_cameras(context.active_object, context.scene)
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_ToggleGlobal(bpy.types.Operator):
     """Global camera (globe): shared by every object with one UV shift, image and clipping
     left alone by Reload All. Object camera: shift per object"""
@@ -100,7 +202,7 @@ class MULTICAMPROJECT_OT_ToggleGlobal(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _setup_poll(context)
+        return _list_poll(context)
 
     @classmethod
     def description(cls, context, props):
@@ -131,7 +233,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         # also while painting/editing, to switch the camera being painted through
         obj = context.active_object
         return (obj is not None and obj.type == 'MESH'
-                and context.mode in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX'}
+                and context.mode in LIST_MODES
                 and context.area and context.area.type == 'VIEW_3D')
 
     def execute(self, context):
@@ -345,7 +447,7 @@ class MULTICAMPROJECT_OT_LoadCamImage(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _setup_poll(context)
+        return _list_poll(context)
 
     def invoke(self, context, event):
         cam = bpy.data.objects.get(self.camera)
@@ -381,7 +483,7 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _setup_poll(context)
+        return _list_poll(context)
 
     def execute(self, context):
         obj = context.active_object
@@ -494,11 +596,11 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
-    """Apply the projection modifier (bakes UV_cam1/2/3 + VCMix into the mesh) and
-    re-add it with the same settings, so the baked VCMix becomes the base for the
-    next blend (Previous Bake)"""
+    """Bake the camera mixture: apply the projection modifier (UV_cam + VCMix go into the
+    mesh) and re-add it with the same settings, so the baked mixture becomes the base for
+    the next blend (Previous Bake)"""
     bl_idname = "multicamproject.bake_view_mix"
-    bl_label = "Bake View Mix"
+    bl_label = "Bake Camera Mixture"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -507,7 +609,7 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(
-            self, event, title="Bake View Mix",
+            self, event, title="Bake Camera Mixture",
             message="Apply the projection into the mesh and re-add the modifier?",
             confirm_text="Bake")
 
@@ -553,7 +655,7 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         for k, v in keep.items():
             core.set_input(new, k, v)
         core.apply_slots(obj, context.scene)
-        self.report({'INFO'}, "View mix baked - raise Previous Bake to blend on top of it")
+        self.report({'INFO'}, "Camera mixture baked - raise Previous Bake to blend on top of it")
         return {'FINISHED'}
 
 
@@ -589,6 +691,22 @@ class MULTICAMPROJECT_OT_SoloAssign(bpy.types.Operator):
         core.assign_slot(context.active_object, cam, self.slot, context.scene)
         self.report({'INFO'}, f"'{cam.name}' is Camera {self.slot}")
         return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_SoloRemove(bpy.types.Operator):
+    """Remove the soloed camera from the object's list; the camera below is soloed next"""
+    bl_idname = "multicamproject.solo_remove"
+    bl_label = "Remove Soloed Camera"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        # only a camera of the All Cameras list - the slots are changed with 1-6
+        return (_sidebar_solo_poll(context)
+                and context.scene.camera not in core.get_slots(core.data(context.active_object)))
+
+    def execute(self, context):
+        return bpy.ops.multicamproject.remove_camera(camera=context.scene.camera.name)
 
 
 class MULTICAMPROJECT_OT_SoloFrame(bpy.types.Operator):
@@ -628,6 +746,10 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
 
 _classes = (
     MULTICAMPROJECT_OT_Setup,
+    MULTICAMPROJECT_OT_AutoPick,
+    MULTICAMPROJECT_OT_MeasureCoverage,
+    MULTICAMPROJECT_OT_RemoveCamera,
+    MULTICAMPROJECT_OT_RestoreCameras,
     MULTICAMPROJECT_OT_ToggleGlobal,
     MULTICAMPROJECT_OT_ReloadAll,
     MULTICAMPROJECT_OT_AssignSlot,
@@ -635,6 +757,7 @@ _classes = (
     MULTICAMPROJECT_OT_SoloStep,
     MULTICAMPROJECT_OT_SoloAssign,
     MULTICAMPROJECT_OT_SoloFrame,
+    MULTICAMPROJECT_OT_SoloRemove,
     MULTICAMPROJECT_OT_LoadCamImage,
     MULTICAMPROJECT_OT_LoadShift,
     MULTICAMPROJECT_OT_CamPaint,
@@ -659,6 +782,9 @@ def register():
             kmi.properties.step = step
             _keymaps.append((km, kmi))
         kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloFrame.bl_idname, 'NUMPAD_PERIOD', 'PRESS')
+        _keymaps.append((km, kmi))
+        # X over the sidebar: remove the soloed camera from the list (elsewhere X is untouched)
+        kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloRemove.bl_idname, 'X', 'PRESS')
         _keymaps.append((km, kmi))
         # 1-6 on the number row or numpad: soloed camera -> Camera 1-6
         for slot, keys in ((1, ('ONE', 'NUMPAD_1')), (2, ('TWO', 'NUMPAD_2')), (3, ('THREE', 'NUMPAD_3')),

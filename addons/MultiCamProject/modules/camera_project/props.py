@@ -15,6 +15,12 @@ def _is_camera(self, obj):
 class MULTICAMPROJECT_CamItem(bpy.types.PropertyGroup):
     camera: PointerProperty(type=bpy.types.Object, poll=_is_camera)
     score: FloatProperty(name="Score", description="Coverage x facing of the object in this camera")
+    coverage: FloatProperty(name="Coverage", subtype='FACTOR',
+                            description="Share of the object inside this camera's frame")
+
+
+class MULTICAMPROJECT_CamRef(bpy.types.PropertyGroup):
+    camera: PointerProperty(type=bpy.types.Object, poll=_is_camera)
 
 
 def _on_shift(self, context):
@@ -55,6 +61,17 @@ def _on_slot_count(self, context):
 class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
     is_setup: BoolProperty(default=False)
     cameras: CollectionProperty(type=MULTICAMPROJECT_CamItem)
+    removed: CollectionProperty(
+        type=MULTICAMPROJECT_CamRef,
+        description="Cameras taken out of this object's list by hand - scoring skips them")
+    coverage_filter: EnumProperty(
+        name="Coverage", default='50',
+        items=[('100', "100%", "Show and auto-pick cameras that see all of the object", 0),
+               ('80', ">80%", "Show and auto-pick cameras that see more than 80% of the object", 1),
+               ('50', ">50%", "Show and auto-pick cameras that see more than half of the object", 2),
+               ('30', ">30%", "Show and auto-pick cameras that see more than 30% of the object", 3),
+               ('ALL', "All", "Show and auto-pick every camera that sees the object", 4)],
+        description="Show and auto-pick only cameras that see at least this much of the object")
     cam_index: IntProperty(default=-1, update=_on_cam_index,
                            description="Active row of the camera list (the soloed camera)")
     shifts: CollectionProperty(type=MULTICAMPROJECT_CamShift)
@@ -109,7 +126,7 @@ class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
                     "-1 = one full photo to the left/down, 1 = to the right/up")
 
 
-_classes = (MULTICAMPROJECT_CamItem, MULTICAMPROJECT_CamShift, MULTICAMPROJECT_ObjectData,
+_classes = (MULTICAMPROJECT_CamItem, MULTICAMPROJECT_CamRef, MULTICAMPROJECT_CamShift, MULTICAMPROJECT_ObjectData,
             MULTICAMPROJECT_CameraData)
 
 

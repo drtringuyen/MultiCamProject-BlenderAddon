@@ -10,6 +10,16 @@ from . import checks, status
 _ROW_STATUS = {}    # object name -> Status of the current draw (the list reads it)
 
 
+def tri_text(n, unit=True):
+    """Triangle count, short: 236.4k tris, 1.2M tris (unit=False: 236.4k)."""
+    u = " tris" if unit else ""
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M{u}"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}k{u}"
+    return f"{n}{u}"
+
+
 class MULTICAMPROJECT_UL_export(bpy.types.UIList):
     """EXPORT meshes, problems first. Clicking a row selects and frames the object."""
 
@@ -18,7 +28,7 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         if st is None:
             return
         label, icon, _o = status.STAGES[st.stage]
-        split = layout.split(factor=0.62, align=True)
+        split = layout.split(factor=0.58, align=True)
         row = split.row(align=True)
         row.label(text="", icon=icon)
         sc = naming.scheme(context.scene)
@@ -34,7 +44,12 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         else:
             row.prop(item, "name", text="", emboss=False)
         problems = [i for i in st.issues if i.severity != checks.INFO]
-        sub = split.row()
+        right = split.split(factor=0.42, align=True)
+        tris = right.row()
+        tris.active = False
+        tris.alignment = 'RIGHT'
+        tris.label(text=tri_text(checks.mesh_counts(item)[0], unit=False))
+        sub = right.row()
         sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
         sub.label(text=problems[0].text if st.stage == 'ISSUES' and problems else label)
 
@@ -112,18 +127,22 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         side.operator("multicamproject.export_renumber", text="", icon='SORTSIZE')
         self._draw_active(layout, context, per)
 
-        col = layout.column(align=True)
-        col.prop(es, "folder")
-        col.row(align=True).prop(es, "split", expand=True)
-        if es.split == 'ONE':
-            r = col.row()
-            r.active = False
-            r.label(text=f"{naming.fbx_name(scene)}.fbx", icon='FILE')
+        # [One FBX v] Folder [path.........][dir]
+        row = layout.row(align=True)
+        mode = row.row(align=True)
+        mode.ui_units_x = 5.5
+        mode.prop(es, "split", text="")
+        lbl = row.row(align=True)
+        lbl.ui_units_x = 2.4
+        lbl.alignment = 'RIGHT'
+        lbl.label(text="Folder")
+        row.prop(es, "folder", text="")
         to_fix = sum(st.stage != 'READY' for st in per.values())
+        files = f"{naming.fbx_name(scene)}.fbx" if es.split == 'ONE' else f"{len(objs)} FBX files"
         row = layout.row()
         row.scale_y = 1.5
         row.operator("multicamproject.export_fbx", icon='EXPORT',
-                     text=f"Fix {to_fix} + Export" if to_fix else "Export")
+                     text=(f"Fix {to_fix} + Export" if to_fix else "Export") + f"  ({files})")
 
         header, body = layout.panel("multicamproject_export_advanced", default_closed=True)
         header.label(text="Advanced")
@@ -182,8 +201,9 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         bad = len(objs) - ready
         box = layout.box()
         row = box.row()
+        total = sum(checks.mesh_counts(o)[0] for o in objs)
         row.label(text=f"{len(objs)} meshes  ·  {ready} ready"
-                       + (f"  ·  {bad} not ready" if bad else ""),
+                       + (f"  ·  {bad} not ready" if bad else "") + f"  ·  {tri_text(total)}",
                   icon='CHECKMARK' if not bad else 'INFO')
         col = box.column(align=True)
         for code, names in grouped.items():

@@ -11,6 +11,10 @@ MOD_NAME = "GN-CameraProject"
 MODES = ("Sharp", "Smooth", "Combined")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".exr", ".webp", ".bmp")
 SCORE_MIN = 0.01        # cameras below this do not "hit" the object
+# coverage filter of the camera list and the auto pick: (key, label, minimum coverage)
+COVERAGE_FILTERS = (('100', "100%", 0.999), ('80', ">80%", 0.8), ('50', ">50%", 0.5),
+                    ('30', ">30%", 0.3), ('ALL', "All", 0.0))
+AXES = ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))    # Camera 1 ~ +-Y, 2 ~ +-X, 3 ~ +-Z
 MAX_SAMPLES = 4000      # vertices sampled for scoring
 
 
@@ -149,18 +153,18 @@ def _object_samples(obj):
 
 
 def score_camera(cam, co_w, nr_w, scene):
-    """Same projection as the GN group: coverage (share of vertices in frame)
-    x mean facing of those vertices."""
+    """Same projection as the GN group. Returns (score, coverage): coverage = share of the
+    object's (sampled) vertices in the frame, score = coverage x mean facing of those."""
     cd = cam.data
     if cd.type not in {'PERSP', 'ORTHO'}:
-        return 0.0
+        return 0.0, 0.0
     ortho = cd.type == 'ORTHO'
     cmi = np.array(cam.matrix_world.inverted_safe(), dtype=np.float32)
     p = co_w @ cmi[:3, :3].T + cmi[:3, 3]
     depth = -p[:, 2]
     front = depth > 1e-6
     if not front.any():
-        return 0.0
+        return 0.0, 0.0
     # frame width at each point (sensor fit horizontal)
     width = cd.ortho_scale if ortho else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens
     aspect = image_aspect(cam_image(cam), scene, load=False)
@@ -168,7 +172,7 @@ def score_camera(cam, co_w, nr_w, scene):
     v = p[:, 1] / width * aspect + 0.5
     inside = front & (u > 0) & (u < 1) & (v > 0) & (v < 1)
     if not inside.any():
-        return 0.0
+        return 0.0, 0.0
     if ortho:       # every point looks along the camera's back axis
         back = np.array(cam.matrix_world.to_3x3().col[2], dtype=np.float32)
         to_cam = np.broadcast_to(back / max(np.linalg.norm(back), 1e-9), (int(inside.sum()), 3))
@@ -176,7 +180,8 @@ def score_camera(cam, co_w, nr_w, scene):
         to_cam = np.array(cam.matrix_world.translation, dtype=np.float32) - co_w[inside]
         to_cam /= np.maximum(np.linalg.norm(to_cam, axis=1, keepdims=True), 1e-9)
     facing = np.clip((nr_w[inside] * to_cam).sum(axis=1), 0.0, None).mean()
-    return float(inside.mean() * facing)
+    coverage = float(inside.mean())
+    return coverage * float(facing), coverage
 
 
 def scene_cameras(scene):
@@ -771,14 +776,122 @@ def push_shift(obj, item, scene, to_camera):
         set_camera_offset(cam, item.shift)
 
 
+def min_coverage(d):
+    return {k: v for k, _l, v in COVERAGE_FILTERS}[d.coverage_filter]
+
+
+def passes(d, item):
+    return item.coverage >= min_coverage(d)
+
+
 def display_order(obj):
-    """Camera list items for the UI: slots 1/2/3 first, the rest alphabetical."""
+    """Camera list items for the UI: the slots first, then the cameras that pass the
+    coverage filter, most coverage first."""
     d = data(obj)
     slots = get_slots(d)
     items = [it for it in d.cameras if it.camera]
     top = sorted((it for it in items if it.camera in slots), key=lambda it: slots.index(it.camera))
-    rest = sorted((it for it in items if it.camera not in slots), key=lambda it: it.camera.name.lower())
+    rest = sorted((it for it in items if it.camera not in slots and passes(d, it)),
+                  key=lambda it: (-it.coverage, it.camera.name.lower()))
     return top, rest
+
+
+def view_axis(cam):
+    """Unit direction the camera looks along (world)."""
+    v = -cam.matrix_world.to_3x3().col[2]
+    return v.normalized() if v.length else v
+
+
+def axis_pick(d, n):
+    """Cameras for slots 1..n: Camera 1 looks most along +-Y, 2 along +-X, 3 along +-Z (a tie
+    goes to more coverage), 4..n the most coverage left. Only cameras with an image that pass
+    the coverage filter; when too few pass, the next best by coverage fill up.
+    Returns (cameras, warning or '')."""
+    items = [it for it in d.cameras if it.camera and image_ok(cam_image(it.camera))]
+    ok = [it for it in items if passes(d, it)]
+    picked, below = [], 0
+
+    def best_along(pool, axis):
+        free = [it for it in pool if it.camera not in picked]
+        if not free:
+            return None
+        return max(free, key=lambda it: (round(abs(view_axis(it.camera).dot(axis)), 3), it.coverage))
+
+    for axis in AXES[:n]:
+        it = best_along(ok, axis)
+        if it is None:          # none left that passes: the axis rule still holds below it
+            it = best_along(items, axis)
+            below += it is not None
+        if it is not None:
+            picked.append(it.camera)
+    for pool in (ok, items):    # slots 4-6: the most coverage left
+        for it in sorted(pool, key=lambda it: -it.coverage):
+            if len(picked) >= n:
+                break
+            if it.camera not in picked:
+                picked.append(it.camera)
+                below += pool is items
+    warning = (f"Only {len(ok)} camera(s) pass the coverage filter - {below} picked below it"
+               if below else "")
+    return (picked + [None] * n)[:n], warning
+
+
+def measured(d):
+    """False when the list was made before coverage was stored (every item at 0)."""
+    return not len(d.cameras) or any(it.coverage > 0 for it in d.cameras)
+
+
+def rescore(obj, scene):
+    """Score every scene camera against the object and rebuild the camera list (most
+    coverage first). Photos are not loaded. Returns the set of cameras that see it."""
+    d = data(obj)
+    if obj.mode == 'EDIT':
+        obj.update_from_editmode()      # score the mesh as edited, not as last left
+    co_w, nr_w = _object_samples(obj)
+    removed = {r.camera for r in d.removed if r.camera}
+    scored = []
+    if co_w is not None:
+        scored = [(*score_camera(c, co_w, nr_w, scene), c) for c in scene_cameras(scene)
+                  if c not in removed]
+    scored = sorted([sc for sc in scored if sc[0] >= SCORE_MIN], key=lambda sc: -sc[1])
+    # every camera that sees the object is kept; the coverage filter only hides / skips
+    d.cameras.clear()
+    for sc, cov, c in scored:
+        it = d.cameras.add()
+        it.camera = c
+        it.score = sc
+        it.coverage = cov
+    return {c for _s, _cov, c in scored}
+
+
+def remove_camera(obj, cam):
+    """Take `cam` out of the object's list for good (until restored): Reload All and the
+    coverage refresh skip it. A slot holding it keeps it."""
+    d = data(obj)
+    if not any(r.camera == cam for r in d.removed):
+        d.removed.add().camera = cam
+    for i, it in enumerate(d.cameras):
+        if it.camera == cam and cam not in get_slots(d):
+            d.cameras.remove(i)
+            break
+
+
+def restore_cameras(obj, scene):
+    """Bring every removed camera back into the list (measured again)."""
+    data(obj).removed.clear()
+    rescore(obj, scene)
+
+
+def auto_pick(obj, scene):
+    """Measure again, then slots by axis_pick; afterwards the slots count as not picked
+    by hand."""
+    d = data(obj)
+    rescore(obj, scene)
+    cams, warning = axis_pick(d, slot_count(d))
+    set_slots(d, cams)
+    d.user_picked = False
+    apply_slots(obj, scene)
+    return warning
 
 
 def apply_slots(obj, scene):
@@ -834,8 +947,9 @@ def change_slot_count(obj, scene):
     if not d.is_setup:
         return
     slots = get_slots(d)
-    free = [it.camera for it in d.cameras            # score order
-            if it.camera and it.camera not in slots and image_ok(cam_image(it.camera))]
+    free = [it.camera for it in d.cameras            # coverage order
+            if it.camera and it.camera not in slots and passes(d, it)
+            and image_ok(cam_image(it.camera))]
     for i, cam in enumerate(slots):
         if cam is None and free:
             slots[i] = free.pop(0)
@@ -923,38 +1037,28 @@ def refresh(obj, scene):
         cam.data.clip_start = d.clip_start
         cam.data.clip_end = d.clip_end
 
-    co_w, nr_w = _object_samples(obj)
-    scored = []
-    if co_w is not None:
-        scored = [(score_camera(c, co_w, nr_w, scene), c) for c in cams]
-    scored = sorted([sc for sc in scored if sc[0] >= SCORE_MIN], key=lambda sc: -sc[0])
-
-    d.cameras.clear()
-    for s, c in scored:
-        it = d.cameras.add()
-        it.camera = c
-        it.score = s
-
-    hitting = [c for _, c in scored]
-    usable = [c for c in hitting if image_ok(cam_image(c))]
+    sees = rescore(obj, scene)
     slots = get_slots(d)
     if not d.user_picked:
-        n = slot_count(d)
-        slots = (usable + [None] * n)[:n]
+        slots, warning = axis_pick(d, slot_count(d))
+        if warning:
+            warnings.append(warning)
     else:
         for i, cam in enumerate(slots):
-            if cam is not None and cam in usable:
-                continue
-            free = [c for c in usable if c not in slots]
+            if cam is not None and cam in sees and image_ok(cam_image(cam)):
+                continue        # the user's pick: kept, whatever its coverage
+            free = [it.camera for it in d.cameras if it.camera not in slots and passes(d, it)
+                    and image_ok(cam_image(it.camera))]
             new = free[0] if free else None
             if cam is not None:
-                why = "no longer sees the object" if cam not in hitting else "has no loaded image"
+                why = "no longer sees the object" if cam not in sees else "has no loaded image"
                 warnings.append(f"Camera {i + 1}: '{cam.name}' {why} -> "
                                 f"{new.name if new else 'left empty'}")
             slots[i] = new
     set_slots(d, slots)
 
-    missing = [c.name for c in hitting if c not in usable]
+    missing = [it.camera.name for it in d.cameras
+               if passes(d, it) and not image_ok(cam_image(it.camera))]
     if missing:
         warnings.append(f"{len(missing)} camera(s) without image: {', '.join(missing[:5])}"
                         + ("..." if len(missing) > 5 else ""))
