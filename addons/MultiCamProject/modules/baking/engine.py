@@ -17,6 +17,7 @@ from ..camera_project import core as cp
 from . import common, fingerprint, gn_final, material
 
 TMP_NODE = "MCP_BAKE_TMP"
+TMP_IMAGE = "MCP_ALB_BAKE_TMP"
 
 _RENDER_ATTRS = ("engine",)
 _CYCLES_ATTRS = ("device", "samples", "bake_type", "use_denoising", "use_adaptive_sampling")
@@ -174,10 +175,15 @@ def bake_albedo(context, obj, progress=None):
     context.view_layer.update()
     prev = uvs.active.name if uvs.active else ""
     uvs.active = uvs[common.UV_NORMAL]
+    name = common.alb_name(obj)
+    path = common.texture_path(scene, name)
+    # bake into a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
+    # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves as 16-bit
+    tmp = bpy.data.images.new(TMP_IMAGE, s.resolution, s.resolution, alpha=False,
+                              float_buffer=False)
+    tmp.colorspace_settings.name = 'sRGB'
     try:
-        img = prepare_image(d.alb_image, common.alb_name(obj), s.resolution, False, 'sRGB')
-        d.alb_image = img
-        with render_state(scene), selection(context, obj, [obj]), target_nodes(obj, img):
+        with render_state(scene), selection(context, obj, [obj]), target_nodes(obj, tmp):
             configure(scene, 'DIFFUSE')
             with context.temp_override(active_object=obj, object=obj,
                                        selected_objects=[obj], selected_editable_objects=[obj]):
@@ -186,10 +192,24 @@ def bake_albedo(context, obj, progress=None):
                                     uv_layer=common.UV_NORMAL)
         if progress:
             progress()
-        save_png8(img, common.texture_path(scene, img.name))
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp.filepath_raw = path
+        tmp.file_format = 'PNG'
+        tmp.save(filepath=path)
     finally:
+        bpy.data.images.remove(tmp)
         if uvs.get(prev):
             uvs.active = uvs[prev]
+    # ALB_<name>: the same image every time (no .001), pointing at the new file
+    img = d.alb_image or bpy.data.images.get(name)
+    if img is None:
+        img = bpy.data.images.load(path, check_existing=False)
+        img.name = name
+    elif img.name != name and not bpy.data.images.get(name):
+        img.name = name
+    img.colorspace_settings.name = 'sRGB'
+    link_file(img, path)
+    d.alb_image = img
     d.alb_size = s.resolution
     material.build(obj, scene)
     d.fingerprint = fingerprint.compute(obj)

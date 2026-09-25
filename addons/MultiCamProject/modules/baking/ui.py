@@ -15,10 +15,14 @@ def draw_final_toggle(layout, data, prop):
 LABEL_UNITS = 5.2      # the label column of the Baking panel's settings rows
 
 
-def indented(layout):
-    """A column indented to the sub-panel arrows (as in Camera Project)."""
+SUB_INDENT = 3.4       # a sub-panel's content: in to its header icon, below the arrow
+
+
+def indented(layout, factor=1.6):
+    """A column indented to the sub-panel arrows (as in Camera Project); with SUB_INDENT
+    one level deeper, for the content of a sub-panel."""
     row = layout.row()
-    row.separator(factor=1.6)
+    row.separator(factor=factor)
     return row.column()
 
 
@@ -65,10 +69,13 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             box.alert = True
             box.label(text="Bake is outdated - the projection changed", icon='ERROR')
 
-        # what the Bake button at the end makes
-        # what to bake + what was baked last, in one box
+        # what to bake (+ the normal map's options behind the gear) and what was baked last
         box = top.box().column()
-        box.row(align=True).prop(s, "bake_what", expand=True)
+        row = box.row(align=True)
+        row.prop_enum(s, "bake_what", 'ALBEDO')
+        row.prop_enum(s, "bake_what", 'NORMAL')
+        row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
+        row.prop_enum(s, "bake_what", 'BOTH')
         info = box.column(align=True)
         if d.alb_size:
             info.label(text=f"ALB {_res(d.alb_size)}  ·  {d.last_bake_seconds:.1f} s",
@@ -80,61 +87,59 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             if d.alb_size and d.nor_size != d.alb_size:
                 info.label(text="Normal map is a preview - make it again at full size",
                            icon='INFO')
+        # earlier normal map runs (other methods / sizes) to compare the times with
+        current = (normal.LABELS.get(d.nor_source_used, d.nor_source_used), d.nor_size)
+        others = [r for r in normal.times(d) if (r[0], r[1]) != current]
+        if others:
+            t = info.column(align=True)
+            t.active = False
+            for label, size, sec in others:
+                t.label(text=f"NOR {_res(size)}  ·  {label}  ·  {sec:.1f} s", icon='TIME')
 
-        self._draw_normal(layout, context, obj, s)
         self._draw_bake_button(indented(layout), s)
-        self._draw_settings(layout, context, obj, s)
+        why = normal.problem(obj, context.scene, s.nor_source)
+        if (why and s.bake_what != 'ALBEDO'
+                and not (s.bake_what == 'BOTH' and why == "Bake the albedo first")):
+            indented(layout).label(text=why, icon='ERROR')      # the popover is mostly closed
 
     @staticmethod
     def _draw_bake_button(layout, s):
-        """One Bake for everything the options say."""
+        """One Bake for everything the options say, the bake settings' gear at its end."""
         parts = {'ALBEDO': "Albedo", 'NORMAL': "Normal", 'BOTH': "Albedo + Normal"}[s.bake_what]
         if s.bake_what != 'ALBEDO':
             parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)}"
             parts += ", 2K preview)" if s.nor_preview_2k else ")"
-        row = layout.row()
+        row = layout.row(align=True)
         row.scale_y = 1.5
         row.operator("multicamproject.bake", text=f"Bake {parts}", icon='RENDER_STILL')
+        row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')
 
-    @staticmethod
-    def _draw_settings(layout, context, obj, s):
-        header, body = layout.panel("multicamproject_bake_settings", default_closed=True)
-        header.label(text="Settings", icon='PREFERENCES')
-        if not body:
-            return
-        col = indented(body).column(align=True)
-        labeled(context, col, "Folder").prop(s, "output_dir", text="")
-        labeled(context, col, "Resolution").prop(s, "resolution", text="")
-        labeled(context, col, "Margin").prop(s, "margin", text="")
-        labeled(context, col, "Device").prop(s, "device", text="")
-        labeled(context, col, "Samples").prop(s, "anti_alias", text="")
-        labeled(context, col, "Roughness").prop(s, "roughness", text="")
-        col.separator()
-        labeled(context, col, "Vertex Color").prop(s, "color_source", text="")
-        if s.color_source == 'SCAN_ATTRIBUTE':
-            labeled(context, col, "Scan Attribute").prop(s, "scan_color_name", text="")
-            if obj.data.color_attributes.get(s.scan_color_name) is None:
-                labeled(context, col, "").label(
-                    text=f"No '{s.scan_color_name}' - Color comes from ALB", icon='INFO')
-        labeled(context, col, "PNG Compression").prop(s, "png_compression", text="")
 
-    @staticmethod
-    def _draw_normal(layout, context, obj, s):
-        header, body = layout.panel("multicamproject_bake_normal", default_closed=False)
-        header.label(text="Normal Map", icon='NORMALS_FACE')
-        if not body:
-            return
-        col = indented(body)
+
+class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
+    """The normal map's options, opened from the gear next to the Normal toggle"""
+    bl_label = "Normal Map"
+    bl_idname = "MULTICAMPROJECT_PT_normal_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'HEADER'           # a popover only - not drawn in the sidebar
+    bl_ui_units_x = 17
+
+    def draw(self, context):
+        s = common.settings(context.scene)
+        obj = context.active_object
+        col = self.layout.column()
+        col.label(text="Normal Map", icon='NORMALS_FACE')
         src = s.nor_source
         ai = src == 'AI'
         # [Lite / AI v] [High-pass v] - the engine, then Lite's method
-        row = labeled(context, col, "Generate Engine")
+        split = col.split(factor=0.34, align=True)
+        split.label(text="Generate Engine")
+        row = split.row(align=True)
         row.menu("MULTICAMPROJECT_MT_normal_engine", text="AI" if ai else "Lite",
                  icon='LIGHT_SUN' if ai else 'IMAGE_RGB')
         if not ai:
             row.menu("MULTICAMPROJECT_MT_normal_method", text=normal.LABELS.get(src, src))
 
-        # the method's settings, full names: Strength | Radius, then Invert | Preview at 2K
         # the method's settings; Preview at 2K always ends the last row
         opts = col.column(align=True)
         mesh = src in {'MESH', 'BLEND'}
@@ -155,17 +160,42 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             r.active = s.smooth_source
             r.prop(s, "smooth_iterations", text="")
             row.prop(s, "nor_preview_2k", text="2K", toggle=True)
-        elif src == 'AI':
+        elif ai:
             opts.row(align=True).prop(s, "nor_preview_2k", text="Preview at 2K", toggle=True)
-        why = normal.problem(obj, context.scene, src)
-        if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
-            col.label(text=why, icon='ERROR')
-        runs = normal.times(common.data(obj))
-        if runs:        # the last time of each method and size, to compare them
-            t = col.column(align=True)
-            t.active = False
-            for label, size, sec in runs:
-                t.label(text=f"{label}  ·  {_res(size)}  ·  {sec:.1f} s", icon='TIME')
+        if obj is not None and obj.type == 'MESH':
+            why = normal.problem(obj, context.scene, src)
+            if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
+                col.label(text=why, icon='ERROR')
+
+
+class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
+    """Bake settings, opened from the gear in the Normal Map header"""
+    bl_label = "Bake Settings"
+    bl_idname = "MULTICAMPROJECT_PT_bake_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'HEADER'           # a popover only - not drawn in the sidebar
+    bl_ui_units_x = 14
+
+    def draw(self, context):
+        s = common.settings(context.scene)
+        obj = context.active_object
+        col = self.layout.column(align=True)
+        col.use_property_split = True
+        col.use_property_decorate = False
+        col.prop(s, "output_dir", text="Folder")
+        col.prop(s, "resolution")
+        col.prop(s, "margin")
+        col.prop(s, "device")
+        col.prop(s, "anti_alias")
+        col.prop(s, "roughness")
+        col.separator()
+        col.prop(s, "color_source")
+        if s.color_source == 'SCAN_ATTRIBUTE':
+            col.prop(s, "scan_color_name")
+            if obj is not None and obj.type == 'MESH' \
+                    and obj.data.color_attributes.get(s.scan_color_name) is None:
+                col.label(text=f"No '{s.scan_color_name}' - Color comes from ALB", icon='INFO')
+        col.prop(s, "png_compression")
 
 
 class MULTICAMPROJECT_MT_normal_engine(bpy.types.Menu):
@@ -199,7 +229,8 @@ class MULTICAMPROJECT_MT_normal_method(bpy.types.Menu):
                 self.layout.prop_enum(s, "nor_source", key)
 
 
-_classes = (MULTICAMPROJECT_MT_normal_engine, MULTICAMPROJECT_MT_normal_method)
+_classes = (MULTICAMPROJECT_MT_normal_engine, MULTICAMPROJECT_MT_normal_method,
+            MULTICAMPROJECT_PT_BakeSettings, MULTICAMPROJECT_PT_NormalSettings)
 
 
 def register():

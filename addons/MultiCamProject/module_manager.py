@@ -6,8 +6,8 @@ _CONFIG_PATH = os.path.join(os.path.dirname(__file__), "modules_config.json")
 _LOADED = {}
 
 # Edit entries here via blender-addon-modules — panels.py reads this list
-ALL_MODULES = [    {"name": "camera_project", "op": "multicamproject.toggle_camera_project", "icon": "CAMERA_DATA"},
-    {"name": "project_sides", "op": "multicamproject.toggle_project_sides", "icon": "VIEW_CAMERA"},
+ALL_MODULES = [    {"name": "camera_project", "op": "multicamproject.toggle_camera_project", "icon": "GRID"},
+    {"name": "project_sides", "op": "multicamproject.toggle_project_sides", "icon": "AXIS_SIDE"},
     {"name": "baking", "op": "multicamproject.toggle_baking", "icon": "RENDER_STILL"},
     {"name": "export", "op": "multicamproject.toggle_export", "icon": "EXPORT"},
 ]

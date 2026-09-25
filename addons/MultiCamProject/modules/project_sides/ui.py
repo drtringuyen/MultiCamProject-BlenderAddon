@@ -13,7 +13,7 @@ class MULTICAMPROJECT_PT_ProjectSides(bpy.types.Panel):
     bl_order = 0
 
     def draw_header(self, context):
-        self.layout.label(icon='VIEW_CAMERA')
+        self.layout.label(icon='AXIS_SIDE')
 
     def draw(self, context):
         layout = self.layout

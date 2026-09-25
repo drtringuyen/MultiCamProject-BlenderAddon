@@ -27,6 +27,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     bl_parent_id = "MULTICAMPROJECT_PT_main"
     bl_order = 1
 
+    def draw_header(self, context):
+        self.layout.label(icon='GRID')
+
     def draw(self, context):
         layout = self.layout
         obj = context.active_object
@@ -105,7 +108,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         top, rest = core.display_order(obj)
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
-        header.label(text=f"Selected Cameras ({len(top)})", icon='RESTRICT_SELECT_OFF')
+        header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
         # slot count dropdown + Auto (re-pick by axis) as an icon at the end, like All Cameras
         sub = header.row(align=True)
         cnt = sub.row(align=True)
@@ -122,7 +125,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             slots = core.get_slots(d)
             total = sum(1 for it in d.cameras if it.camera and it.camera not in slots)
             removed = f" - {len(d.removed)} removed" if len(d.removed) else ""
-            header.label(text=f"All Cameras ({len(rest)}/{total}{removed})", icon='OUTLINER_OB_CAMERA')
+            header.label(text=f"All Cameras ({len(rest)}/{total}{removed})", icon='VIEW_CAMERA_UNSELECTED')
             # coverage filter (how much of the object a camera must see) + measure again
             flt = header.row(align=True)
             drop = flt.row(align=True)
