@@ -72,6 +72,14 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
     roughness: FloatProperty(name="Roughness", default=0.8, min=0.0, max=1.0, subtype='FACTOR',
                              description="Roughness of the MAT_ material")
 
+    bake_what: EnumProperty(
+        name="Bake", default='BOTH',
+        items=(('ALBEDO', "Albedo", "Bake only ALB_ (the projection's colors)", 'RENDER_STILL', 0),
+               ('NORMAL', "Normal", "Make only NOR_ (from the albedo or the high poly)", 'NORMALS_FACE', 1),
+               ('BOTH', "Both", "Bake ALB_, then make NOR_ from it", 'RENDER_RESULT', 2)),
+        description="What the Bake button makes")
+    nor_lite_source: StringProperty(default='HIGHPASS',
+                                    description="The Lite method last used (Lite comes back to it)")
     nor_source: EnumProperty(name="Normal Source", items=_nor_sources,
                              description="How NOR_ is made")
     nor_strength: FloatProperty(name="Strength", default=2.0, min=0.0, soft_max=20.0,

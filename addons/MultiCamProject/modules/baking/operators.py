@@ -183,9 +183,12 @@ AI: predicted from the albedo by an AI model (minutes at 8K on the CPU)"""
             if need:
                 self.report({'ERROR'}, f"AI needs {need} - click Set up AI")
                 return {'CANCELLED'}
+            if s.nor_source != 'AI':
+                s.nor_lite_source = s.nor_source        # Lite comes back to this method
             s.nor_source = 'AI'
-        else:
-            s.nor_source = 'HIGHPASS'
+        elif s.nor_source == 'AI':
+            lite = {k for k, _l, _d in normal.available_sources()} - {'AI'}
+            s.nor_source = s.nor_lite_source if s.nor_lite_source in lite else 'HIGHPASS'
         return {'FINISHED'}
 
 
@@ -196,6 +199,11 @@ class MULTICAMPROJECT_OT_BakeSetupAI(bpy.types.Operator):
     bl_idname = "multicamproject.bake_setup_ai"
     bl_label = "Set up AI"
     bl_options = {'REGISTER'}
+
+    @classmethod
+    def description(cls, context, props):
+        need = normal.ai.missing()
+        return (f"AI needs {need}.\n" if need else "") + cls.__doc__
 
     filepath: bpy.props.StringProperty(name="Model", subtype='FILE_PATH',
                                        description="The .onnx model file (skip when already set up)")
@@ -236,7 +244,47 @@ class MULTICAMPROJECT_OT_BakeSetupAI(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_classes = (MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
+class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
+    """Bake the selected meshes with the options above: Albedo, Normal or Both, the normal
+    map with the chosen method (Preview at 2K when on). Each object ends in Final"""
+    bl_idname = "multicamproject.bake"
+    bl_label = "Bake"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not _object_mode(context):
+            return False
+        objs = common.selected_meshes(context)
+        if not objs:
+            cls.poll_message_set("Select meshes")
+            return False
+        s = common.settings(context.scene)
+        if s.bake_what in {'ALBEDO', 'BOTH'}:
+            missing = [o.name for o in objs if not common.has_uv_normal(o)]
+            if missing:
+                cls.poll_message_set(f"No '{common.UV_NORMAL}' UV map on {', '.join(missing[:3])}")
+                return False
+        if s.bake_what in {'NORMAL', 'BOTH'}:
+            for o in objs:
+                why = normal.problem(o, context.scene, s.nor_source)
+                if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
+                    cls.poll_message_set(f"{o.name}: {why}")
+                    return False
+        return True
+
+    def execute(self, context):
+        s = common.settings(context.scene)
+        objs = common.selected_meshes(context)
+        albedo = s.bake_what in {'ALBEDO', 'BOTH'}
+        src = s.nor_source if s.bake_what in {'NORMAL', 'BOTH'} else None
+        done, failed = bake_objects(context, objs, albedo=albedo, nor_source=src,
+                                    preview=s.nor_preview_2k)
+        _report(self, done, failed, "Baked")
+        return {'FINISHED'} if done else {'CANCELLED'}
+
+
+_classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI)
 
