@@ -53,10 +53,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         obj = context.active_object
         s = common.settings(context.scene)
         if obj is None or obj.type != 'MESH':
-            indented(layout).label(text="Select a mesh object", icon='INFO')
+            layout.label(text="Select a mesh object", icon='INFO')
             return
         d = common.data(obj)
-        top = indented(layout)
+        top = layout.column()      # no indent: the Baking panel reads better flush
 
         draw_final_toggle(top, obj, "multicamproject_view")
         if not common.has_uv_normal(obj):
@@ -96,11 +96,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             for label, size, sec in others:
                 t.label(text=f"NOR {_res(size)}  ·  {label}  ·  {sec:.1f} s", icon='TIME')
 
-        self._draw_bake_button(indented(layout), s)
+        self._draw_bake_button(layout, s)
         why = normal.problem(obj, context.scene, s.nor_source)
         if (why and s.bake_what != 'ALBEDO'
                 and not (s.bake_what == 'BOTH' and why == "Bake the albedo first")):
-            indented(layout).label(text=why, icon='ERROR')      # the popover is mostly closed
+            layout.label(text=why, icon='ERROR')      # the popover is mostly closed
 
     @staticmethod
     def _draw_bake_button(layout, s):
