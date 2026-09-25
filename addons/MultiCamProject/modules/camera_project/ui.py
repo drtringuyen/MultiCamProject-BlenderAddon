@@ -47,35 +47,51 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             layout.operator("multicamproject.setup", text="Rebuild Setup", icon='FILE_REFRESH')
             return
 
-        header, body = layout.panel("multicamproject_cameras", default_closed=False)
-        header.label(text=f"Cameras ({len(d.cameras)})", icon='OUTLINER_OB_CAMERA')
-        if body:
-            self._draw_box(context, body.box(), obj, d, mod)
+        # straight in the panel: Folder, Clip + Mode, blend row, then the camera sections
+        self._draw_box(context, layout, obj, d, mod)
+
+    LABEL_UNITS = 2.6      # width of the Folder / Clip / Blend label column
+    MODE_SPLIT = 0.66      # Clip | Mode and Blend | Occlusion share this split
+
+    @classmethod
+    def _labeled(cls, context, layout, label):
+        """A row with its label in a narrow fixed column: every field starts right after it,
+        at the same x. The split comes from the region's pixel width (ui_units_x on a label
+        gets stretched when the row holds a file path field)."""
+        unit = 20 * context.preferences.system.ui_scale
+        avail = max(1.0, context.region.width - 3.6 * unit)     # panel margins + indent
+        split = layout.split(factor=min(0.4, cls.LABEL_UNITS * unit / avail), align=True)
+        split.label(text=label)
+        return split.row(align=True)
 
     def _draw_box(self, context, box, obj, d, mod):
-        row = box.row(align=True)
-        row.prop(d, "image_folder")
+        # indented to the Selected / All Cameras arrows below
+        outer = box.row()
+        outer.separator(factor=1.6)
+        col = outer.column()
+
+        row = self._labeled(context, col, "Folder")
+        row.prop(d, "image_folder", text="")
         row.operator("multicamproject.reload_all", text="", icon='FILE_REFRESH')
-        # one row: clipping of every camera + the projection mode
-        row = box.row(align=True)
-        split = row.split(factor=0.68, align=True)
+        # clipping of every camera + the projection mode
+        row = self._labeled(context, col, "Clip")
+        split = row.split(factor=self.MODE_SPLIT, align=True)
         clip = split.row(align=True)
-        clip.label(text="Clip")
         clip.prop(d, "clip_start")
         clip.prop(d, "clip_end")
         split.prop(core.input_socket(mod, "Mode"), "value", text="")
 
-        # one row: blend controls
-        row = box.row(align=True)
-        row.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
+        # blend controls
+        row = self._labeled(context, col, "Blend")
+        split = row.split(factor=self.MODE_SPLIT, align=True)     # Occlusion under Mode
+        blend = split.row(align=True)
+        blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         scan = d.material.node_tree.nodes.get(core.ORIGINAL_SCAN) if d.material else None
         if scan:
             # a Value node has no 0..1 range, so no slider (its bar would be wrong)
-            row.prop(scan.outputs[0], "default_value", text="Original Scan")
-        occ = row.row(align=True)
-        occ.ui_units_x = 1.4
-        occ.prop(core.input_socket(mod, "Occlusion"), "value", text="", toggle=True,
-                 icon='MOD_MASK')      # tooltip: Occlusion
+            blend.prop(scan.outputs[0], "default_value", text="Original Scan")
+        split.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion", toggle=True,
+                   icon='MOD_MASK')
 
         box.separator(type='LINE')
         if not d.cameras:
