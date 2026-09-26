@@ -2,6 +2,30 @@
 
 ## Unreleased
 
+### Fixes (2026-09-26)
+- **User counts no longer climb on save.** Blender 5.2 adds a user to every ID held by a Geometry
+  Nodes modifier input on each save (Ctrl+S, autosave), so `MCP_<object>`, the cameras, `MAT_` and
+  `ALB_` reached hundreds of users and could never be purged. Each GN-CameraProject / GN-Final
+  modifier now runs its own wrapper group (`<group> | <object>`, see `camera_project/wrapper.py`):
+  plain inputs stay on the modifier, ID inputs (Material, Camera N, Baked Material, Albedo) are node
+  default values inside the wrapper, which do not leak. Existing setups are wrapped on file load; a
+  duplicated object gets its own wrapper. Inflated counts from before reset on the next file load.
+- **Camera list keeps back-facing cameras.** A camera that has the object fully in frame but sees
+  only its back faces (score 0, e.g. the back camera of a relief) was dropped from the list, so a
+  4-slot setup could only fill 3 slots. Every camera with the object in frame is now listed.
+- **All Cameras is now Other Cameras** (it only ever listed the cameras not in a slot) and is
+  always shown. It disappeared (with its coverage filter, Restore and Measure buttons) when every
+  camera was in a slot; it now says so instead. The count reads `3`, or `1/3` only while the
+  coverage filter hides some.
+- **The projection material keeps its layout.** `MCP_<object>` is built with the hand-arranged
+  4-camera layout (`camera_project/material_layout.py`), including reroutes for VCMix R/G/B. Its
+  nodes have stable names now, and a rebuild keeps every node where it stands. Cameras 5 and 6
+  go below Cam 4 (UV Map + Image Texture at the same 300 spacing), their weighting nodes follow
+  the cameras 1-3 pattern, and the PROJECTION frame grows with them. Material version 6: existing
+  materials are rebuilt once with the new layout.
+- A camera list from before coverage was stored (every camera at 0%, so all hidden by the filter)
+  is measured again on file load.
+
 ### Baking + Export modules (2026-09-25)
 Plan: `docs/PLAN_baking_export.md`.
 

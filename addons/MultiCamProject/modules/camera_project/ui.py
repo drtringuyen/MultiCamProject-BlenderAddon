@@ -68,7 +68,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         return split.row(align=True)
 
     def _draw_box(self, context, box, obj, d, mod):
-        # indented to the Selected / All Cameras arrows below
+        # indented to the Selected / Other Cameras arrows below
         outer = box.row()
         outer.separator(factor=1.6)
         col = outer.column()
@@ -109,7 +109,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
         header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
-        # slot count dropdown + Auto (re-pick by axis) as an icon at the end, like All Cameras
+        # slot count dropdown + Auto (re-pick by axis) as an icon at the end, like Other Cameras
         sub = header.row(align=True)
         cnt = sub.row(align=True)
         cnt.ui_units_x = 3.2
@@ -120,29 +120,35 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
                 self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
             body.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
                           icon='RENDER_STILL')
-        if any(it.camera and it.camera not in core.get_slots(d) for it in d.cameras):
-            header, body = box.panel("multicamproject_all_cams", default_closed=False)
-            slots = core.get_slots(d)
-            total = sum(1 for it in d.cameras if it.camera and it.camera not in slots)
-            removed = f" - {len(d.removed)} removed" if len(d.removed) else ""
-            header.label(text=f"All Cameras ({len(rest)}/{total}{removed})", icon='VIEW_CAMERA_UNSELECTED')
-            # coverage filter (how much of the object a camera must see) + measure again
-            flt = header.row(align=True)
-            drop = flt.row(align=True)
-            drop.ui_units_x = 3.2
-            drop.prop(d, "coverage_filter", text="")
-            flt.operator("multicamproject.restore_cameras", text="", icon='LOOP_BACK')
-            flt.operator("multicamproject.measure_coverage", text="", icon='FILE_REFRESH')
-            if body and not core.measured(d):
-                r = body.row()
-                r.alert = True
-                r.label(text="Coverage not measured yet - press Auto or Reload All", icon='ERROR')
-            elif body and not rest:
-                body.label(text="No camera passes the coverage filter", icon='INFO')
-            elif body:
-                # a list widget: it scrolls itself to its active row = the soloed camera
-                body.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
-                                   rows=12)
+        # always drawn, also when every camera is in a slot: its header holds the coverage
+        # filter, Restore Removed and Measure
+        header, body = box.panel("multicamproject_all_cams", default_closed=False)
+        slots = core.get_slots(d)
+        total = sum(1 for it in d.cameras if it.camera and it.camera not in slots)
+        removed = f" - {len(d.removed)} removed" if len(d.removed) else ""
+        # the cameras not in a slot; "shown/total" only while the coverage filter hides some
+        count = str(total) if len(rest) == total else f"{len(rest)}/{total}"
+        header.label(text=f"Other Cameras ({count}{removed})", icon='VIEW_CAMERA_UNSELECTED')
+        # coverage filter (how much of the object a camera must see) + measure again
+        flt = header.row(align=True)
+        drop = flt.row(align=True)
+        drop.ui_units_x = 3.2
+        drop.prop(d, "coverage_filter", text="")
+        flt.operator("multicamproject.restore_cameras", text="", icon='LOOP_BACK')
+        flt.operator("multicamproject.measure_coverage", text="", icon='FILE_REFRESH')
+        if body and not core.measured(d):
+            r = body.row()
+            r.alert = True
+            r.label(text="Coverage not measured yet - press Auto or Reload All", icon='ERROR')
+        elif body and not total:
+            body.label(text="No other camera - every camera seeing the object is in a slot",
+                       icon='INFO')
+        elif body and not rest:
+            body.label(text="No camera passes the coverage filter", icon='INFO')
+        elif body:
+            # a list widget: it scrolls itself to its active row = the soloed camera
+            body.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
+                               rows=12)
 
     @staticmethod
     def _metrics(context, debug, n, margin=2.8, extra=0):
@@ -238,7 +244,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
 
 class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
-    """All Cameras: the cameras not in a slot that pass the coverage filter, most coverage
+    """Other Cameras: the cameras not in a slot that pass the coverage filter, most coverage
     first. Its active row is the soloed camera; clicking a name solos that camera."""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):

@@ -24,6 +24,9 @@ def main_name(n):
 
 
 def is_main(ng):
+    """`ng` is a main group, or a modifier's wrapper around one."""
+    from . import wrapper
+    ng = wrapper.shared(ng)
     return ng is not None and ng.name in {main_name(n) for n in SLOT_COUNTS}
 _VERSION_KEY = "multicamproject_version"
 
