@@ -482,22 +482,26 @@ def _remove_legacy(obj):
         bpy.data.node_groups.remove(ng)
 
 
+def _foreign(obj, mat):
+    """Another object's MCP_ material, e.g. on a duplicate that kept the original's."""
+    return mat is not None and mat.get(MAT_TAG) and mat.name != material_name(obj)
+
+
 def place_material(obj):
-    """MCP_<name> in slot 1; the other slots move down. A MATMCP_ slot is taken over
-    in place and the MATMCP_ material deleted."""
+    """MCP_<name> in slot 1; the other slots move down. A MATMCP_ slot, or a slot holding
+    another object's MCP_, is taken over in place (the MATMCP_ material is deleted)."""
     name = material_name(obj)
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
     mat[MAT_TAG] = True
     slots = obj.material_slots
     idx = next((i for i, s in enumerate(slots) if s.material == mat), None)
     legacy = bpy.data.materials.get(LEGACY_PREFIX + obj.name)
-    if legacy:
-        for i, s in enumerate(slots):
-            if s.material == legacy:
-                if idx is None:
-                    s.material, idx = mat, i
-                else:
-                    s.material = None
+    for i, s in enumerate(slots):
+        if (legacy and s.material == legacy) or _foreign(obj, s.material):
+            if idx is None:
+                s.material, idx = mat, i
+            else:
+                s.material = None
     if idx is None:
         obj.data.materials.append(mat)
         idx = len(slots) - 1
@@ -1000,6 +1004,42 @@ def assign_slot(obj, cam, slot, scene):
     set_slots(d, slots)
     d.user_picked = True
     apply_slots(obj, scene)
+
+
+def check_slots(obj, scene):
+    """Refresh: the Camera 1-n picks stay. The object's own MCP_ goes back into its
+    material slot (a duplicate keeps the original's), a slot camera without a loaded photo
+    fetches it from the folder, then CamTex_1..n and the modifier are rewired to the slots.
+    Returns (fixes, warnings) as strings."""
+    d = data(obj)
+    fixes, warnings = [], []
+    own = material_name(obj)
+    foreign = sorted({s.material.name for s in obj.material_slots if _foreign(obj, s.material)})
+    if foreign or not any(s.material and s.material.name == own for s in obj.material_slots):
+        place_material(obj)
+        fixes.append(f"Material slot: {', '.join(foreign) or 'missing'} -> {own}")
+    mod = get_modifier(obj)
+    mod_mat = get_input(mod, "Material") if mod else None
+    if mod_mat is not None and mod_mat.name != own:
+        fixes.append(f"Modifier material: {mod_mat.name} -> {own}")
+
+    folder, listing = _folder_listing(d.image_folder)
+    mat = bpy.data.materials.get(own)
+    nodes = mat.node_tree.nodes if mat and mat.node_tree else {}
+    for i, cam in enumerate(get_slots(d), 1):
+        img = None
+        if cam is not None:
+            if not image_ok(cam_image(cam)) and not is_global(cam):
+                resolve_cam_image(cam, folder, listing)
+            img = cam_image(cam)
+            if not image_ok(img):
+                warnings.append(f"Camera {i}: '{cam.name}' has no loaded image")
+        tex = nodes.get(f"CamTex_{i}")
+        if tex is not None and tex.image != img:
+            fixes.append(f"Cam {i}: {tex.image.name if tex.image else 'empty'} -> "
+                         f"{img.name if img else 'empty'}")
+    apply_slots(obj, scene)
+    return fixes, warnings
 
 
 def slot_of(obj, cam):

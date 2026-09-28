@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Camera Project: Resort / Refresh (2026-09-28)
+- The Selected Cameras header's one button is split: **Resort** (first, sort icon) scores every
+  camera again and picks the best for the slots (the old Auto); **Refresh** (at the end) keeps
+  the picks and checks the material: the object's own MCP_ back in its slot, each Cam texture
+  holding its slot camera's photo (fetched from the folder when missing), modifier rewired.
+- A duplicate kept the original's MCP_ in material slot 1, so the node editor showed the
+  original's Cam textures. Refresh and Reload All now take that slot over with the object's own.
+
 ### Remesh fixes (2026-09-28)
 - **PolyCut follows the view:** the points are kept in 3D (on the surface under the mouse, or
   at the last point's depth) and re-projected on every redraw, so orbit / pan / zoom (mouse,

@@ -109,12 +109,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
         header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
-        # slot count dropdown + Auto (re-pick by axis) as an icon at the end, like Other Cameras
+        # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
+        # material's Cam textures against the slots) at the end, like Other Cameras
         sub = header.row(align=True)
+        sub.operator("multicamproject.auto_pick", text="", icon='SORTSIZE')
         cnt = sub.row(align=True)
         cnt.ui_units_x = 3.2
         cnt.prop(d, "slot_count", text="")
-        sub.operator("multicamproject.auto_pick", text="", icon='FILE_REFRESH')
+        sub.operator("multicamproject.check_slots", text="", icon='FILE_REFRESH')
         if body:
             for item in top:
                 self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
@@ -139,7 +141,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         if body and not core.measured(d):
             r = body.row()
             r.alert = True
-            r.label(text="Coverage not measured yet - press Auto or Reload All", icon='ERROR')
+            r.label(text="Coverage not measured yet - press Resort or Reload All", icon='ERROR')
         elif body and not total:
             body.label(text="No other camera - every camera seeing the object is in a slot",
                        icon='INFO')

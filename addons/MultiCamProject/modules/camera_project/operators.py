@@ -100,10 +100,11 @@ class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
-    """Pick the slots again: Camera 1 looks most along +-Y, 2 along +-X, 3 along +-Z, 4-6 the
-    most coverage left - only cameras that pass the coverage filter"""
+    """Resort: score every camera again and pick the best for the slots - Camera 1 looks
+    most along +-Y, 2 along +-X, 3 along +-Z, 4-6 the most coverage left (only cameras
+    that pass the coverage filter)"""
     bl_idname = "multicamproject.auto_pick"
-    bl_label = "Auto Pick Cameras"
+    bl_label = "Resort Cameras"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -117,6 +118,28 @@ class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
             self.report({'WARNING'}, warning)
         names = [c.name if c else "-" for c in core.get_slots(core.data(obj))]
         self.report({'INFO'}, "Cameras: " + ", ".join(names))
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_CheckSlots(bpy.types.Operator):
+    """Refresh: keep the picked cameras and check that the material shows them - the
+    object's own material in its slot, each Cam texture holding its camera's photo
+    (fetched from the folder when missing)"""
+    bl_idname = "multicamproject.check_slots"
+    bl_label = "Refresh Camera Textures"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context)
+
+    def execute(self, context):
+        fixes, warnings = core.check_slots(context.active_object, context.scene)
+        _report_warnings(self, warnings)
+        if fixes:
+            self.report({'INFO'}, "Fixed: " + "; ".join(fixes))
+        elif not warnings:
+            self.report({'INFO'}, "Camera textures match the slots")
         return {'FINISHED'}
 
 
@@ -748,6 +771,7 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
 _classes = (
     MULTICAMPROJECT_OT_Setup,
     MULTICAMPROJECT_OT_AutoPick,
+    MULTICAMPROJECT_OT_CheckSlots,
     MULTICAMPROJECT_OT_MeasureCoverage,
     MULTICAMPROJECT_OT_RemoveCamera,
     MULTICAMPROJECT_OT_RestoreCameras,
