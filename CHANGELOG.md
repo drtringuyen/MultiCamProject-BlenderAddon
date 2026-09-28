@@ -7,6 +7,9 @@
   camera again and picks the best for the slots (the old Auto); **Refresh** (at the end) keeps
   the picks and checks the material: the object's own MCP_ back in its slot, each Cam texture
   holding its slot camera's photo (fetched from the folder when missing), modifier rewired.
+- Fix: camera lists saved empty. Scoring right after a file load (the coverage migration)
+  read every `matrix_world` as zeros, so no camera saw the object; the view layer is updated
+  before scoring now. Press Measure Coverage on an object with an empty list.
 - A duplicate kept the original's MCP_ in material slot 1, so the node editor showed the
   original's Cam textures. Refresh and Reload All now take that slot over with the object's own.
 

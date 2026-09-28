@@ -805,7 +805,12 @@ def migrate_all():
             if get_modifier(obj):
                 apply_slots(obj, scene)
         if obj.type == 'MESH' and not obj.library and data(obj).is_setup and not measured(data(obj)):
+            d = data(obj)
+            old = len(d.cameras)
             rescore(obj, scene)     # a list from before coverage was stored: all hidden at 0%
+            if old and not len(d.cameras):
+                print(f"[MultiCamProject] '{obj.name}': no camera sees it after the "
+                      "coverage migration - press Measure Coverage to check")
     migrate_wrappers(scene)
 
 
@@ -918,6 +923,13 @@ def rescore(obj, scene):
     d = data(obj)
     if obj.mode == 'EDIT':
         obj.update_from_editmode()      # score the mesh as edited, not as last left
+    # matrix_world is runtime data: right after a file load (load_post, the startup timer)
+    # it reads all zeros until the depsgraph runs, and every camera then sees nothing
+    vl = bpy.context.view_layer
+    if vl is not None and vl in scene.view_layers.values():
+        vl.update()
+    elif len(scene.view_layers):
+        scene.view_layers[0].update()
     co_w, nr_w = _object_samples(obj)
     removed = {r.camera for r in d.removed if r.camera}
     scored = []
