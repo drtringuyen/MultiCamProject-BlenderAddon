@@ -8,6 +8,7 @@ Stack of the copy:
   -> GN-CameraProject -> GN-Final
 """
 import bpy
+import numpy as np
 
 from ... import module_manager
 from ..camera_project import core as cp
@@ -139,6 +140,49 @@ def _restore_uvs(obj):
     d.prev_uv_active = d.prev_uv_render = ""
 
 
+def _free_projection_faces(obj):
+    """Faces on the projection material (MCP_, drawn only through GN-CameraProject, which
+    the original no longer has) go back to their scan material: uv_index is the face's slot
+    from before the materials were combined. Returns the number of faces moved."""
+    me = obj.data
+    slots = obj.material_slots
+    ours = {i for i, s in enumerate(slots) if s.material and s.material.get(cp.MAT_TAG)}
+    attr = me.attributes.get(cp.UV_INDEX)
+    if not ours or attr is None or attr.domain != 'FACE' or not len(me.polygons):
+        return 0
+    n = len(me.polygons)
+    mi = np.empty(n, np.int32)
+    me.polygons.foreach_get("material_index", mi)
+    ui = np.empty(n, np.int32)
+    attr.data.foreach_get("value", ui)
+    valid = (ui >= 0) & (ui < len(slots)) & ~np.isin(ui, list(ours))
+    move = np.isin(mi, list(ours)) & valid
+    if not move.any():
+        return 0
+    mi[move] = ui[move]
+    me.polygons.foreach_set("material_index", mi)
+    me.update()
+    return int(move.sum())
+
+
+def repair_original(obj):
+    """Keep a Remesh original drawable without its GN modifiers: its own UVs back (not
+    Final's uv_normal) and no face on the projection material. Safe to run again."""
+    if obj.type != 'MESH' or obj.library or obj.mode != 'OBJECT':
+        return 0
+    _restore_uvs(obj)
+    return _free_projection_faces(obj)
+
+
+def repair_originals():
+    """On load: the originals made before these repairs existed."""
+    sources = {o.multicamproject_bake.source for o in bpy.data.objects
+               if o.type == 'MESH' and hasattr(o, "multicamproject_bake")}
+    for obj in sources:
+        if obj is not None and not any(m.type == 'NODES' for m in obj.modifiers):
+            repair_original(obj)
+
+
 def _export_collection(scene):
     try:
         from ..export import fixes
@@ -174,7 +218,7 @@ def make_copy(context, obj):
         coll.objects.unlink(obj)
 
     _remove_gn(obj)                     # before the copy's setup: its wrappers are free again
-    _restore_uvs(obj)                   # a Final original would stay on uv_normal
+    repair_original(obj)                # its own UVs, no face on the projection material
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.is_setup = False    # no longer a projection object
     copy.multicamproject_bake.source = obj

@@ -34,6 +34,10 @@
 - **Original's textures scrambled:** an object in Final has `uv_normal` as its render UV;
   Remesh stripped GN-Final from the original, so it stayed there and the scan textures read
   `uv_normal`. Remesh now puts the original's remembered UVs back.
+- **Original's faces on the projection material:** MCP_ only draws through GN-CameraProject,
+  which the original no longer has. Its faces go back to their scan material (by `uv_index`).
+- Both repairs (`repair_original`) run at Remesh time and on every file load for the
+  originals made before, so an existing broken original fixes itself when the file opens.
 - **PolyCut follows the view:** the points are kept in 3D (on the surface under the mouse, or
   at the last point's depth) and re-projected on every redraw, so orbit / pan / zoom (mouse,
   trackpad, numpad, NDOF) keep the polygon on the object. The cut uses the view it is closed in.
