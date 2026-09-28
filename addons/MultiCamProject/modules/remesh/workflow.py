@@ -124,6 +124,21 @@ def _remove_gn(obj):
         obj.modifiers.remove(mod)
 
 
+def _restore_uvs(obj):
+    """Final makes uv_normal the active + render UV and remembers the previous ones; GN-Final
+    is gone from the original, so nothing would switch it back - and the scan textures
+    (no UV Map node) would then read uv_normal. Put the remembered UVs back."""
+    d = getattr(obj, "multicamproject_bake", None)
+    if d is None or not (d.prev_uv_active or d.prev_uv_render):
+        return
+    uvs = obj.data.uv_layers
+    if uvs.get(d.prev_uv_active):
+        uvs.active = uvs[d.prev_uv_active]
+    if uvs.get(d.prev_uv_render):
+        uvs[d.prev_uv_render].active_render = True
+    d.prev_uv_active = d.prev_uv_render = ""
+
+
 def _export_collection(scene):
     try:
         from ..export import fixes
@@ -159,6 +174,7 @@ def make_copy(context, obj):
         coll.objects.unlink(obj)
 
     _remove_gn(obj)                     # before the copy's setup: its wrappers are free again
+    _restore_uvs(obj)                   # a Final original would stay on uv_normal
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.is_setup = False    # no longer a projection object
     copy.multicamproject_bake.source = obj
