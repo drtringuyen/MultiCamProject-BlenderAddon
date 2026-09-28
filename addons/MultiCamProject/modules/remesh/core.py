@@ -21,10 +21,20 @@ def _face_sets(me):
     return v
 
 
+_ids = {}      # mesh name -> [(face set, face count)], refreshed by sync_face_sets
+
+
+def face_set_ids(obj):
+    """The face sets of the last sync (cheap: the panel calls it on every redraw)."""
+    return _ids.get(obj.data.name, [])
+
+
 def sync_face_sets(obj):
     """Copy the Sculpt face sets into face_set for GN (only writes when they differ)."""
     me = obj.data
     fs = _face_sets(me)
+    ids, counts = np.unique(fs, return_counts=True)
+    _ids[me.name] = list(zip(ids.tolist(), counts.tolist()))
     a = me.attributes.get(gn.FACE_SET)
     if a is not None and (a.domain != 'FACE' or a.data_type != 'INT'):
         me.attributes.remove(a)
@@ -42,7 +52,6 @@ def sync_face_sets(obj):
 
 def poly_cut(obj, rays, forward, near, far):
     """Object Mode only. Returns the new face set ID and its face count."""
-    gn.ensure_face_set_group()
     cut = cutter.build(rays, forward, near, far)
     mod = obj.modifiers.new(_TEMP_MOD, 'NODES')
     try:
@@ -87,6 +96,9 @@ def _on_depsgraph(scene, depsgraph):
     _last_mode[obj.name] = obj.mode
     if prev == 'SCULPT' and obj.mode != 'SCULPT' and gn.FACE_SET in obj.data.attributes:
         sync_face_sets(obj)
+    elif obj.data.name not in _ids and gn.FACE_SET in obj.data.attributes:
+        ids, counts = np.unique(_face_sets(obj.data), return_counts=True)   # e.g. after a reload
+        _ids[obj.data.name] = list(zip(ids.tolist(), counts.tolist()))
 
 
 def register():

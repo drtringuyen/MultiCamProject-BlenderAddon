@@ -4,7 +4,8 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from . import core, cutter
+from ..camera_project import core as cp
+from . import core, cutter, gn_remesh as gn
 
 _SAMPLES = 12           # interior rays per axis for the cut depth
 _SAME_PX = 4            # a double click's first press lands on the last point: not a new one
@@ -143,15 +144,52 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         if not count:
             self.report({'WARNING'}, "Nothing inside the polygon was cut")
             return {'FINISHED'}
+        mod = gn.get_modifier(obj)
+        if mod is not None:             # GN-Remesh follows the newest face set
+            cp.set_input(mod, "Face Set", new_id)
         self.report({'INFO'}, f"Face set {new_id}: {count} faces")
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_RemeshAddModifier(bpy.types.Operator):
+    """Add GN-Remesh at the top of the stack: pick a face set by number and see only it.
+    The face sets are copied to face_set so GN can read them"""
+    bl_idname = "multicamproject.remesh_add_modifier"
+    bl_label = "Add GN-Remesh"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def execute(self, context):
+        obj = context.active_object
+        mode = obj.mode
+        if mode == 'SCULPT':            # Sculpt Mode keeps its own copy of the face sets
+            bpy.ops.object.mode_set(mode='OBJECT')
+        try:
+            core.sync_face_sets(obj)
+            mod = gn.add_modifier(obj)
+            ids = [i for i, _c in core.face_set_ids(obj)]
+            if ids:                     # start on the newest face set (the last Poly Cut)
+                cp.set_input(mod, "Face Set", max(ids))
+        finally:
+            if mode == 'SCULPT':
+                bpy.ops.object.mode_set(mode='SCULPT')
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_RemeshAddModifier)
+
+
 def register():
-    bpy.utils.register_class(MULTICAMPROJECT_OT_RemeshPolyCut)
+    for c in _CLASSES:
+        bpy.utils.register_class(c)
     core.register()
 
 
 def unregister():
     core.unregister()
-    bpy.utils.unregister_class(MULTICAMPROJECT_OT_RemeshPolyCut)
+    for c in reversed(_CLASSES):
+        bpy.utils.unregister_class(c)

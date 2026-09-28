@@ -4,8 +4,8 @@ MCP-PolyCut - applied once per Poly Cut (a temporary modifier): an Exact boolean
 scan along the cutter's walls, nothing removed. Inside faces get remesh_inside = True.
 The scan is open, so the solver keeps bits of the cutter's walls: every cutter face is dropped.
 
-GN-Remesh - a field group for the user's own trees: Face Set in -> Selection. It reads
-face_set, the copy of the Sculpt face sets (GN cannot read .sculpt_face_set).
+GN-Remesh - a modifier: Face Set number in, only those faces out (Isolate / Invert). It
+reads face_set, the copy of the Sculpt face sets (GN cannot read .sculpt_face_set).
 """
 import bpy
 
@@ -17,7 +17,8 @@ FACESET_GROUP = "GN-Remesh"
 INSIDE = "remesh_inside"
 FACE_SET = "face_set"               # the GN-readable copy of .sculpt_face_set
 _SEAM = "_remesh_seam"
-VERSION = 3             # bump when a node layout changes
+SELECTION = "remesh_selection"      # GN-Remesh's chosen faces, for modifiers after it
+VERSION = 4            # bump when a node layout changes
 _VERSION_KEY = "multicamproject_remesh_version"
 
 
@@ -104,20 +105,48 @@ def build_cut():
 
 
 def build_face_set():
-    ng = _fresh(FACESET_GROUP, False)
-    ng.description = "Faces of one Sculpt face set (reads face_set, kept in sync by the addon)"
-    _iface(ng, "Selection", "OUTPUT", "NodeSocketBool")
-    _iface(ng, "Face Set", "OUTPUT", "NodeSocketInt")
-    _iface(ng, "Face Set", "INPUT", "NodeSocketInt", default=1)
+    """GN-Remesh, a modifier: pick a face set by number, see only it (or all but it).
+    Stores remesh_selection (face BOOL) for whatever comes after it in the stack."""
+    ng = _fresh(FACESET_GROUP, True)
+    ng.description = "Read the Sculpt face sets: show one face set, or everything but it"
+    _iface(ng, "Geometry", "OUTPUT", "NodeSocketGeometry")
+    _iface(ng, "Geometry", "INPUT", "NodeSocketGeometry")
+    s = _iface(ng, "Face Set", "INPUT", "NodeSocketInt", default=1, mn=0, single=True)
+    s.description = "Face set number (as in Sculpt Mode; Poly Cut reports the new one)"
+    s = _iface(ng, "Isolate", "INPUT", "NodeSocketBool", default=True, single=True)
+    s.description = "Show only the chosen face set. Off: the whole mesh, selection stored only"
+    s = _iface(ng, "Invert", "INPUT", "NodeSocketBool", default=False, single=True)
+    s.description = "Everything except the chosen face set"
     b = B(ng)
-    gi = b.n("NodeGroupInput", (-400, 0))
-    go = b.n("NodeGroupOutput", (200, 0))
-    fs = _named(b, FACE_SET, 'INT', (-400, -150))
-    eq = b.n("FunctionNodeCompare", (0, 0), data_type='INT', operation='EQUAL')
-    b.link(fs, eq.inputs["A"])
+    gi = b.n("NodeGroupInput", (-700, 0))
+    go = b.n("NodeGroupOutput", (1000, 0))
+
+    read = b.frame("1. Read the face sets (face_set = copy of the Sculpt face sets)", (-450, -200))
+    fs = b.n("GeometryNodeInputNamedAttribute", (0, 0), read, data_type='INT')
+    fs.inputs["Name"].default_value = FACE_SET
+    eq = b.n("FunctionNodeCompare", (200, 0), read, data_type='INT', operation='EQUAL')
+    b.link(fs.outputs["Attribute"], eq.inputs["A"])
     b.link(gi.outputs["Face Set"], eq.inputs["B"])
-    b.link(eq.outputs["Result"], go.inputs["Selection"])
-    b.link(fs, go.inputs["Face Set"])
+    inv = b.n("FunctionNodeBooleanMath", (400, 0), read, operation='XOR')
+    b.link(eq.outputs["Result"], inv.inputs[0])
+    b.link(gi.outputs["Invert"], inv.inputs[1])
+    sel = inv.outputs[0]
+
+    use = b.frame("2. Use the selection", (200, 200))
+    store = b.n("GeometryNodeStoreNamedAttribute", (0, 0), use, data_type='BOOLEAN', domain='FACE')
+    store.inputs["Name"].default_value = SELECTION
+    b.link(gi.outputs["Geometry"], store.inputs["Geometry"])
+    b.link(sel, store.inputs["Value"])
+    other = b.n("FunctionNodeBooleanMath", (0, -220), use, operation='NOT')
+    b.link(sel, other.inputs[0])
+    drop = b.n("GeometryNodeDeleteGeometry", (220, -60), use, domain='FACE')
+    b.link(store.outputs["Geometry"], drop.inputs["Geometry"])
+    b.link(other.outputs[0], drop.inputs["Selection"])
+    sw = b.n("GeometryNodeSwitch", (440, 0), use, input_type='GEOMETRY')
+    b.link(gi.outputs["Isolate"], sw.inputs["Switch"])
+    b.link(store.outputs["Geometry"], sw.inputs["False"])
+    b.link(drop.outputs["Geometry"], sw.inputs["True"])
+    b.link(sw.outputs["Output"], go.inputs["Geometry"])
     return ng
 
 
@@ -134,3 +163,21 @@ def ensure_cut_group():
 
 def ensure_face_set_group():
     return _ensure(FACESET_GROUP, build_face_set)
+
+
+def get_modifier(obj):
+    return next((m for m in obj.modifiers if m.type == 'NODES' and m.node_group
+                 and m.node_group.name == FACESET_GROUP), None)
+
+
+def add_modifier(obj):
+    """GN-Remesh first in the stack (before the projection)."""
+    ng = ensure_face_set_group()
+    mod = get_modifier(obj)
+    if mod is None:
+        mod = obj.modifiers.new(FACESET_GROUP, 'NODES')
+        mod.node_group = ng
+    if list(obj.modifiers).index(mod) != 0:
+        with bpy.context.temp_override(object=obj, active_object=obj):
+            bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=0)
+    return mod

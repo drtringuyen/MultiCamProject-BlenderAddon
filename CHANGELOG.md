@@ -9,7 +9,10 @@
   and the inside becomes a **new Sculpt face set**. The cut depth covers what the polygon shows.
 - **face_set** (face INT): a copy of the Sculpt face sets that GN can read (GN cannot read
   `.sculpt_face_set`). Refreshed after every cut and whenever the object leaves Sculpt Mode.
-- **GN-Remesh** node group: Face Set in -> Selection / Face Set out, for your own GN trees.
+- **Add GN-Remesh** (Remesh panel): a modifier at the top of the stack that reads the face sets.
+  **Face Set** (number), **Isolate** (show only it), **Invert** (everything but it); it also
+  stores `remesh_selection` (face BOOL) for modifiers after it. The panel shows its inputs and
+  the face sets with their face counts; a Poly Cut switches it to the new face set.
 
 ### Baking + Export modules (2026-09-25)
 Plan: `docs/PLAN_baking_export.md`.
