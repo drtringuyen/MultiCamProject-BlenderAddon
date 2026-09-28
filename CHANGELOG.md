@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Baking: albedo from the Remesh original (2026-09-28)
+- A Remesh copy bakes its albedo from the original's full-resolution mesh: a temporary twin
+  (the original's mesh, copied, + the copy's GN-CameraProject with its cameras, shifts and lens
+  drivers; no GN-Remesh / Decimate / GN-Final) is baked onto the copy's `uv_normal` with
+  Selected to Active, then deleted. The original is never touched.
+- Baking panel: **Albedo from <original>** toggle (on by default) + **Cage** (shared with Bake
+  from mesh). Off = the copy bakes its own decimated projection as before.
+
 ### Camera Project: cameras on the modifier again (2026-09-28)
 - **Camera 1-n** are exposed on the GN-CameraProject modifier again (Group Input -> the shared
   group), no longer kept as the wrapper node's defaults. Material / Image inputs stay on the

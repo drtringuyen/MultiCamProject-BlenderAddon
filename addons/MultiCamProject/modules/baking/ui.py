@@ -76,6 +76,15 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         row.prop_enum(s, "bake_what", 'NORMAL')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
         row.prop_enum(s, "bake_what", 'BOTH')
+        if d.source is not None and s.bake_what != 'NORMAL':
+            # a Remesh copy: its albedo from the original's full-resolution projection
+            row = box.row(align=True)
+            row.prop(s, "albedo_from_source", text=f"Albedo from {d.source.name}",
+                     icon='LINKED', toggle=True)
+            sub = row.row(align=True)
+            sub.active = s.albedo_from_source
+            sub.ui_units_x = 4.5
+            sub.prop(s, "cage_extrusion", text="Cage")
         info = box.column(align=True)
         if d.alb_size:
             info.label(text=f"ALB {_res(d.alb_size)}  ·  {d.last_bake_seconds:.1f} s",

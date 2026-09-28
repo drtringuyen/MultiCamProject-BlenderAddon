@@ -163,9 +163,47 @@ def link_file(img, path):
     img.reload()
 
 
+TWIN_SUFFIX = "_MCP_ALB_TWIN_TMP"
+# the Remesh copy's own modifiers the full-resolution twin leaves out
+_TWIN_SKIP = {"GN-Remesh", "Decimate Overall", "Decimate Selective"}
+
+
+def albedo_source(obj, s):
+    """The Remesh original the albedo is baked from (None: the object bakes itself)."""
+    src = common.data(obj).source
+    if not s.albedo_from_source or src is None or src == obj or src.type != 'MESH':
+        return None
+    return src
+
+
+@contextmanager
+def projection_twin(context, obj, source):
+    """A temporary object with `source`'s full-resolution mesh (its own copy, the original
+    is never touched) and `obj`'s projection: GN-CameraProject with the same cameras,
+    shifts and settings, without GN-Remesh, the Decimates and GN-Final. Deleted after."""
+    twin = obj.copy()                   # modifiers, their inputs and the lens drivers
+    twin.data = source.data.copy()
+    twin.name = obj.name + TWIN_SUFFIX
+    twin.matrix_world = source.matrix_world.copy()
+    context.scene.collection.objects.link(twin)
+    for m in [m for m in twin.modifiers
+              if m.name in _TWIN_SKIP or gn_final.MOD_NAME == m.name]:
+        twin.modifiers.remove(m)
+    twin.hide_render = twin.hide_viewport = False
+    context.view_layer.update()
+    try:
+        yield twin
+    finally:
+        me = twin.data
+        bpy.data.objects.remove(twin)
+        if me.users == 0:
+            bpy.data.meshes.remove(me)
+
+
 def bake_albedo(context, obj, progress=None):
     """Bake one object's projection into ALB_<name>, save it, build MAT_, store the
-    fingerprint. The object ends up in Final."""
+    fingerprint. A Remesh copy (with From High Poly on) bakes its original's full-resolution
+    projection onto itself (Selected to Active). The object ends up in Final."""
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
@@ -177,19 +215,36 @@ def bake_albedo(context, obj, progress=None):
     uvs.active = uvs[common.UV_NORMAL]
     name = common.alb_name(obj)
     path = common.texture_path(scene, name)
+    src = albedo_source(obj, s)
     # bake into a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
     # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves as 16-bit
     tmp = bpy.data.images.new(TMP_IMAGE, s.resolution, s.resolution, alpha=False,
                               float_buffer=False)
     tmp.colorspace_settings.name = 'sRGB'
     try:
-        with render_state(scene), selection(context, obj, [obj]), target_nodes(obj, tmp):
-            configure(scene, 'DIFFUSE')
-            with context.temp_override(active_object=obj, object=obj,
-                                       selected_objects=[obj], selected_editable_objects=[obj]):
-                bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'}, margin=s.margin,
-                                    use_clear=True, target='IMAGE_TEXTURES',
-                                    uv_layer=common.UV_NORMAL)
+        if src is None:
+            with render_state(scene), selection(context, obj, [obj]), target_nodes(obj, tmp):
+                configure(scene, 'DIFFUSE')
+                with context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
+                                           selected_editable_objects=[obj]):
+                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'}, margin=s.margin,
+                                        use_clear=True, target='IMAGE_TEXTURES',
+                                        uv_layer=common.UV_NORMAL)
+        else:
+            with projection_twin(context, obj, src) as twin, render_state(scene), \
+                    selection(context, obj, [obj, twin]), target_nodes(obj, tmp):
+                configure(scene, 'DIFFUSE')
+                scene.render.bake.use_selected_to_active = True
+                scene.render.bake.use_cage = False
+                scene.render.bake.cage_extrusion = s.cage_extrusion
+                sel = [obj, twin]
+                with context.temp_override(active_object=obj, object=obj, selected_objects=sel,
+                                           selected_editable_objects=sel):
+                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'}, margin=s.margin,
+                                        use_clear=True, target='IMAGE_TEXTURES',
+                                        use_selected_to_active=True,
+                                        cage_extrusion=s.cage_extrusion,
+                                        uv_layer=common.UV_NORMAL)
         if progress:
             progress()
         os.makedirs(os.path.dirname(path), exist_ok=True)

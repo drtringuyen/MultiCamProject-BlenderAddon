@@ -106,6 +106,11 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
                                 description="Smooth a temporary copy of the high poly first "
                                             "(against scan noise)")
     smooth_iterations: IntProperty(name="Iterations", default=5, min=1, max=100)
+    albedo_from_source: BoolProperty(
+        name="Albedo from High Poly", default=True,
+        description="A Remesh copy bakes its albedo from the original's full-resolution mesh "
+                    "(its projection, Selected to Active, Cage Extrusion) instead of from its "
+                    "own decimated mesh")
 
     color_source: EnumProperty(
         name="Vertex Color", default='SCAN_ATTRIBUTE',
