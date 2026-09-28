@@ -1,8 +1,8 @@
 """Set Faces: what a face region is marked as, and the overlay that previews it.
 
   High Density -> vertex group vg_HighRes = 1 (the Decimate Selective modifier reads it)
-  Delete Geo   -> face BOOL remesh_delete   (for GN-Remesh)
-  To Separate  -> face BOOL remesh_detach   (marked only, GN-Remesh decides)
+  Delete Geo   -> vertex group vg_toDelete = 1 + face BOOL remesh_delete   (for GN-Remesh)
+  To Separate  -> vertex group vg_toSeparate = 1 + face BOOL remesh_detach (GN-Remesh decides)
   Clear        -> none of them
 
 The options are exclusive: a region is cleared before it gets its new mark. The region's
@@ -19,15 +19,23 @@ from . import core, workflow as wf
 
 ACTIONS = (('HIGH_DENSITY', "High Density", "Keep more detail: vertex group vg_HighRes = 1 "
             "(the Decimate Selective modifier reads it)", 'MOD_DECIM', 0),
-           ('DELETE', "Delete Geo", "Face attribute remesh_delete (GN-Remesh deletes it)",
-            'TRASH', 1),
-           ('SEPARATE', "To Separate", "Face attribute remesh_detach (marked only - GN-Remesh "
-            "decides what happens)", 'MOD_EXPLODE', 2),
+           ('DELETE', "Delete Geo", "Vertex group vg_toDelete and face attribute "
+            "remesh_delete (GN-Remesh deletes it)", 'TRASH', 1),
+           ('SEPARATE', "To Separate", "Vertex group vg_toSeparate and face attribute "
+            "remesh_detach (marked only - GN-Remesh decides what happens)", 'MOD_EXPLODE', 2),
            ('CLEAR', "Clear", "Remove the marks from the faces, and their boundary seam when "
             "Mark boundary as seam is on", 'X', 3))
 
 COLORS = {'HIGH_DENSITY': (0.2, 0.55, 1.0), 'DELETE': (1.0, 0.2, 0.2),
           'SEPARATE': (1.0, 0.7, 0.1), 'CLEAR': (0.7, 0.7, 0.7)}
+
+VGROUPS = {'HIGH_DENSITY': wf.VG_HIGHRES, 'DELETE': wf.VG_DELETE, 'SEPARATE': wf.VG_SEPARATE}
+
+
+def ensure_groups(obj):
+    """action -> its vertex group, created when missing."""
+    return {a: obj.vertex_groups.get(n) or obj.vertex_groups.new(name=n)
+            for a, n in VGROUPS.items()}
 
 _last_face_set = {}     # mesh name -> the face set picked or cut last
 
@@ -95,27 +103,30 @@ def apply_object_mode(obj, faces, action, mark_seam):
     lf = _loop_faces(me)
     verts = np.unique(loop_vert[faces[lf]])
 
-    vg = obj.vertex_groups.get(wf.VG_HIGHRES) or obj.vertex_groups.new(name=wf.VG_HIGHRES)
-    # clear: a vertex keeps its weight when a High Density face outside the region uses it
-    # (only the faces touching the region are checked)
+    groups = ensure_groups(obj)
+    # clear: a vertex keeps its weight in a group when a face outside the region that is in
+    # the same group uses it (only the faces touching the region are checked)
     in_region = np.zeros(len(me.vertices), bool)
     in_region[verts] = True
     ring = ~faces & (np.bincount(lf, weights=in_region[loop_vert], minlength=len(faces)) > 0)
-    kept = np.zeros(len(me.vertices), bool)
+    ring_faces = []
     if ring.any():
         starts = np.empty(len(me.polygons), np.int32)
         totals = np.empty(len(me.polygons), np.int32)
         me.polygons.foreach_get("loop_start", starts)
         me.polygons.foreach_get("loop_total", totals)
+        ring_faces = [loop_vert[starts[fi]:starts[fi] + totals[fi]].tolist()
+                      for fi in np.flatnonzero(ring).tolist()]
+    for vg in groups.values():
+        kept = np.zeros(len(me.vertices), bool)
         weighted = {}
-        for fi in np.flatnonzero(ring).tolist():
-            fv = loop_vert[starts[fi]:starts[fi] + totals[fi]].tolist()
+        for fv in ring_faces:
             for i in fv:
                 if i not in weighted:
                     weighted[i] = _in_group(vg, i)
             if all(weighted[i] for i in fv):
                 kept[fv] = True
-    vg.remove([int(i) for i in verts if not kept[i]])
+        vg.remove([int(i) for i in verts if not kept[i]])
     target = {'DELETE': wf.ATTR_DELETE, 'SEPARATE': wf.ATTR_DETACH}.get(action)
     for name in (wf.ATTR_DELETE, wf.ATTR_DETACH):
         if name in me.attributes or name == target:
@@ -125,9 +136,9 @@ def apply_object_mode(obj, faces, action, mark_seam):
             vals[faces] = False
             a.data.foreach_set("value", vals)
 
-    if action == 'HIGH_DENSITY':
-        vg.add([int(i) for i in verts], 1.0, 'REPLACE')
-    elif action in {'DELETE', 'SEPARATE'}:
+    if action in groups:
+        groups[action].add([int(i) for i in verts], 1.0, 'REPLACE')
+    if action in {'DELETE', 'SEPARATE'}:
         a = _bool_attr(me, wf.ATTR_DELETE if action == 'DELETE' else wf.ATTR_DETACH)
         vals = np.zeros(len(me.polygons), bool)
         a.data.foreach_get("value", vals)
@@ -168,12 +179,13 @@ def _edit_boundary(faces):
 
 def edit_backup(obj, bm, faces):
     """What apply_edit_mode may change, to put back when the dialog is cancelled."""
-    vg = obj.vertex_groups.get(wf.VG_HIGHRES)
     deform = bm.verts.layers.deform.active
     verts = {v for f in faces for v in f.verts}
-    weights = {}
-    if vg is not None and deform is not None:
-        weights = {v.index: v[deform].get(vg.index) for v in verts}
+    weights = {}                    # group name -> {vertex: weight or None}
+    for name in VGROUPS.values():
+        vg = obj.vertex_groups.get(name)
+        weights[name] = ({v.index: v[deform].get(vg.index) for v in verts}
+                         if vg is not None and deform is not None else {})
     attrs = {}
     for name in (wf.ATTR_DELETE, wf.ATTR_DETACH):
         layers = _bm_layers(bm)
@@ -181,19 +193,21 @@ def edit_backup(obj, bm, faces):
         attrs[name] = None if lay is None else {f.index: f[lay] for f in faces}
     seams = {e.index: e.seam for e in _edit_boundary(faces)}
     return {"weights": weights, "attrs": attrs, "seams": seams,
-            "had_vg": vg is not None, "verts": [v.index for v in verts]}
+            "verts": [v.index for v in verts]}
 
 
 def edit_restore(obj, bm, backup):
     bm.verts.ensure_lookup_table()
     bm.faces.ensure_lookup_table()
     bm.edges.ensure_lookup_table()
-    vg = obj.vertex_groups.get(wf.VG_HIGHRES)
     deform = bm.verts.layers.deform.active
-    if vg is not None and deform is not None:
+    for name, weights in backup["weights"].items():
+        vg = obj.vertex_groups.get(name)
+        if vg is None or deform is None:
+            continue
         for i in backup["verts"]:
             dv = bm.verts[i][deform]
-            w = backup["weights"].get(i)
+            w = weights.get(i)
             if w is None:
                 if vg.index in dv.keys():
                     del dv[vg.index]
@@ -216,7 +230,7 @@ def edit_restore(obj, bm, backup):
 def apply_edit_mode(obj, bm, faces, action, mark_seam):
     if not faces:
         return 0
-    vg = obj.vertex_groups.get(wf.VG_HIGHRES) or obj.vertex_groups.new(name=wf.VG_HIGHRES)
+    groups = ensure_groups(obj)
     # every layer first: adding one frees the BMFace references taken before it
     index = [f.index for f in faces]
     deform = bm.verts.layers.deform.verify()
@@ -231,21 +245,24 @@ def apply_edit_mode(obj, bm, faces, action, mark_seam):
     region = set(faces)
     verts = {v for f in faces for v in f.verts}
 
-    def highres(f):
-        return all(v[deform].get(vg.index, 0.0) > 0.0 for v in f.verts)
+    def in_group(f, gi):
+        return all(v[deform].get(gi, 0.0) > 0.0 for v in f.verts)
 
-    for v in verts:
-        if vg.index in v[deform].keys() and not any(g not in region and highres(g)
-                                                    for g in v.link_faces):
-            del v[deform][vg.index]
+    for vg in groups.values():
+        gi = vg.index
+        for v in verts:
+            if gi in v[deform].keys() and not any(g not in region and in_group(g, gi)
+                                                  for g in v.link_faces):
+                del v[deform][gi]
     for lay in attr_layers:
         for f in faces:
             f[lay] = False
 
-    if action == 'HIGH_DENSITY':
+    if action in groups:
+        gi = groups[action].index
         for v in verts:
-            v[deform][vg.index] = 1.0
-    elif target is not None:
+            v[deform][gi] = 1.0
+    if target is not None:
         lay = layers.get(target)
         for f in faces:
             f[lay] = True

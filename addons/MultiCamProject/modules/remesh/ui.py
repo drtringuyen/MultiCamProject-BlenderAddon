@@ -1,6 +1,6 @@
 import bpy
 
-from . import workflow as wf
+from . import tool, workflow as wf
 
 
 class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
@@ -41,6 +41,14 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.operator("multicamproject.remesh_enter_tool", text="Edit",
                          icon='EDITMODE_HLT').mode = 'EDIT'
         else:
+            # the keys belong to the tool, and each workspace keeps its own active tool
+            active = context.workspace.tools.from_space_view3d_mode(context.mode, create=False)
+            if active is None or active.idname != tool.tool_id(context.mode):
+                row.operator("multicamproject.remesh_enter_tool", text="PolyCut Tool",
+                             icon='TOOL_SETTINGS').mode = (
+                    'EDIT' if context.mode == 'EDIT_MESH' else 'SCULPT')
+                row = layout.row(align=True)
+                row.scale_y = 1.3
             row.operator("multicamproject.remesh_set_faces", icon='FACESEL')
             layout.label(text="PolyCut tool: Ctrl+Click cut · L pick face set", icon='INFO')
 

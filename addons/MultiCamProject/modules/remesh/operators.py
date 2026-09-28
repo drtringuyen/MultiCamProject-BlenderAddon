@@ -10,6 +10,8 @@ from . import core, cutter, marks, tool, workflow as wf
 
 _SAMPLES = 12           # interior rays per axis for the cut depth
 _SAME_PX = 4            # a double click's first press lands on the last point: not a new one
+_NAVIGATE = {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM',
+             'MOUSEROTATE', 'MOUSESMARTZOOM'}
 
 
 def _inside(p, poly):
@@ -39,22 +41,46 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         return (obj is not None and obj.type == 'MESH' and context.area is not None
                 and context.area.type == 'VIEW_3D')
 
+    # ------------------------------------------------------------ points
+    # The clicks are kept in 3D (on the surface under the mouse, or at the depth of the last
+    # point) and projected into the view on every redraw: navigating keeps the polygon on the
+    # object. The cut is made from the view the polygon is closed in.
+    def _add(self, context, p):
+        region, rv3d = self.win, self.rv3d
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, p)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, p).normalized()
+        hit, loc, *_rest = context.scene.ray_cast(context.evaluated_depsgraph_get(),
+                                                  origin, direction)
+        if not hit:
+            depth = self.points3d[-1] if self.points3d else rv3d.view_location
+            loc = view3d_utils.region_2d_to_location_3d(region, rv3d, p, depth)
+        self.points3d.append(loc.copy())
+
+    def _points(self):
+        """The points in the current view (None for one behind it)."""
+        out = []
+        for co in self.points3d:
+            p = view3d_utils.location_3d_to_region_2d(self.win, self.rv3d, co)
+            out.append(None if p is None else (p.x, p.y))
+        return out
+
     # ------------------------------------------------------------ drawing
     def _draw(self, context):
-        if not self.points:
+        points = [p for p in self._points() if p is not None]
+        if not points:
             return
         shader = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
         gpu.state.blend_set('ALPHA')
         shader.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
         shader.uniform_float("lineWidth", 2.0)
         shader.uniform_float("color", (1.0, 0.85, 0.2, 1.0))
-        batch_for_shader(shader, 'LINE_STRIP', {"pos": self.points + [self.mouse]}).draw(shader)
+        batch_for_shader(shader, 'LINE_STRIP', {"pos": points + [self.mouse]}).draw(shader)
         shader.uniform_float("color", (1.0, 0.85, 0.2, 0.35))
-        batch_for_shader(shader, 'LINES', {"pos": [self.mouse, self.points[0]]}).draw(shader)
+        batch_for_shader(shader, 'LINES', {"pos": [self.mouse, points[0]]}).draw(shader)
         pshader = gpu.shader.from_builtin('UNIFORM_COLOR')
         gpu.state.point_size_set(7.0)
         pshader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
-        batch_for_shader(pshader, 'POINTS', {"pos": self.points}).draw(pshader)
+        batch_for_shader(pshader, 'POINTS', {"pos": points}).draw(pshader)
         gpu.state.point_size_set(1.0)
         gpu.state.blend_set('NONE')
 
@@ -74,10 +100,10 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         self.rv3d = context.area.spaces.active.region_3d
         if self.win is None:
             return {'CANCELLED'}
-        self.points = []
+        self.points3d = []
         self.mouse = self._pos(event)
         if event.type == 'LEFTMOUSE':   # Ctrl+click with the PolyCut tool: the first point
-            self.points.append(self.mouse)
+            self._add(context, self.mouse)
         self._handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw, (context,), 'WINDOW', 'POST_PIXEL')
         context.window.cursor_modal_set('CROSSHAIR')
@@ -91,27 +117,32 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         if event.type == 'MOUSEMOVE':
             self.mouse = self._pos(event)
             return {'RUNNING_MODAL'}
-        if event.type in {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE'}:
-            return {'PASS_THROUGH'}         # navigating is fine: the rays are taken at the end
+        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
+            return self._close(context)
+        if event.type in _NAVIGATE or event.type.startswith(('NUMPAD_', 'NDOF_')):
+            return {'PASS_THROUGH'}         # navigating is fine: the points are 3D
         if event.type == 'ESC' and event.value == 'PRESS':
             self._end(context)
             return {'CANCELLED'}
-        if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
-            return self._close(context)
         if event.type == 'LEFTMOUSE':
             p = self._pos(event)
             if event.value == 'DOUBLE_CLICK':
-                if not self.points or (Vector(p) - Vector(self.points[-1])).length > _SAME_PX:
-                    self.points.append(p)
+                last = self._points()[-1] if self.points3d else None
+                if last is None or (Vector(p) - Vector(last)).length > _SAME_PX:
+                    self._add(context, p)
                 return self._close(context)
             if event.value == 'PRESS':
-                self.points.append(p)
+                self._add(context, p)
         return {'RUNNING_MODAL'}
 
     def _close(self, context):
         self._end(context)
-        if len(self.points) < 3:
+        if len(self.points3d) < 3:
             self.report({'WARNING'}, "Poly Cut needs at least 3 points")
+            return {'CANCELLED'}
+        self.points = self._points()
+        if None in self.points:
+            self.report({'WARNING'}, "A Poly Cut point is behind the view")
             return {'CANCELLED'}
         obj = context.active_object
         region, rv3d = self.win, self.rv3d

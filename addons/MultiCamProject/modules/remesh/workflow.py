@@ -18,6 +18,8 @@ GN_REMESH = "GN-Remesh"
 DEC_OVERALL = "Decimate Overall"
 DEC_SELECTIVE = "Decimate Selective"
 VG_HIGHRES = "vg_HighRes"
+VG_DELETE = "vg_toDelete"
+VG_SEPARATE = "vg_toSeparate"
 ATTR_DELETE = "remesh_delete"
 ATTR_DETACH = "remesh_detach"
 DECIMATE_RATIO = 0.5
@@ -42,15 +44,15 @@ def is_original(obj):
 
 def ensure_gn_remesh_group():
     """GN-Remesh is the user's: created empty (Geometry in -> out) when missing, never
-    rebuilt. The Set Faces marks reach it as vg_HighRes, remesh_delete, remesh_detach and
-    face_set (the Sculpt face sets)."""
+    rebuilt. The Set Faces marks reach it as vg_HighRes / vg_toDelete / vg_toSeparate,
+    remesh_delete, remesh_detach and face_set (the Sculpt face sets)."""
     ng = bpy.data.node_groups.get(GN_REMESH)
     if ng is not None:
         return ng
     ng = bpy.data.node_groups.new(GN_REMESH, "GeometryNodeTree")
     ng.is_modifier = True
     ng.description = ("Yours to build. Face attributes: remesh_delete, remesh_detach, face_set; "
-                      "vertex group vg_HighRes")
+                      "vertex groups vg_HighRes, vg_toDelete, vg_toSeparate")
     ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
     ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
     gi = ng.nodes.new("NodeGroupInput")
@@ -75,8 +77,9 @@ def _move(obj, mod, index):
 def ensure_stack(obj):
     """GN-Remesh, Decimate Overall, Decimate Selective at the top of the stack, in that
     order (GN-CameraProject and GN-Final follow)."""
-    if obj.vertex_groups.get(VG_HIGHRES) is None:
-        obj.vertex_groups.new(name=VG_HIGHRES)
+    for name in (VG_HIGHRES, VG_DELETE, VG_SEPARATE):
+        if obj.vertex_groups.get(name) is None:
+            obj.vertex_groups.new(name=name)
     mod = _gn_remesh_modifier(obj)
     if mod is None:
         mod = obj.modifiers.new(GN_REMESH, 'NODES')

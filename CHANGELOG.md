@@ -2,6 +2,15 @@
 
 ## Unreleased
 
+### Remesh fixes (2026-09-28)
+- **PolyCut follows the view:** the points are kept in 3D (on the surface under the mouse, or
+  at the last point's depth) and re-projected on every redraw, so orbit / pan / zoom (mouse,
+  trackpad, numpad, NDOF) keep the polygon on the object. The cut uses the view it is closed in.
+- **Set Faces vertex groups:** Delete Geo also writes `vg_toDelete`, To Separate `vg_toSeparate`
+  (next to the face attributes), exclusive with `vg_HighRes`. Remesh creates all three groups.
+- **PolyCut Tool button:** in Sculpt / Edit Mode the Remesh panel shows it while the PolyCut
+  tool is not active (each workspace keeps its own tool, so L / Ctrl+Click went to the brush).
+
 ### Remesh module v3 (2026-09-28)
 Plan: `docs/PLAN_remesh_v3.md`. Replaces the Poly Cut button and the GN-Remesh face set picker
 below (the boolean cut itself is kept).
