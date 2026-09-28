@@ -25,7 +25,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 1
+    bl_order = 2
 
     def draw_header(self, context):
         self.layout.label(icon='GRID')

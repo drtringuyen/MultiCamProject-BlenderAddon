@@ -43,7 +43,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 2
+    bl_order = 3
 
     def draw_header(self, context):
         self.layout.label(icon='RENDER_STILL')
@@ -153,7 +153,11 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
                 row.prop(s, "nor_preview_2k", text="Preview at 2K", toggle=True)
         if mesh:        # High Poly | Cage | Smooth | Iterations | 2K - one row
             row = opts.row(align=True)
-            row.prop(s, "hp_object", text="")
+            remesh_src = common.data(obj).source if obj is not None and obj.type == 'MESH' else None
+            if remesh_src is not None:      # the Remesh original wins over the scene's pick
+                row.label(text=remesh_src.name, icon='LINKED')
+            else:
+                row.prop(s, "hp_object", text="")
             row.prop(s, "cage_extrusion", text="Cage")
             row.prop(s, "smooth_source", text="Smooth", toggle=True)
             r = row.row(align=True)

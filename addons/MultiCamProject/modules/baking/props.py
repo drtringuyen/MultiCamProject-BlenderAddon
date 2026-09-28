@@ -19,6 +19,11 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     # active / active-render UV before Final put uv_normal there (restored by Projection)
     prev_uv_active: StringProperty()
     prev_uv_render: StringProperty()
+    # the Remesh original: this object's high poly for Bake from mesh (before hp_object)
+    source: PointerProperty(
+        type=bpy.types.Object, name="Remesh Source", poll=lambda self, o: o.type == 'MESH',
+        description="The original this Remesh copy was made from - its high poly for "
+                    "Bake from mesh (instead of the scene's High Poly)")
 
 
 VIEW_ITEMS = (('PROJECTION', "Projection", "The camera projection setup, editable", 'CAMERA_DATA', 0),

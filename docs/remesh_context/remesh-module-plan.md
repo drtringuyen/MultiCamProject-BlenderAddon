@@ -1,6 +1,6 @@
 ---
 name: remesh-module-plan
-description: "Remesh module v3 (Remesh copy + PolyCut tool + Set Faces) - approved plan and decisions, not implemented yet"
+description: "Remesh module v3 (Remesh copy + PolyCut tool + Set Faces) - approved plan and decisions, implemented 2026-09-28 (cloud session)"
 metadata:
   node_type: memory
   type: project
@@ -8,7 +8,7 @@ metadata:
   modified: 2026-09-28T10:30:04.520Z
 ---
 
-Status on 2026-09-28: the v3 plan was reviewed and approved, but **no code has been written for it yet**. The user said "don't implement yet", so confirm before starting. Full plan: `C:\Users\Reynard\.claude\plans\mellow-skipping-fox.md`.
+Status on 2026-09-28: **implemented** in a cloud session on branch `claude/confident-faraday-9nkzsj` (modules/remesh: workflow.py, marks.py, tool.py, operators.py, ui.py; baking source pointer). Logic tested headless in Blender 5.0; keys, dialog and overlay still need a check in 5.2. Full plan: `C:\Users\Reynard\.claude\plans\mellow-skipping-fox.md`.
 
 **What is in the repo now** (commit 6819406, `modules/remesh/`):
 - Poly Cut modal: click to add points, Enter or double-click closes the shape, Esc cancels.

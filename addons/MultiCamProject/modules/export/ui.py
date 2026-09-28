@@ -92,7 +92,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 3
+    bl_order = 4
 
     def draw_header(self, context):
         self.layout.label(icon='EXPORT')

@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Remesh module v3 (2026-09-28)
+Plan: `docs/PLAN_remesh_v3.md`. Replaces the Poly Cut button and the GN-Remesh face set picker
+below (the boolean cut itself is kept).
+- **Remesh** (one button, the panel is now 2nd, below Project from Sides): a full copy of the
+  scan (own mesh) takes over its name, collections, EXPORT and MCP_/MAT_/ALB_/NOR_. The original
+  is renamed `<name>_original` (plain rename, textures stay with the copy), moved to the
+  **Original Mesh** collection, unlinked from EXPORT, hidden, and loses its GN modifiers and
+  their drivers. The copy runs Camera Project Setup, then opens in Sculpt Mode with the
+  **PolyCut** tool.
+- **Stack of the copy:** GN-Remesh (an empty group, yours to build; an existing GN-Remesh is
+  never overwritten) -> **Decimate Overall** (Collapse 0.5) -> **Decimate Selective** (Collapse
+  0.5 on `vg_HighRes`, not inverted: weight 1 = decimated further) -> GN-CameraProject -> GN-Final.
+  The panel shows the ratios and the Invert toggle. Decimate collapses across UV seams.
+- **PolyCut tool** (Sculpt and Edit Mode toolbars; its keys only work while it is active, so
+  Edit Mode keeps Blender's L and Ctrl+Click on the other tools):
+  - **Ctrl+Click** starts a PolyCut (the click is the first point); Enter / double click cuts,
+    then Set Faces opens for the new face set.
+  - **L** picks the face set under the mouse (BVH of the base mesh, rebuilt when it changes)
+    and opens Set Faces.
+- **Set Faces** (dialog, Sculpt and Edit Mode; also in Edit Mode's right-click and Face menus):
+  **High Density** (`vg_HighRes` = 1), **Delete Geo** (face BOOL `remesh_delete`), **To
+  Separate** (face BOOL `remesh_detach`, marked only) or **Clear**; **Mark boundary as seam**
+  (on by default; Clear removes that seam). The options replace each other on a region. The
+  region is drawn in the option's color while the dialog is open. Edit Mode previews on the
+  real data and Esc puts it back; Sculpt Mode writes once on Set, through Object Mode (Sculpt
+  undo does not record vertex groups or seams).
+- **Baking:** a per-object bake source (`multicamproject_bake.source`, set by Remesh) is used
+  by Bake from mesh before the scene's High Poly; the hidden original is shown for the bake.
+- Camera Project, Baking and Export move one place down in the sidebar.
+
 ### Remesh module (2026-09-28)
 - **Poly Cut** (the one button in the Remesh panel, any mode): click points in the viewport,
   **Enter** or **double click** closes the polygon back to the first point, **Esc** cancels. The

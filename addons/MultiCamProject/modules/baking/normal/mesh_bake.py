@@ -1,5 +1,6 @@
 """Normal map baked from a high-poly mesh (Cycles NORMAL, tangent space, Selected to
-Active). An object baked onto itself gives flat normals - hp_object must be another mesh."""
+Active). An object baked onto itself gives flat normals - the source must be another mesh:
+the object's own Remesh original when it has one, else the scene's hp_object."""
 from contextlib import contextmanager
 
 import bpy
@@ -8,6 +9,25 @@ import numpy as np
 from .. import common, engine
 
 TMP_IMAGE = "MCP_NOR_BAKE_TMP"
+
+
+def source(obj, s):
+    """The high poly for `obj`: its Remesh original first, then the scene's High Poly."""
+    return common.data(obj).source or s.hp_object
+
+
+@contextmanager
+def visible(context, src):
+    """The source shown for the bake (the Remesh original is kept hidden)."""
+    hidden = src.hide_get(view_layer=context.view_layer)
+    hv, hr = src.hide_viewport, src.hide_render
+    src.hide_set(False, view_layer=context.view_layer)
+    src.hide_viewport = src.hide_render = False
+    try:
+        yield
+    finally:
+        src.hide_viewport, src.hide_render = hv, hr
+        src.hide_set(hidden, view_layer=context.view_layer)
 
 
 @contextmanager
@@ -36,10 +56,13 @@ def smoothed_source(context, src, s):
 
 def problem(obj, s):
     """Why the mesh bake cannot run for `obj` ('' = it can)."""
-    if s.hp_object is None:
+    src = source(obj, s)
+    if src is None:
         return "Pick a High Poly mesh (an object baked onto itself gives flat normals)"
-    if s.hp_object == obj:
+    if src == obj:
         return "High Poly is the object itself - that gives flat normals"
+    if bpy.context.view_layer.objects.get(src.name) != src:
+        return f"'{src.name}' is not in the view layer (collection excluded?)"
     return ""
 
 
@@ -49,7 +72,8 @@ def generate(context, obj, size):
     img = bpy.data.images.new(TMP_IMAGE, size, size, alpha=False, float_buffer=True)
     img.colorspace_settings.name = 'Non-Color'
     try:
-        with smoothed_source(context, s.hp_object, s) as src:
+        hp = source(obj, s)
+        with visible(context, hp), smoothed_source(context, hp, s) as src:
             engine.bake_normal_from_mesh(context, obj, src, img)
         buf = np.empty(size * size * 4, dtype=np.float32)
         img.pixels.foreach_get(buf)

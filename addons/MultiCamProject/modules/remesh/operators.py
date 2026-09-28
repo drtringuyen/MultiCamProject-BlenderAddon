@@ -1,11 +1,12 @@
+import bmesh
 import bpy
 import gpu
+from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
-from ..camera_project import core as cp
-from . import core, cutter, gn_remesh as gn
+from . import core, cutter, marks, tool, workflow as wf
 
 _SAMPLES = 12           # interior rays per axis for the cut depth
 _SAME_PX = 4            # a double click's first press lands on the last point: not a new one
@@ -27,9 +28,9 @@ def _inside(p, poly):
 class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     """Draw a polygon: the mesh is cut exactly along its lines (not along the scan's triangles)
     and the inside becomes a new face set. Click to add points, Enter or double click to
-    close it back to the first point, Esc to cancel"""
+    close it back to the first point, Esc to cancel. Then Set Faces opens for the new face set"""
     bl_idname = "multicamproject.remesh_poly_cut"
-    bl_label = "Poly Cut"
+    bl_label = "PolyCut"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -75,6 +76,8 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
             return {'CANCELLED'}
         self.points = []
         self.mouse = self._pos(event)
+        if event.type == 'LEFTMOUSE':   # Ctrl+click with the PolyCut tool: the first point
+            self.points.append(self.mouse)
         self._handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw, (context,), 'WINDOW', 'POST_PIXEL')
         context.window.cursor_modal_set('CROSSHAIR')
@@ -144,52 +147,268 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         if not count:
             self.report({'WARNING'}, "Nothing inside the polygon was cut")
             return {'FINISHED'}
-        mod = gn.get_modifier(obj)
-        if mod is not None:             # GN-Remesh follows the newest face set
-            cp.set_input(mod, "Face Set", new_id)
+        marks.remember_face_set(obj, new_id)
         self.report({'INFO'}, f"Face set {new_id}: {count} faces")
+        if obj.mode in {'SCULPT', 'EDIT'}:
+            bpy.ops.multicamproject.remesh_set_faces('INVOKE_DEFAULT', face_set=new_id)
         return {'FINISHED'}
 
 
-class MULTICAMPROJECT_OT_RemeshAddModifier(bpy.types.Operator):
-    """Add GN-Remesh at the top of the stack: pick a face set by number and see only it.
-    The face sets are copied to face_set so GN can read them"""
-    bl_idname = "multicamproject.remesh_add_modifier"
-    bl_label = "Add GN-Remesh"
+def _enter_tool(context, obj, mode='SCULPT'):
+    """The object in Sculpt (or Edit) Mode with the PolyCut tool active."""
+    if obj.mode != mode:
+        bpy.ops.object.mode_set(mode=mode)
+    try:
+        bpy.ops.wm.tool_set_by_id(name=tool.tool_id(context.mode))
+    except (RuntimeError, TypeError):
+        pass        # no 3D view in this context: the mode is set, the tool is one click away
+
+
+class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
+    """Make the remesh copy: the copy takes the name, EXPORT and the baked textures, gets
+    GN-Remesh, two Decimate modifiers and the camera projection. The original becomes
+    <name>_original in "Original Mesh" (no GN modifiers), the high poly for Bake from mesh.
+    Then Sculpt Mode with the PolyCut tool"""
+    bl_idname = "multicamproject.remesh"
+    bl_label = "Remesh"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == 'MESH'
+        if obj is None or obj.type != 'MESH' or obj.library:
+            return False
+        if wf.is_copy(obj):
+            cls.poll_message_set("Already a Remesh copy")
+            return False
+        if obj.name.endswith(wf.ORIGINAL_SUFFIX) or wf.is_original(obj):
+            cls.poll_message_set("This is a Remesh original")
+            return False
+        return True
 
     def execute(self, context):
         obj = context.active_object
-        mode = obj.mode
-        if mode == 'SCULPT':            # Sculpt Mode keeps its own copy of the face sets
+        if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        try:
-            core.sync_face_sets(obj)
-            mod = gn.add_modifier(obj)
-            ids = [i for i, _c in core.face_set_ids(obj)]
-            if ids:                     # start on the newest face set (the last Poly Cut)
-                cp.set_input(mod, "Face Set", max(ids))
-        finally:
-            if mode == 'SCULPT':
-                bpy.ops.object.mode_set(mode='SCULPT')
+        copy, warnings = wf.make_copy(context, obj)
+        for w in warnings:
+            self.report({'WARNING'}, w)
+        _enter_tool(context, copy)
+        self.report({'INFO'}, f"'{copy.name}' is the Remesh copy, '{obj.name}' the high poly")
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_RemeshAddModifier)
+class MULTICAMPROJECT_OT_RemeshEnterTool(bpy.types.Operator):
+    """Sculpt Mode with the PolyCut tool (Ctrl+Click: PolyCut, L: Set Faces for the face set
+    under the mouse)"""
+    bl_idname = "multicamproject.remesh_enter_tool"
+    bl_label = "PolyCut Tool"
+    bl_options = {'REGISTER'}
+
+    mode: EnumProperty(items=(('SCULPT', "Sculpt", ""), ('EDIT', "Edit", "")), default='SCULPT',
+                       options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and not obj.library
+
+    def execute(self, context):
+        _enter_tool(context, context.active_object, self.mode)
+        return {'FINISHED'}
+
+
+def _mouse_ray(context, event):
+    region, rv3d = context.region, context.region_data
+    if region is None or rv3d is None or region.type != 'WINDOW':
+        return None
+    p = (event.mouse_region_x, event.mouse_region_y)
+    return (view3d_utils.region_2d_to_origin_3d(region, rv3d, p),
+            view3d_utils.region_2d_to_vector_3d(region, rv3d, p).normalized())
+
+
+class MULTICAMPROJECT_OT_RemeshPick(bpy.types.Operator):
+    """The face set under the mouse -> Set Faces"""
+    bl_idname = "multicamproject.remesh_pick"
+    bl_label = "Pick Face Set"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH'
+                and context.mode in {'SCULPT', 'EDIT_MESH'})
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        ray = _mouse_ray(context, event)
+        if ray is None:
+            return {'PASS_THROUGH'}
+        if context.mode == 'EDIT_MESH':
+            bm = bmesh.from_edit_mesh(obj.data)
+            bm.faces.ensure_lookup_table()
+            index = marks.pick_face(obj, *ray, bm=bm)
+            if index is None:
+                return {'CANCELLED'}
+            lay = bm.faces.layers.int.get(core.SCULPT_FACE_SET)
+            fs = bm.faces[index][lay] if lay is not None else 1
+        else:
+            index = marks.pick_face(obj, *ray)
+            if index is None:
+                return {'CANCELLED'}
+            fs = int(core._face_sets(obj.data)[index])
+        marks.remember_face_set(obj, fs)
+        bpy.ops.multicamproject.remesh_set_faces('INVOKE_DEFAULT', face_set=fs)
+        return {'FINISHED'}
+
+
+_state = {"action": 'HIGH_DENSITY', "mark_seam": True, "backup": None}
+
+
+class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
+    """Mark faces for the remesh: High Density (vg_HighRes), Delete Geo (remesh_delete),
+    To Separate (remesh_detach) or Clear. Edit Mode: the selected faces. Sculpt Mode: the
+    face set picked with L or made by the last PolyCut"""
+    bl_idname = "multicamproject.remesh_set_faces"
+    bl_label = "Set Faces"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    action: EnumProperty(name="Set", items=marks.ACTIONS, default='HIGH_DENSITY')
+    mark_seam: BoolProperty(name="Mark boundary as seam", default=True,
+                            description="The region's outline becomes a UV seam")
+    face_set: IntProperty(name="Face Set", default=0, min=0, options={'SKIP_SAVE'},
+                          description="Face set to mark (0: Edit Mode selection, or the face "
+                                      "set picked / cut last in Sculpt Mode)")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH' and not obj.library
+                and context.mode in {'SCULPT', 'EDIT_MESH'})
+
+    # ------------------------------------------------------------ the region
+    def _sculpt_face_set(self, obj):
+        return self.face_set or marks.last_face_set(obj)
+
+    def _edit(self, context):
+        obj = context.active_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.faces.ensure_lookup_table()
+        return obj, bm
+
+    # ------------------------------------------------------------ dialog
+    def invoke(self, context, event):
+        obj = context.active_object
+        self.action, self.mark_seam = _state["action"], _state["mark_seam"]
+        _state["backup"] = None
+        if context.mode == 'EDIT_MESH':
+            obj, bm = self._edit(context)
+            if self.face_set:
+                marks.edit_select_face_set(bm, self.face_set)
+            faces = marks.edit_region(bm)
+            if not faces:
+                self.report({'WARNING'}, "Select faces first")
+                return {'CANCELLED'}
+            # Edit Mode previews on the real data (its undo records it); Esc puts it back
+            _state["backup"] = (obj.name, marks.edit_backup(obj, bm, faces))
+            marks.apply_edit_mode(obj, bm, faces, self.action, self.mark_seam)
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            # a new layer frees the face references: take the selection again
+            marks.overlay_show(obj, marks.edit_region(bm), self.action, bm=bm)
+        else:
+            fs = self._sculpt_face_set(obj)
+            if not fs:
+                self.report({'WARNING'}, "Pick a face set with L or make one with a PolyCut")
+                return {'CANCELLED'}
+            self.face_set = fs
+            faces = marks.face_mask(obj, fs)
+            if not faces.any():
+                self.report({'WARNING'}, f"Face set {fs} has no faces")
+                return {'CANCELLED'}
+            marks.overlay_show(obj, faces, self.action)
+        return context.window_manager.invoke_props_dialog(
+            self, title=f"Set Faces ({'selection' if context.mode == 'EDIT_MESH' else f'face set {self.face_set}'})",
+            confirm_text="Set")
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.prop(self, "action", expand=True)
+        col.prop(self, "mark_seam")
+
+    def check(self, context):
+        marks.overlay_action(self.action)
+        if context.mode == 'EDIT_MESH' and _state["backup"] is not None:
+            obj, bm = self._edit(context)
+            marks.edit_restore(obj, bm, _state["backup"][1])
+            marks.apply_edit_mode(obj, bm, marks.edit_region(bm), self.action, self.mark_seam)
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        return True
+
+    def cancel(self, context):
+        marks.overlay_hide()
+        backup, _state["backup"] = _state["backup"], None
+        obj = context.active_object
+        if backup is not None and context.mode == 'EDIT_MESH' and obj and obj.name == backup[0]:
+            _obj, bm = self._edit(context)
+            marks.edit_restore(obj, bm, backup[1])
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+
+    def execute(self, context):
+        marks.overlay_hide()
+        _state["action"], _state["mark_seam"] = self.action, self.mark_seam
+        obj = context.active_object
+        label = dict((k, l) for k, l, *_r in marks.ACTIONS)[self.action]
+        if context.mode == 'EDIT_MESH':
+            obj, bm = self._edit(context)
+            backup, _state["backup"] = _state["backup"], None
+            if backup is not None and backup[0] == obj.name:
+                marks.edit_restore(obj, bm, backup[1])
+            elif self.face_set:             # redo / run without the dialog
+                marks.edit_select_face_set(bm, self.face_set)
+            n = marks.apply_edit_mode(obj, bm, marks.edit_region(bm), self.action,
+                                      self.mark_seam)
+            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+        else:
+            fs = self._sculpt_face_set(obj)
+            if not fs:
+                self.report({'WARNING'}, "Pick a face set with L or make one with a PolyCut")
+                return {'CANCELLED'}
+            # Sculpt undo does not record vertex groups or seams: write in Object Mode
+            bpy.ops.object.mode_set(mode='OBJECT')
+            try:
+                n = marks.apply_object_mode(obj, marks.face_mask(obj, fs), self.action,
+                                            self.mark_seam)
+            finally:
+                bpy.ops.object.mode_set(mode='SCULPT')
+        if not n:
+            self.report({'WARNING'}, "No faces to mark")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{label}: {n:,} faces")
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
+            MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshPick,
+            MULTICAMPROJECT_OT_RemeshSetFaces)
+
+
+def _face_menu(self, context):
+    self.layout.separator()
+    self.layout.operator(MULTICAMPROJECT_OT_RemeshSetFaces.bl_idname, icon='MOD_REMESH')
 
 
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(_face_menu)
+    bpy.types.VIEW3D_MT_edit_mesh_faces.append(_face_menu)
     core.register()
 
 
 def unregister():
     core.unregister()
+    bpy.types.VIEW3D_MT_edit_mesh_faces.remove(_face_menu)
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_face_menu)
+    marks.unregister()
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

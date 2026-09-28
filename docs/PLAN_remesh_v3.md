@@ -1,4 +1,7 @@
-# Remesh module v3: review of the proposed workflow (no implementation yet)
+# Remesh module v3: review of the proposed workflow
+
+**Status (2026-09-28): implemented** - see CHANGELOG "Remesh module v3". Still to verify in
+Blender 5.2 with real key presses: the tool keys, the dialog preview / Esc, the overlay.
 
 ## Context
 This replaces the current Remesh module (Poly Cut button + GN-Remesh face set modifier) with a full "remesh copy" workflow:
