@@ -18,6 +18,7 @@ env/
 !*.toml
 !*.skill
 !*.cs
+!*.bat
 
 # Always ignore build outputs and Blender temp files
 *.zip
