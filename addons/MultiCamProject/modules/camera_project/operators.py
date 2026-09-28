@@ -3,7 +3,7 @@ import os
 import bpy
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import core, gn_builder, paint_sync
+from . import core, gn_builder, paint_sync, wrapper
 
 
 def _mesh_poll(context):
@@ -403,7 +403,7 @@ def _redraw_sidebars():
 
 
 def show_in_list(obj, cam, force=False):
-    """Make `cam` the active row of the All Cameras list. Blender scrolls a list to its
+    """Make `cam` the active row of the Other Cameras list. Blender scrolls a list to its
     active row only when a redraw sees that row change - so with `force` (the row is
     already active but scrolled away) the list is drawn once without an active row and
     the row is set back right after."""
@@ -632,9 +632,10 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         # check before applying - a failure after the apply leaves the modifier half-wired
         # (ensure_modifier also updates an outdated group, keeping the user's settings)
         mod = core.ensure_modifier(obj)
-        missing = core.missing_inputs(mod.node_group, core.slot_count(core.data(obj)))
+        group = wrapper.shared(mod.node_group)
+        missing = core.missing_inputs(group, core.slot_count(core.data(obj)))
         if missing:
-            self.report({'ERROR'}, f"Node group '{mod.node_group.name}' is missing inputs: "
+            self.report({'ERROR'}, f"Node group '{group.name}' is missing inputs: "
                                    f"{', '.join(missing)}")
             return {'CANCELLED'}
         d = core.data(obj)
@@ -701,7 +702,7 @@ class MULTICAMPROJECT_OT_SoloRemove(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        # only a camera of the All Cameras list - the slots are changed with 1-6
+        # only a camera of the Other Cameras list - the slots are changed with 1-6
         return (_sidebar_solo_poll(context)
                 and context.scene.camera not in core.get_slots(core.data(context.active_object)))
 

@@ -13,6 +13,7 @@ on temporary copies.
 import bpy
 
 from ..camera_project import core as cp
+from ..camera_project import wrapper
 from ..camera_project.gn_builder import B, _iface
 from . import common
 
@@ -139,23 +140,33 @@ def get_modifier(obj):
     if mod and mod.type == 'NODES':
         return mod
     return next((m for m in obj.modifiers if m.type == 'NODES' and m.node_group
-                 and m.node_group.name == GROUP), None)
+                 and wrapper.shared(m.node_group).name == GROUP), None)
 
 
 def ensure_modifier(obj):
-    """GN-Final on the object, always last in the stack."""
+    """GN-Final on the object, always last in the stack. It runs the object's wrapper
+    around GN-Final: Baked Material and Albedo never sit on the modifier (wrapper.py)."""
     ng = ensure_group()
     mod = get_modifier(obj)
     if mod is None:
         mod = obj.modifiers.new(MOD_NAME, 'NODES')
-    if mod.node_group != ng:
-        mod.node_group = ng
-        bpy.context.view_layer.update()
+    wrapper.ensure(obj, mod, ng)
     last = len(obj.modifiers) - 1
     if list(obj.modifiers).index(mod) != last:
         with bpy.context.temp_override(object=obj, active_object=obj):
             bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=last)
     return mod
+
+
+def migrate_wrappers():
+    """(2026-09-26) GN-Final modifiers from before wrapper.py (or shared with a duplicated
+    object) get their own wrapper. A no-op once done."""
+    for obj in bpy.data.objects:
+        mod = None if obj.library else get_modifier(obj)
+        if mod is None or mod.node_group is None:
+            continue
+        if not wrapper.is_wrapper(mod.node_group) or mod.node_group.users > 1:
+            ensure_modifier(obj)
 
 
 def is_final(obj):

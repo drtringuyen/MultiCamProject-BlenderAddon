@@ -4,13 +4,12 @@ import os
 import bpy
 import numpy as np
 
-from . import gn_builder
+from . import gn_builder, wrapper
 from .gn_builder import B
 
 MOD_NAME = "GN-CameraProject"
 MODES = ("Sharp", "Smooth", "Combined")
 IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".exr", ".webp", ".bmp")
-SCORE_MIN = 0.01        # cameras below this do not "hit" the object
 # coverage filter of the camera list and the auto pick: (key, label, minimum coverage)
 COVERAGE_FILTERS = (('100', "100%", 0.999), ('80', ">80%", 0.8), ('50', ">50%", 0.5),
                     ('30', ">30%", 0.3), ('ALL', "All", 0.0))
@@ -197,7 +196,8 @@ def scene_cameras(scene):
 
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
-MAT_VERSION = 5         # bump when the material's node setup changes
+MAT_VERSION = 6         # bump when the material's node setup changes
+LAYOUT_VERSION = 6      # from here on nodes have stable names: a rebuild keeps their spots
 PREFIX = "MCP_"
 OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
 BAKED_TAG = "multicamproject_baked"     # MAT_<name> built by the baking module
@@ -257,11 +257,17 @@ def _scan_uv(obj, warnings):
     return uvs[0].name
 
 
+def _named(node, name):
+    """Give a builder node its stable name - the key of material_layout.LAYOUT."""
+    node.name = name
+    return node
+
+
 def _build_original(b, uv_name, textures):
     """ORIGINAL MATERIALS frame (hand-arranged layout). Returns its color output."""
-    f = b.frame("ORIGINAL MATERIALS", (-1730, 411))
+    f = _named(b.frame("ORIGINAL MATERIALS", (-1730, 411)), "ORIGINAL MATERIALS")
     if not textures or uv_name is None:
-        rgb = b.n("ShaderNodeRGB", (851, -36), f, label="No scan texture")
+        rgb = _named(b.n("ShaderNodeRGB", (851, -36), f, label="No scan texture"), "No scan texture")
         rgb.outputs[0].default_value = (0.8, 0.8, 0.8, 1.0)
         return rgb.outputs[0]
     uv = b.n("ShaderNodeUVMap", (29, -572), f, uv_map=uv_name)
@@ -292,21 +298,36 @@ def _build_original(b, uv_name, textures):
     return col
 
 
-def _weighted(b, f, ws, cams, x, label):
+def _weighted(b, f, ws, cams, x, name):
     """sum(w_i * photo_i) / sum(w_i) over one layer's cameras; returns (color, sum)."""
     acc, tot = None, None
     for w, (i, tex) in zip(ws, cams):
         y = -50 - (i - 1) * 300
-        sc = b.vmath("SCALE", tex.outputs["Color"], None, (x, y), f)
+        sc = _named(b.vmath("SCALE", tex.outputs["Color"], None, (x, y), f), f"Cam{i} Scale")
         b.link(w, sc.inputs["Scale"])
-        acc = sc.outputs[0] if acc is None else b.vmath("ADD", acc, sc.outputs[0], (x + 250, y), f).outputs[0]
-        tot = w if tot is None else b.math("ADD", tot, w, (x + 250, y - 150), parent=f)
-    inv = b.math("DIVIDE", 1.0, b.math("MAXIMUM", tot, 1e-6, (x + 450, -950), parent=f),
-                 (x + 600, -950), parent=f)
-    norm = b.vmath("SCALE", acc, None, (x + 750, -450), f)
-    norm.label = label
+        if acc is None:
+            acc = sc.outputs[0]
+        else:
+            acc = _named(b.vmath("ADD", acc, sc.outputs[0], (x + 250, y), f), f"Cam{i} Add").outputs[0]
+        if tot is None:
+            tot = w
+        else:
+            tot = b.math("ADD", tot, w, (x + 250, y - 150), parent=f)
+            _named(tot.node, f"Cam{i} Weight Sum")
+    mx =b.math("MAXIMUM", tot, 1e-6, (x + 450, -950), parent=f)
+    _named(mx.node, f"{name} Max")
+    inv = b.math("DIVIDE", 1.0, mx, (x + 600, -950), parent=f)
+    _named(inv.node, f"{name} Inverse")
+    norm = _named(b.vmath("SCALE", acc, None, (x + 750, -450), f), f"{name} cameras")
+    norm.label = f"{name} cameras"
     b.link(inv, norm.inputs["Scale"])
     return norm.outputs[0], tot
+
+
+def _named_math(b, name, *args, **kw):
+    out = b.math(*args, **kw)
+    _named(out.node, name)
+    return out
 
 
 def _build_projection(b, n):
@@ -315,14 +336,12 @@ def _build_projection(b, n):
     (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
     mask = VCMix alpha x (s1 + w2): where no camera covers the face, the scan shows.
     Returns (color, blend mask)."""
-    f = b.frame("PROJECTION", (-1730, 1500))
+    f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
     texs = []
     for i in range(1, n + 1):
         y = -50 - (i - 1) * 300
-        uvn = b.n("ShaderNodeUVMap", (50, y), f, uv_map=f"UV_cam{i}")
-        uvn.name = f"CamUV_{i}"
-        tex = b.n("ShaderNodeTexImage", (300, y), f, extension="CLIP")
-        tex.name = f"CamTex_{i}"
+        uvn = _named(b.n("ShaderNodeUVMap", (50, y), f, uv_map=f"UV_cam{i}"), f"CamUV_{i}")
+        tex = _named(b.n("ShaderNodeTexImage", (300, y), f, extension="CLIP"), f"CamTex_{i}")
         tex.label = f"Cam {i}"
         b.link(uvn.outputs["UV"], tex.inputs["Vector"])
         texs.append((i, tex))
@@ -331,11 +350,19 @@ def _build_projection(b, n):
         cams = texs[layer * 3:layer * 3 + 3]
         if not cams:
             break
-        vc = b.n("ShaderNodeVertexColor", (350, -950 - layer * 250), f, layer_name=name)
-        sepc = b.n("ShaderNodeSeparateColor", (550, -950 - layer * 250), f)
+        vc = _named(b.n("ShaderNodeVertexColor", (350, -950 - layer * 250), f, layer_name=name),
+                    f"{name} Attribute")
+        sepc = _named(b.n("ShaderNodeSeparateColor", (550, -950 - layer * 250), f), f"{name} Separate")
         b.link(vc.outputs["Color"], sepc.inputs[0])
         ws = [sepc.outputs[k] for k in ("Red", "Green", "Blue")]
-        col, _tot = _weighted(b, f, ws, cams, 700 + layer * 1000, f"{name} cameras")
+        if layer == 0:      # R, G, B fan out to many nodes: one reroute each keeps it readable
+            routed = []
+            for k, w in enumerate(ws):
+                r = _named(b.n("NodeReroute", (700, -950 - k * 25), f), f"{name} {'RGB'[k]}")
+                b.link(w, r.inputs[0])
+                routed.append(r.outputs[0])
+            ws = routed
+        col, _tot = _weighted(b, f, ws, cams, 700 + layer * 1000, name)
         layers.append((col, vc, ws))
     color, vc1, ws1 = layers[0]
     mask = vc1.outputs["Alpha"]
@@ -343,34 +370,51 @@ def _build_projection(b, n):
         col2, _vc2, ws2 = layers[1]
 
         def layer_sum(ws, y, label):
-            t = b.math("ADD", b.math("ADD", ws[0], ws[1], (2700, y), parent=f), ws[2], (2850, y), label, f)
+            a = _named_math(b, f"{label} A", "ADD", ws[0], ws[1], (2700, y), parent=f)
+            t = _named_math(b, label, "ADD", a, ws[2], (2850, y), label, f)
             t.node.use_clamp = True
             return t
 
         s1 = layer_sum(ws1, -1200, "1-3 Cover")
         s2 = layer_sum(ws2, -1400, "4-6 Weight")
-        w2 = b.math("MULTIPLY", s2, b.math("SUBTRACT", 1.0, s1, (3050, -1300), parent=f),
-                    (3200, -1400), "4-6 Share (1-3 on top)", f)
-        both = b.math("ADD", s1, w2, (3350, -1300), "Cameras Cover", f)
+        free = _named_math(b, "1-3 Uncovered", "SUBTRACT", 1.0, s1, (3050, -1300), parent=f)
+        w2 = _named_math(b, "4-6 Share", "MULTIPLY", s2, free, (3200, -1400),
+                         "4-6 Share (1-3 on top)", f)
+        both = _named_math(b, "Cameras Cover", "ADD", s1, w2, (3350, -1300), "Cameras Cover", f)
         both.node.use_clamp = True
-        share = b.math("DIVIDE", w2, b.math("MAXIMUM", both, 1e-6, (3500, -1300), parent=f),
-                       (3650, -1300), "4-6 Fraction", f)
-        mx = b.n("ShaderNodeMix", (3800, -450), f, data_type="RGBA")
+        safe = _named_math(b, "Cameras Cover Max", "MAXIMUM", both, 1e-6, (3500, -1300), parent=f)
+        share = _named_math(b, "4-6 Fraction", "DIVIDE", w2, safe, (3650, -1300), "4-6 Fraction", f)
+        mx = _named(b.n("ShaderNodeMix", (3800, -450), f, data_type="RGBA"), "VCMix on top")
         mx.label = "VCMix on top"
         b.link(share, mx.inputs[0])
         b.link(color, gn_builder._sock(mx.inputs, "A"))
         b.link(col2, gn_builder._sock(mx.inputs, "B"))
         color = gn_builder._sock(mx.outputs, "Result")
         # nothing covers the face (1-3 cleared, 4-6 do not see it): the scan shows
-        mask = b.math("MULTIPLY", mask, both, (3800, -1200), "Blend Mask", f)
+        mask = _named_math(b, "Blend Mask", "MULTIPLY", mask, both, (3800, -1200), "Blend Mask", f)
     return color, mask
 
 
+def _place(nt, kept):
+    """Node positions: where the node stood before this rebuild (the user's arrangement),
+    else material_layout.LAYOUT, else the builder's own spot."""
+    from .material_layout import LAYOUT
+    for node in nt.nodes:
+        loc = kept.get(node.name) or LAYOUT.get(node.name)
+        if loc is not None:
+            node.location = loc
+
+
 def build_material(obj, warnings=None):
-    """(Re)build MCP_<name> in place. Keeps the Original Scan value."""
+    """(Re)build MCP_<name> in place. Keeps the Original Scan value and where the nodes
+    stand (by name - a node the rebuild adds takes its place from material_layout)."""
     warnings = [] if warnings is None else warnings
     name = material_name(obj)
     mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    kept = {}
+    if mat.use_nodes and mat.get(MAT_VERSION_KEY, 0) >= LAYOUT_VERSION:
+        # older builds named their nodes Math.012 etc.: those names mean nothing now
+        kept = {n.name: tuple(n.location) for n in mat.node_tree.nodes}
     mat[MAT_TAG] = True
     mat[MAT_VERSION_KEY] = MAT_VERSION
     mat.use_nodes = True
@@ -379,26 +423,26 @@ def build_material(obj, warnings=None):
     scan = old.outputs[0].default_value if old else 0.0
     nt.nodes.clear()
     b = B(nt)
-    out = b.n("ShaderNodeOutputMaterial", (1200, 0))
-    bsdf = b.n("ShaderNodeBsdfPrincipled", (900, 0))
+    out = _named(b.n("ShaderNodeOutputMaterial", (1200, 0)), "Material Output")
+    bsdf = _named(b.n("ShaderNodeBsdfPrincipled", (900, 0)), "Principled BSDF")
     b.link(bsdf.outputs[0], out.inputs["Surface"])
 
     original = _build_original(b, _scan_uv(obj, warnings), original_textures(obj))
     projected, mask = _build_projection(b, slot_count(data(obj)))
 
     # projection weight = mask x (1 - Original Scan)
-    f = b.frame("BLEND", (-150, 250))
-    val = b.n("ShaderNodeValue", (20, -40), f, label=ORIGINAL_SCAN)
-    val.name = ORIGINAL_SCAN
+    f = _named(b.frame("BLEND", (-150, 250)), "BLEND")
+    val = _named(b.n("ShaderNodeValue", (20, -40), f, label=ORIGINAL_SCAN), ORIGINAL_SCAN)
     val.outputs[0].default_value = scan
-    inv = b.math("SUBTRACT", 1.0, val.outputs[0], (220, -40), "Projection", f)
+    inv = _named_math(b, "Projection", "SUBTRACT", 1.0, val.outputs[0], (220, -40), "Projection", f)
     inv.node.use_clamp = True
-    w = b.math("MULTIPLY", mask, inv, (420, -40), "x Blend Mask", f)
-    mix = b.n("ShaderNodeMix", (620, -40), f, data_type="RGBA")
+    w = _named_math(b, "x Blend Mask", "MULTIPLY", mask, inv, (420, -40), "x Blend Mask", f)
+    mix = _named(b.n("ShaderNodeMix", (620, -40), f, data_type="RGBA"), "Blend Mix")
     b.link(w, mix.inputs[0])
     b.link(original, gn_builder._sock(mix.inputs, "A"))
     b.link(projected, gn_builder._sock(mix.inputs, "B"))
     b.link(gn_builder._sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
+    _place(nt, kept)
     return mat
 
 
@@ -562,8 +606,7 @@ def ensure_modifier(obj):
     if mod is None:
         mod = obj.modifiers.new(MOD_NAME, 'NODES')
         rebuilt = True      # a fresh modifier's Mode menu needs the update below too
-    if mod.node_group != main:
-        mod.node_group = main
+    if wrapper.ensure(obj, mod, main):
         rebuilt = True      # other group: its Mode menu needs the update below too
     if rebuilt:
         # a rebuilt group's Mode menu has no items until the next update - restoring
@@ -599,16 +642,22 @@ def missing_inputs(ng, n):
 
 def input_socket(mod, name):
     """Blender 5.2: modifier inputs live on mod.properties.inputs.<Socket_N>.
-    Returns the RNA holder with `.value`."""
+    Returns the RNA holder with `.value` (plain inputs only - see get_input)."""
     return getattr(mod.properties.inputs, ident(mod.node_group, name))
 
 
 def get_input(mod, name):
-    return input_socket(mod, name).value
+    """Plain inputs from the modifier, ID inputs (Material, Camera N) from its wrapper."""
+    s = wrapper.id_socket(mod, name)
+    return input_socket(mod, name).value if s is None else s.default_value
 
 
 def set_input(mod, name, value):
-    input_socket(mod, name).value = value
+    s = wrapper.id_socket(mod, name)
+    if s is None:
+        input_socket(mod, name).value = value
+    elif s.default_value != value:      # a node tree edit: re-evaluates every user
+        s.default_value = value
 
 
 def input_path(mod, name):
@@ -751,6 +800,24 @@ def migrate_all():
             migrate_shifts(obj, scene)
             if get_modifier(obj):
                 apply_slots(obj, scene)
+        if obj.type == 'MESH' and not obj.library and data(obj).is_setup and not measured(data(obj)):
+            rescore(obj, scene)     # a list from before coverage was stored: all hidden at 0%
+    migrate_wrappers(scene)
+
+
+def migrate_wrappers(scene):
+    """(2026-09-26) Setups from before wrapper.py keep their IDs on the modifier (leaking a
+    user on every save), and a duplicated object shares its original's wrapper: both get
+    their own wrapper. Runs on every load - a no-op once done."""
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH' or obj.library or not data(obj).is_setup:
+            continue
+        mod = get_modifier(obj)
+        if mod is None or mod.node_group is None:
+            continue
+        ng = mod.node_group
+        if not wrapper.is_wrapper(ng) or ng.users > 1:
+            apply_slots(obj, scene)     # wraps, and re-adds the lens drivers
 
 
 def set_camera_offset(cam, shift):
@@ -853,8 +920,9 @@ def rescore(obj, scene):
     if co_w is not None:
         scored = [(*score_camera(c, co_w, nr_w, scene), c) for c in scene_cameras(scene)
                   if c not in removed]
-    scored = sorted([sc for sc in scored if sc[0] >= SCORE_MIN], key=lambda sc: -sc[1])
-    # every camera that sees the object is kept; the coverage filter only hides / skips
+    # every camera with the object in frame is kept - also one that sees only back faces
+    # (score 0, e.g. the back camera of a relief); the coverage filter only hides / skips
+    scored = sorted([sc for sc in scored if sc[1] > 0], key=lambda sc: -sc[1])
     d.cameras.clear()
     for sc, cov, c in scored:
         it = d.cameras.add()

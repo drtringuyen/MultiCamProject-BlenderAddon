@@ -41,7 +41,7 @@ class MULTICAMPROJECT_CamShift(bpy.types.PropertyGroup):
 
 
 def _on_cam_index(self, context):
-    """Clicking a row of the All Cameras list solos that camera (the soloed camera
+    """Clicking a row of the Other Cameras list solos that camera (the soloed camera
     is the list's active row, so the list scrolls to it)."""
     from . import operators
     if not 0 <= self.cam_index < len(self.cameras):
