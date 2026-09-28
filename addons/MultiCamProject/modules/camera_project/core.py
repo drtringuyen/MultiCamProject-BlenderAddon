@@ -825,7 +825,7 @@ def migrate_wrappers(scene):
         if mod is None or mod.node_group is None:
             continue
         ng = mod.node_group
-        if not wrapper.is_wrapper(ng) or ng.users > 1:
+        if not wrapper.is_wrapper(ng) or ng.users > 1 or wrapper.outdated(ng):
             apply_slots(obj, scene)     # wraps, and re-adds the lens drivers
 
 

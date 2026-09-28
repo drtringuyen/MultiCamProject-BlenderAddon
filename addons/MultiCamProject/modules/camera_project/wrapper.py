@@ -1,19 +1,22 @@
-"""Per-object wrapper groups: no ID is ever stored on a modifier.
+"""Per-object wrapper groups: Material / Image IDs are never stored on a modifier.
 
 Blender 5.2 bug: every save (Ctrl+S, autosave, save copy) adds a user to each ID held by
-a Geometry Nodes modifier input (Material, Object, Image, ...) and never takes it back -
-MCP_<name> read 386 users after a day of work. IDs set as node default values inside a
-node tree do not leak.
+a Geometry Nodes modifier input and never takes it back - MCP_<name> read 386 users after
+a day of work. Measured 2026-09-28 (5.2.1): the extra users live in memory only, a reload
+resets them. IDs set as node default values inside a node tree do not leak.
 
 So a modifier runs "<shared group> | <object>": Group Input -> the shared group (one
 node) -> Group Output. The wrapper exposes the shared group's plain inputs under the same
-names; its ID inputs are not exposed but kept as that node's default values. get/set in
-core route by socket name, so callers do not care which kind an input is.
+names, and its Object inputs (Camera 1-n: visible and linked on the modifier, as the user
+wants; they only gain in-memory users). Material / Image / Collection / Texture inputs are
+not exposed but kept as that node's default values. get/set in core route by socket name,
+so callers do not care which kind an input is.
 """
 import bpy
 
-ID_SOCKETS = {"NodeSocketMaterial", "NodeSocketObject", "NodeSocketImage",
+ID_SOCKETS = {"NodeSocketMaterial", "NodeSocketImage",       # kept on the node
               "NodeSocketCollection", "NodeSocketTexture"}
+WRAP_VERSION = 2                        # 2: Object inputs exposed on the modifier
 WRAP_KEY = "multicamproject_wraps"      # wrapper[WRAP_KEY] = signature of the shared group
 NODE = "Shared"
 SEP = " | "
@@ -36,9 +39,14 @@ def shared(ng):
 
 def _signature(sg):
     """Changes whenever the shared group is rebuilt (its sockets get new identifiers,
-    which drops the wrapper's links to them)."""
-    return "|".join(f"{getattr(it, 'in_out', 'PANEL')}:{it.name}:{getattr(it, 'socket_type', '')}"
+    which drops the wrapper's links to them) or the wrapper layout changes."""
+    return f"v{WRAP_VERSION}|" + "|".join(f"{getattr(it, 'in_out', 'PANEL')}:{it.name}:{getattr(it, 'socket_type', '')}"
                     f":{getattr(it, 'identifier', '')}" for it in sg.interface.items_tree)
+
+
+def outdated(ng):
+    """A wrapper built for another shared group version or wrapper layout."""
+    return is_wrapper(ng) and ng.get(WRAP_KEY) != _signature(shared(ng))
 
 
 def _is_id(item):
@@ -74,7 +82,9 @@ def read_values(mod):
                 pass
     if is_wrapper(ng):
         for s in ng.nodes[NODE].inputs:
-            if s.bl_idname in ID_SOCKETS:
+            # an unlinked Object socket: a v1 wrapper kept its cameras on the node
+            if s.bl_idname in ID_SOCKETS or (s.bl_idname == "NodeSocketObject"
+                                             and not s.is_linked):
                 vals[s.name] = s.default_value
     return vals
 
@@ -133,7 +143,8 @@ def _build(ng, sg):
     ng.nodes.clear()
     ng.interface.clear()
     ng.is_modifier = True
-    ng.description = f"{sg.name} for one object (ID inputs kept on the node - see wrapper.py)"
+    ng.description = (f"{sg.name} for one object (Material / Image inputs kept on the node - "
+                      "see wrapper.py)")
     _mirror_interface(ng, sg)
     gi = ng.nodes.new("NodeGroupInput")
     gi.location = (-300, 0)

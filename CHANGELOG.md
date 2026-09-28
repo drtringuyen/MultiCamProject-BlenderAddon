@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Camera Project: cameras on the modifier again (2026-09-28)
+- **Camera 1-n** are exposed on the GN-CameraProject modifier again (Group Input -> the shared
+  group), no longer kept as the wrapper node's defaults. Material / Image inputs stay on the
+  node. Measured in 5.2.1: the save leak that wrapper.py works around adds users in memory
+  only (a reload resets them), so for cameras it only delays freeing a deleted camera.
+- Wrappers carry a layout version; older ones are rebuilt on load with every value kept.
+
 ### Camera Project: Resort / Refresh (2026-09-28)
 - The Selected Cameras header's one button is split: **Resort** (first, sort icon) scores every
   camera again and picks the best for the slots (the old Auto); **Refresh** (at the end)
