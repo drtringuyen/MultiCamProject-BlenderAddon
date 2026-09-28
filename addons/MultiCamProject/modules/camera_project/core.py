@@ -1018,13 +1018,47 @@ def assign_slot(obj, cam, slot, scene):
     apply_slots(obj, scene)
 
 
+def refill_slots(d, slots, sees, warnings):
+    """Keep each slot camera that still sees the object and has a photo; the others (and
+    empty slots) get the best-coverage free camera with a photo that passes the filter."""
+    for i, cam in enumerate(slots):
+        if cam is not None and cam in sees and image_ok(cam_image(cam)):
+            continue        # the pick is kept, whatever its coverage
+        free = [it.camera for it in d.cameras if it.camera not in slots and passes(d, it)
+                and image_ok(cam_image(it.camera))]
+        new = free[0] if free else None
+        if cam is not None:
+            why = "no longer sees the object" if cam not in sees else "has no loaded image"
+            warnings.append(f"Camera {i + 1}: '{cam.name}' {why} -> "
+                            f"{new.name if new else 'left empty'}")
+        slots[i] = new
+    return slots
+
+
 def check_slots(obj, scene):
-    """Refresh: the Camera 1-n picks stay. The object's own MCP_ goes back into its
-    material slot (a duplicate keeps the original's), a slot camera without a loaded photo
-    fetches it from the folder, then CamTex_1..n and the modifier are rewired to the slots.
+    """Refresh: the camera list (Selected + Other Cameras) is measured again, the Camera 1-n
+    picks stay unless they no longer see the object or have no photo, empty slots are
+    filled from the list. The object's own MCP_ goes back into its material slot (a
+    duplicate keeps the original's), slot photos are fetched from the folder when missing,
+    then CamTex_1..n and the GN modifier are rewired to the slots.
     Returns (fixes, warnings) as strings."""
     d = data(obj)
     fixes, warnings = [], []
+    folder, listing = _folder_listing(d.image_folder)
+    before = get_slots(d)
+    for cam in before:
+        if cam is not None and not image_ok(cam_image(cam)) and not is_global(cam):
+            resolve_cam_image(cam, folder, listing)
+    old_count = len(d.cameras)
+    sees = rescore(obj, scene)
+    if len(d.cameras) != old_count:
+        fixes.append(f"Camera list: {old_count} -> {len(d.cameras)}")
+    slots = refill_slots(d, list(before), sees, warnings)
+    for i, (a, b) in enumerate(zip(before, slots), 1):
+        if a is None and b is not None:
+            fixes.append(f"Camera {i}: empty -> {b.name}")
+    set_slots(d, slots)
+
     own = material_name(obj)
     foreign = sorted({s.material.name for s in obj.material_slots if _foreign(obj, s.material)})
     if foreign or not any(s.material and s.material.name == own for s in obj.material_slots):
@@ -1035,17 +1069,19 @@ def check_slots(obj, scene):
     if mod_mat is not None and mod_mat.name != own:
         fixes.append(f"Modifier material: {mod_mat.name} -> {own}")
 
-    folder, listing = _folder_listing(d.image_folder)
     mat = bpy.data.materials.get(own)
     nodes = mat.node_tree.nodes if mat and mat.node_tree else {}
-    for i, cam in enumerate(get_slots(d), 1):
-        img = None
-        if cam is not None:
-            if not image_ok(cam_image(cam)) and not is_global(cam):
-                resolve_cam_image(cam, folder, listing)
-            img = cam_image(cam)
-            if not image_ok(img):
-                warnings.append(f"Camera {i}: '{cam.name}' has no loaded image")
+    for i, cam in enumerate(slots, 1):
+        img = cam_image(cam) if cam is not None else None
+        if cam is not None and not image_ok(img):
+            warnings.append(f"Camera {i}: '{cam.name}' has no loaded image")
+        try:
+            gn_cam = get_input(mod, f"Camera {i}") if mod else None
+        except (KeyError, AttributeError, TypeError):    # group not built for this count yet
+            gn_cam = None
+        if gn_cam != cam:
+            fixes.append(f"GN Camera {i}: {gn_cam.name if gn_cam else 'empty'} -> "
+                         f"{cam.name if cam else 'empty'}")
         tex = nodes.get(f"CamTex_{i}")
         if tex is not None and tex.image != img:
             fixes.append(f"Cam {i}: {tex.image.name if tex.image else 'empty'} -> "
@@ -1164,17 +1200,7 @@ def refresh(obj, scene):
         if warning:
             warnings.append(warning)
     else:
-        for i, cam in enumerate(slots):
-            if cam is not None and cam in sees and image_ok(cam_image(cam)):
-                continue        # the user's pick: kept, whatever its coverage
-            free = [it.camera for it in d.cameras if it.camera not in slots and passes(d, it)
-                    and image_ok(cam_image(it.camera))]
-            new = free[0] if free else None
-            if cam is not None:
-                why = "no longer sees the object" if cam not in sees else "has no loaded image"
-                warnings.append(f"Camera {i + 1}: '{cam.name}' {why} -> "
-                                f"{new.name if new else 'left empty'}")
-            slots[i] = new
+        slots = refill_slots(d, slots, sees, warnings)
     set_slots(d, slots)
 
     missing = [it.camera.name for it in d.cameras

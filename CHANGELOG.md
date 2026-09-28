@@ -4,9 +4,11 @@
 
 ### Camera Project: Resort / Refresh (2026-09-28)
 - The Selected Cameras header's one button is split: **Resort** (first, sort icon) scores every
-  camera again and picks the best for the slots (the old Auto); **Refresh** (at the end) keeps
-  the picks and checks the material: the object's own MCP_ back in its slot, each Cam texture
-  holding its slot camera's photo (fetched from the folder when missing), modifier rewired.
+  camera again and picks the best for the slots (the old Auto); **Refresh** (at the end)
+  measures the camera list again (Selected + Other Cameras), keeps the picks that still see the
+  object and have a photo, fills empty slots from the list, then loads them into the material
+  and GN: the object's own MCP_ back in its slot, each Cam texture holding its slot camera's
+  photo (fetched from the folder when missing), GN Camera 1-n rewired. It reports each fix.
 - Fix: camera lists saved empty. Scoring right after a file load (the coverage migration)
   read every `matrix_world` as zeros, so no camera saw the object; the view layer is updated
   before scoring now. Press Measure Coverage on an object with an empty list.
