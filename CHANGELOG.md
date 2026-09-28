@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Remesh module (2026-09-28)
+- **Polyline Cut** (any mode, from the Remesh panel): draw a polygon in the viewport. The region's
+  border is cut **exactly along the drawn lines** by an Exact boolean, instead of following the
+  scan's triangles like the Sculpt face set tools. Near/Far (depth from the drawing view) are set
+  automatically from what the polygon covers and can be edited; the cutter prisms live in
+  `MCP_Remesh_<obj>` / `MCP_RemeshCutters_<obj>`.
+- **Region from Face Set**: a region from an existing Sculpt face set (jagged border, no cut).
+- **GN-Remesh** modifier, first in the stack, then `MCP-Remesh Decimate`: per region a decimate
+  **Ratio** (approximate preview through the `MCP_Remesh` vertex group, seams protected) and
+  **Delete**. **Preview** off passes the scan through.
+- **Apply**: the cut applied, each region decimated to its exact ratio in Edit Mode (the border
+  stays straight), UV seams on region borders, one Sculpt face set per region. The mesh before is
+  kept (fake user) for **Restore**. `remesh_region` (face INT) and `remesh_seam` (edge BOOL) stay
+  on the mesh for other GN groups - GN cannot read `.sculpt_face_set` itself.
+
 ### Baking + Export modules (2026-09-25)
 Plan: `docs/PLAN_baking_export.md`.
 

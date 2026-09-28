@@ -148,6 +148,17 @@ class MULTICAMPROJECT_OT_ToggleExport(bpy.types.Operator):
         module_manager.toggle("export")
         return {'FINISHED'}
 
+
+class MULTICAMPROJECT_OT_ToggleRemesh(bpy.types.Operator):
+    """Toggle Remesh module on/off"""
+    bl_idname = "multicamproject.toggle_remesh"
+    bl_label = "Remesh"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("remesh")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
@@ -158,9 +169,11 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleProjectSides)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleBaking)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleExport)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleRemesh)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleRemesh)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleExport)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleBaking)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleProjectSides)
