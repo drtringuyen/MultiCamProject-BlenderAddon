@@ -35,6 +35,8 @@ class MULTICAMPROJECT_OT_Build(bpy.types.Operator):
         build = _read_build_info()
         if build:
             layout.label(text="Last built: " + build.get("time", "Unknown"), icon='TIME')
+            if build.get("commit"):
+                layout.label(text="Commit: " + build["commit"], icon='FILE_REFRESH')
         else:
             layout.label(text="Not built yet - run install.py first", icon='ERROR')
 

@@ -24,6 +24,21 @@ BLENDER_ADDONS = (
     / "Blender" / BLENDER_VERSION / "scripts" / "addons"
 )
 
+def _git_commit() -> str:
+    """Short hash + subject of the checked-out commit ('' outside git), '+ changes' when
+    the add-on has uncommitted edits."""
+    import subprocess
+    try:
+        run = lambda *a: subprocess.run(["git", *a], cwd=SCRIPT_DIR, text=True,
+                                        capture_output=True, check=True).stdout.strip()
+        commit = run("log", "-1", "--format=%h %s")
+        if run("status", "--porcelain", "--", str(ADDON_SRC)):
+            commit += " + changes"
+        return commit
+    except Exception:
+        return ""
+
+
 print(f"[*] Installing {ADDON_NAME}...")
 print(f"    Source:      {ADDON_SRC}")
 print(f"    Destination: {BLENDER_ADDONS}")
@@ -46,6 +61,7 @@ try:
     build_info = {
         "time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "date": datetime.now().strftime("%d/%m/%Y"),
+        "commit": _git_commit(),
     }
     with open(addon_dest / "build_info.json", "w") as f:
         json.dump(build_info, f)
