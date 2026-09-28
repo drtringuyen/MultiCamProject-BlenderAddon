@@ -3,19 +3,13 @@
 ## Unreleased
 
 ### Remesh module (2026-09-28)
-- **Polyline Cut** (any mode, from the Remesh panel): draw a polygon in the viewport. The region's
-  border is cut **exactly along the drawn lines** by an Exact boolean, instead of following the
-  scan's triangles like the Sculpt face set tools. Near/Far (depth from the drawing view) are set
-  automatically from what the polygon covers and can be edited; the cutter prisms live in
-  `MCP_Remesh_<obj>` / `MCP_RemeshCutters_<obj>`.
-- **Region from Face Set**: a region from an existing Sculpt face set (jagged border, no cut).
-- **GN-Remesh** modifier, first in the stack, then `MCP-Remesh Decimate`: per region a decimate
-  **Ratio** (approximate preview through the `MCP_Remesh` vertex group, seams protected) and
-  **Delete**. **Preview** off passes the scan through.
-- **Apply**: the cut applied, each region decimated to its exact ratio in Edit Mode (the border
-  stays straight), UV seams on region borders, one Sculpt face set per region. The mesh before is
-  kept (fake user) for **Restore**. `remesh_region` (face INT) and `remesh_seam` (edge BOOL) stay
-  on the mesh for other GN groups - GN cannot read `.sculpt_face_set` itself.
+- **Poly Cut** (the one button in the Remesh panel, any mode): click points in the viewport,
+  **Enter** or **double click** closes the polygon back to the first point, **Esc** cancels. The
+  mesh is cut **exactly along the drawn lines** (Exact boolean, not along the scan's triangles)
+  and the inside becomes a **new Sculpt face set**. The cut depth covers what the polygon shows.
+- **face_set** (face INT): a copy of the Sculpt face sets that GN can read (GN cannot read
+  `.sculpt_face_set`). Refreshed after every cut and whenever the object leaves Sculpt Mode.
+- **GN-Remesh** node group: Face Set in -> Selection / Face Set out, for your own GN trees.
 
 ### Baking + Export modules (2026-09-25)
 Plan: `docs/PLAN_baking_export.md`.

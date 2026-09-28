@@ -1,8 +1,7 @@
-from . import props, operators, ui
+from . import operators, ui
 
 
 def register():
-    props.register()
     operators.register()
     ui.register()
 
@@ -10,4 +9,3 @@ def register():
 def unregister():
     ui.unregister()
     operators.unregister()
-    props.unregister()
