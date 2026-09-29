@@ -5,10 +5,20 @@ from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, P
                        StringProperty)
 
 
+def _on_material(data):
+    from . import matsync
+    matsync.picked(data.id_data)
+
+
 class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
     nor_image: PointerProperty(type=bpy.types.Image, name="Normal")
-    material: PointerProperty(type=bpy.types.Material, name="Baked Material")
+    material: PointerProperty(
+        type=bpy.types.Material, name="Final Material",
+        poll=lambda self, m: bool(m.get("multicamproject_baked")),
+        update=lambda self, context: _on_material(self),
+        description="MAT_<name>: the object's baked export material (slot 2). Picking another "
+                    "one takes it over - it is renamed after the object")
     fingerprint: StringProperty(description="State of the projection at the last albedo bake")
     alb_size: IntProperty(description="Resolution of the last albedo bake (0 = never baked)")
     nor_size: IntProperty(description="Resolution of the last normal map (0 = none)")

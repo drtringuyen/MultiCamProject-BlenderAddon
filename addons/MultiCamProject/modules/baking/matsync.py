@@ -299,6 +299,36 @@ def _objects_changed():
     return None
 
 
+_picked = set()
+
+
+def picked(obj):
+    """A material pointer changed (a pick in the panel, or the add-on itself): the object
+    is checked from a timer and synced only when something is off - so the add-on's own
+    writes end there."""
+    _picked.add(obj.name)
+    _schedule(_picked_changed)
+
+
+def _picked_changed():
+    try:
+        if not _ready():
+            return 0.5
+        scene = bpy.context.scene
+        names = list(_picked)
+        _picked.clear()
+        for name in names:
+            obj = bpy.data.objects.get(name)
+            if obj is not None and in_scope(obj) and problems(obj):
+                for t in sync(obj, scene):
+                    _msg(f"{obj.name}: {t}")
+                for t in sync_names():
+                    _msg(f"Material renamed {t}")
+    except Exception as e:
+        _msg(f"material pick skipped: {e}")
+    return None
+
+
 def _names_changed():
     try:
         for t in sync_names():
@@ -383,6 +413,6 @@ def unregister():
                     (bpy.app.handlers.load_post, _on_load)):
         if fn in lst:
             lst.remove(fn)
-    for fn in (_objects_changed, _names_changed, _initial):
+    for fn in (_objects_changed, _names_changed, _initial, _picked_changed):
         if bpy.app.timers.is_registered(fn):
             bpy.app.timers.unregister(fn)

@@ -118,19 +118,21 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
     @staticmethod
     def _draw_materials(layout, obj):
-        """[Projection Mat] [Final Mat] [Refresh]: rebuild + show one, or check and fix both.
-        Problems and what the last Refresh fixed show below, never in a popup."""
+        """[MCP_ picker] [MAT_ picker] [Refresh]: which projection / final material the
+        object is linked to; Refresh checks and fixes both. Problems and what the last
+        Refresh fixed show below, never in a popup."""
         probs = matsync.problems(obj) if matsync.in_scope(obj) else []
         kinds = {k for k, _t in probs}
         row = layout.row(align=True)
-        for kind, text, ok_icon, enabled in (
-                ('MCP', "Projection Mat", 'NODE_MATERIAL', matsync.is_projection(obj)),
-                ('MAT', "Final Mat", 'SHADING_TEXTURE', True)):
+        cam = getattr(obj, "multicamproject_cam", None)
+        for kind, data, ok_icon, enabled in (
+                ('MCP', cam, 'NODE_MATERIAL', matsync.is_projection(obj)),
+                ('MAT', common.data(obj), 'SHADING_TEXTURE', True)):
             b = row.row(align=True)
-            b.enabled = enabled
+            b.enabled = enabled and data is not None
             b.alert = kind in kinds
-            b.operator("multicamproject.material_rebuild", text=text,
-                       icon='ERROR' if kind in kinds else ok_icon).kind = kind
+            if data is not None:
+                b.prop(data, "material", text="", icon='ERROR' if kind in kinds else ok_icon)
         b = row.row(align=True)
         b.alert = 'SLOTS' in kinds
         b.operator("multicamproject.material_refresh", text="",

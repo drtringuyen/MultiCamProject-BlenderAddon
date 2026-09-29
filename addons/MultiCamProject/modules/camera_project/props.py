@@ -23,6 +23,15 @@ class MULTICAMPROJECT_CamRef(bpy.types.PropertyGroup):
     camera: PointerProperty(type=bpy.types.Object, poll=_is_camera)
 
 
+def _on_material(data):
+    """A material picked in the Baking panel: slots and GN follow (baking.matsync)."""
+    try:
+        from ..baking import matsync
+    except ImportError:
+        return
+    matsync.picked(data.id_data)
+
+
 def _on_shift(self, context):
     # fires on every step while the slider is dragged
     from . import core
@@ -92,7 +101,12 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
     user_picked: BoolProperty(
         default=False,
         description="True once the user chose a slot - auto-fill then keeps their choice")
-    material: PointerProperty(type=bpy.types.Material)
+    material: PointerProperty(
+        type=bpy.types.Material, name="Projection Material",
+        poll=lambda self, m: bool(m.get("multicamproject_material")),
+        update=lambda self, context: _on_material(self),
+        description="MCP_<name>: the object's projection material (slot 1). Picking another "
+                    "one takes it over - it is renamed after the object")
     image_folder: StringProperty(
         name="Folder", subtype='DIR_PATH',
         description="Folder holding all camera photos, matched by camera name")
