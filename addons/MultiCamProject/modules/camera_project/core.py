@@ -117,6 +117,25 @@ def set_cam_image_path(cam, path):
     return img
 
 
+def relink_missing(obj, scene):
+    """Every (non-global) scene camera whose photo file is missing gets it from obj's
+    Folder (by file name, then camera name); MCP_'s Cam textures follow. Photos that load
+    fine are left alone. Returns how many were relinked."""
+    d = data(obj)
+    folder, listing = _folder_listing(d.image_folder)
+    if not listing:
+        return 0
+    n = 0
+    for cam in scene_cameras(scene):
+        if is_global(cam) or image_ok(cam_image(cam)):
+            continue
+        img = resolve_cam_image(cam, folder, listing)
+        n += bool(img is not None and image_ok(img))
+    if n:
+        fill_cam_images(obj)
+    return n
+
+
 def resolve_cam_image(cam, folder, listing):
     """Fetch/reload the camera's photo. Returns the image (may be None)."""
     path = _find_in_folder(folder, listing, cam) if listing else None

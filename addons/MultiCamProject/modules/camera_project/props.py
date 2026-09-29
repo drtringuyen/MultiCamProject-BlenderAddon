@@ -23,6 +23,20 @@ class MULTICAMPROJECT_CamRef(bpy.types.PropertyGroup):
     camera: PointerProperty(type=bpy.types.Object, poll=_is_camera)
 
 
+def _on_folder(data, context):
+    """A new Folder: every camera whose photo file is missing is relinked from it (Reload
+    All does the rest: clipping, scoring, slots)."""
+    from . import core
+    obj = data.id_data
+    try:
+        n = core.relink_missing(obj, context.scene)
+    except Exception as e:      # never break the field over a relink
+        print(f"[MultiCamProject] relink skipped: {e}")
+        return
+    if n:
+        print(f"[MultiCamProject] {obj.name}: {n} camera photo(s) relinked from the folder")
+
+
 def _on_material(data):
     """A material picked in the Baking panel: slots and GN follow (baking.matsync)."""
     try:
@@ -109,7 +123,9 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
                     "one takes it over - it is renamed after the object")
     image_folder: StringProperty(
         name="Folder", subtype='DIR_PATH',
-        description="Folder holding all camera photos, matched by camera name")
+        update=lambda self, context: _on_folder(self, context),
+        description="Folder holding all camera photos, matched by file / camera name. "
+                    "Picking it relinks every camera whose photo is missing")
     clip_start: FloatProperty(name="Start", default=0.01, min=0.0001, unit='LENGTH',
                               description="Clip start applied to every camera on Reload All")
     clip_end: FloatProperty(name="End", default=100.0, min=0.001, unit='LENGTH',
