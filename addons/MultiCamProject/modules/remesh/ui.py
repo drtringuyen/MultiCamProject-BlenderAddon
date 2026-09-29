@@ -109,7 +109,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             sub.alert = True
             sub.label(text=why, icon='ERROR')
             if (not obj.data.uv_layers.get("uv_normal") and dec is None
-                    and hasattr(bpy.types, "MULTICAMPROJECT_OT_ExportMakeUV")):
+                    and hasattr(bpy.types, "MULTICAMPROJECT_OT_export_make_uv")):
                 box.operator("multicamproject.export_make_uv", text="Make uv_normal (Smart UV)",
                              icon='UV').scope = 'SELECTED'
         if d.ba_image is not None:
