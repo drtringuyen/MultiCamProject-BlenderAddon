@@ -56,28 +56,26 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         else:
             row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
         # the decimate brush: Blender's Density brush, which only works with Dyntopo
+        # [Dyntopo detail] [Decimate Brush] [Dyntopo toggle]: the detail field follows the
+        # Detailing method (Relative: pixels, Constant / Manual: resolution, Brush: percent)
         row = col.row(align=True)
-        brush = context.tool_settings.sculpt.brush if context.mode == 'SCULPT' else None
+        ts = context.tool_settings.sculpt
+        brush = ts.brush if context.mode == 'SCULPT' else None
         on_density = brush is not None and getattr(brush, "sculpt_brush_type", "") == 'SIMPLIFY'
         dyn = obj.use_dynamic_topology_sculpting
+        det = row.row(align=True)
+        det.ui_units_x = 4.5
+        prop = {'CONSTANT': "constant_detail_resolution", 'MANUAL': "constant_detail_resolution",
+                'BRUSH': "detail_percent"}.get(ts.detail_type_method, "detail_size")
+        det.prop(ts, prop, text="")
         row.operator("multicamproject.remesh_density_brush",
-                     text="Decimate Brush (Density)" + ("  ·  active" if on_density and dyn else ""),
+                     text="Decimate Brush" + ("  ·  active" if on_density and dyn else ""),
                      icon='MOD_DECIM', depress=on_density and dyn)
         if context.mode == 'SCULPT':
             tog = row.row(align=True)
             tog.alert = on_density and not dyn          # the brush does nothing without it
             tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
                          depress=dyn)
-        if context.mode == 'SCULPT' and dyn:
-            ts = context.tool_settings.sculpt
-            det = col.row(align=True)
-            det.prop(ts, "detail_type_method", text="")
-            if ts.detail_type_method in {'CONSTANT', 'MANUAL'}:
-                det.prop(ts, "constant_detail_resolution", text="Resolution")
-            elif ts.detail_type_method == 'BRUSH':
-                det.prop(ts, "detail_percent", text="Detail")
-            else:
-                det.prop(ts, "detail_size", text="Detail")
         row = col.row(align=True)
         sub = row.row(align=True)
         sub.enabled = in_mesh_mode
