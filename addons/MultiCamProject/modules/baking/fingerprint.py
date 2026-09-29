@@ -55,9 +55,14 @@ def stamp_source(obj):
 
 
 def ba_outdated(obj):
-    """BA_ exists but the mesh, uv_normal or the source changed since."""
+    """BA_ exists but the mesh, uv_normal or the source changed since, or it was baked at
+    another resolution than the scene's (one resolution for every texture)."""
     d = common.data(obj)
-    return bool(d.ba_fingerprint) and d.ba_fingerprint.split(":")[0] != source_state(obj, cached=True)
+    if not d.ba_fingerprint:
+        return False
+    if d.ba_size and d.ba_size != common.settings(bpy.context.scene).resolution:
+        return True
+    return d.ba_fingerprint.split(":")[0] != source_state(obj, cached=True)
 
 
 def _checksum(attr, field, alpha=None):

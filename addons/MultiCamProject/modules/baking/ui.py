@@ -104,6 +104,9 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                        icon='NORMALS_FACE')
             if d.alb_size and d.nor_size != d.alb_size:
                 info.label(text="ALB and NOR sizes differ - bake again", icon='INFO')
+        if d.alb_size and d.alb_size != s.resolution:
+            info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(s.resolution)}",
+                       icon='INFO')
         # earlier normal map runs (other methods / sizes) to compare the times with
         current = (normal.LABELS.get(d.nor_source_used, d.nor_source_used), d.nor_size)
         others = [r for r in normal.times(d) if (r[0], r[1]) != current]
@@ -229,8 +232,6 @@ class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
         col.use_property_split = True
         col.use_property_decorate = False
         col.prop(s, "output_dir", text="Folder")
-        col.prop(s, "resolution")
-        col.prop(s, "work_resolution", text="BA_ / BN_")
         col.prop(s, "cage_extrusion", text="Cage")
         row = col.row(align=True)
         row.prop(s, "smooth_source", text="Smooth BN_ Source")

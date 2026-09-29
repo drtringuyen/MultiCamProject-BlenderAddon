@@ -228,10 +228,28 @@ def _uv_restore(obj, prev):
         uvs.active = uvs[prev]
 
 
-def _pack(img):
-    """Keep a baked work texture inside the .blend (PNG), whatever it pointed at before."""
+def _work_image(name, size, colorspace):
+    """A fresh generated image to bake a work texture into (a packed image keeps its old
+    packed pixels when packed again, so a re-bake never goes into the old one)."""
+    img = bpy.data.images.new(name + "_MCP_TMP", size, size, alpha=False, float_buffer=False)
+    img.colorspace_settings.name = colorspace
+    return img
+
+
+def _pack_as(img, old, name):
+    """Pack the baked `img` (PNG) and let it take `old`'s place: every user (MCP_'s node,
+    the object's pointer) moves over, `old` goes, `img` gets the name - the same BA_/BN_
+    name every time, never a .001."""
     img.file_format = 'PNG'
     img.pack()
+    if old is not None and old != img:
+        old.user_remap(img)
+        bpy.data.images.remove(old)
+    other = bpy.data.images.get(name)
+    if other is not None and other != img:
+        other.name = name + "_stale"
+    img.name = name
+    return img
 
 
 # ---------------------------------------------------------------- 04 Bake from Source
@@ -253,7 +271,7 @@ def source_problem(obj, context=None):
 
 def bake_from_source(context, obj, progress=None):
     """BA_ (the source's colors) and BN_ (its surface, tangent normals) onto obj's
-    uv_normal - Selected to Active from the Bake Source, at the Work Resolution. Both stay
+    uv_normal - Selected to Active from the Bake Source, at the scene's resolution. Both stay
     packed in the .blend and are overwritten on the next bake; MCP_ shows them under the
     projection. Returns the seconds."""
     from .normal import mesh_bake
@@ -265,10 +283,10 @@ def bake_from_source(context, obj, progress=None):
         raise RuntimeError(why)
     t0 = time.perf_counter()
     src = d.bake_source
-    size = s.work_resolution
+    size = s.resolution         # the one resolution: BA_ / BN_ match ALB_ / NOR_
     was_final = gn_final.is_final(obj)
-    ba = prepare_image(d.ba_image, common.ba_name(obj), size, False, 'sRGB')
-    bn = prepare_image(d.bn_image, common.bn_name(obj), size, False, 'Non-Color')
+    ba = _work_image(common.ba_name(obj), size, 'sRGB')
+    bn = _work_image(common.bn_name(obj), size, 'Non-Color')
     prev = _uv_normal_active(obj)
     try:
         with mesh_bake.visible(context, src), render_state(scene), \
@@ -288,13 +306,18 @@ def bake_from_source(context, obj, progress=None):
                 hp.select_set(True)
                 _bake(context, obj, sel, 'NORMAL', size, use_selected_to_active=True,
                       cage_extrusion=s.cage_extrusion, normal_space='TANGENT')
+    except Exception:
+        bpy.data.images.remove(ba)      # the old BA_ / BN_ stay as they were
+        bpy.data.images.remove(bn)
+        raise
     finally:
         _uv_restore(obj, prev)
         if gn_final.is_final(obj) != was_final:
             gn_final.set_final(obj, scene, was_final)
-    _pack(ba)
-    _pack(bn)
-    d.ba_image, d.bn_image = ba, bn
+    old_ba = d.ba_image or bpy.data.images.get(common.ba_name(obj))
+    old_bn = d.bn_image or bpy.data.images.get(common.bn_name(obj))
+    d.ba_image = _pack_as(ba, old_ba, common.ba_name(obj))
+    d.bn_image = _pack_as(bn, old_bn, common.bn_name(obj))
     d.ba_size = size
     d.ba_fingerprint = fingerprint.stamp_source(obj)
     d.last_ba_seconds = time.perf_counter() - t0

@@ -2,9 +2,16 @@
 
 ## Unreleased
 
-### Baking: 1K by default (2026-09-29)
-- New scenes bake ALB_ / NOR_ and BA_ / BN_ at 1K (was 8K and 4K). Scenes that set a
-  resolution keep it; the 1K-8K toggles are unchanged.
+### Baking: one resolution, 1K by default (2026-09-29)
+- The 1K-8K toggles next to Bake are the only size control: ALB_, NOR_, BA_ and BN_ all
+  bake at it. Work Resolution and the Resolution field in Bake Settings are gone.
+- A texture baked at another size is outdated: BA_ is re-baked first, and a normal map
+  alone at a new size remakes the albedo at that size too. 06 shows "Baked at 8K - bake
+  again for 1K".
+- New scenes default to 1K (was 8K).
+- Fix: a BA_ / BN_ re-bake kept the old packed pixels (packing an already packed image
+  keeps its old data). The bake now goes into a fresh image that takes the old one's place
+  and name.
 
 ### Workflow v4, phases 2-5: steps 0A-07 (2026-09-29)
 - **Setup** panel: **0A. Project from Sides** (settings behind its gear; highlighted while the

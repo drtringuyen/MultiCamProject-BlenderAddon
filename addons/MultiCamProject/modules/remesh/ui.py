@@ -99,11 +99,9 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         row = box.row(align=True)
         row.scale_y = 1.4
         why = bake_ops.source_poll_problem(obj)
-        sizes = row.row(align=True)
-        sizes.ui_units_x = 5
-        sizes.prop(s, "work_resolution", text="")
-        row.operator("multicamproject.bake_from_source", text="04. Bake from Source",
-                     icon='RENDER_STILL')
+        # the size comes from the 1K-8K toggles in 06 (one resolution for every texture)
+        row.operator("multicamproject.bake_from_source",
+                     text=f"04. Bake from Source ({_res(s.resolution)})", icon='RENDER_STILL')
         if why:
             sub = box.row()
             sub.alert = True

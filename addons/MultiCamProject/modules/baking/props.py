@@ -85,14 +85,10 @@ def _nor_sources(self, context):
 
 
 class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
-    work_resolution: IntProperty(
-        name="Work Resolution", default=1024, min=512, max=8192,
-        description="Width and height of BA_ and BN_ (baked from the Bake Source, packed in "
-                    "the .blend - only a layer under the projection, so smaller than ALB_)")
     resolution: IntProperty(
         name="Resolution", default=1024, min=1024, max=16384,
-        description="Width and height of ALB_ and NOR_ in pixels (1K-8K from the toggles "
-                    "next to Bake, the whole scene)")
+        description="Width and height of every baked texture - ALB_, NOR_, BA_ and BN_ - in "
+                    "pixels. The one control: the 1K-8K toggles next to Bake (the whole scene)")
     margin: IntProperty(
         name="Margin at 8K", default=16, min=0, max=256, subtype='PIXEL',
         description="Pixels the bake extends past the UV islands (against seams in mip maps), "

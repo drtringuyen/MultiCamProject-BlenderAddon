@@ -21,16 +21,21 @@ def _object_mode(context):
 
 def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
     """Albedo and/or normal bake for `objs`, one object after the other, with a progress
-    bar. An object with a Bake Source but no current BA_ bakes from its source first.
+    bar. An object with a Bake Source but no current BA_ bakes from its source first; a
+    normal map at another size than the albedo remakes the albedo at that size too.
     Returns (done, [(object name, error)])."""
     wm = context.window_manager
     steps = len(objs) * (int(albedo) + int(nor_source is not None))
     wm.progress_begin(0, max(steps, 1))
     done, failed, step = [], [], 0
     try:
+        res = common.settings(context.scene).resolution
         for obj in objs:
             try:
-                if albedo:
+                # one resolution: a normal map alone at a new size remakes the albedo too
+                with_albedo = albedo or (nor_source is not None
+                                         and common.data(obj).alb_size not in (0, res))
+                if with_albedo:
                     if not common.has_uv_normal(obj):
                         raise RuntimeError(f"no {common.UV_NORMAL}")
                     if engine.needs_source_bake(obj):
@@ -81,7 +86,7 @@ def source_poll_problem(obj):
 
 class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
     """04 Bake from Source: the Bake Source's colors into BA_ and its surface into BN_, on
-    uv_normal at the Work Resolution (Selected to Active, Cage). Packed in the .blend, under
+    uv_normal at the scene's resolution (Selected to Active, Cage). Packed in the .blend, under
     the projection - not the final textures (06 Bake Final makes those)"""
     bl_idname = "multicamproject.bake_from_source"
     bl_label = "Bake from Source"
@@ -349,7 +354,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
-    """Resolution of ALB_ and NOR_ for the whole scene"""
+    """The one resolution of every baked texture (ALB_, NOR_, BA_, BN_), the whole scene"""
     bl_idname = "multicamproject.bake_resolution"
     bl_label = "Bake Resolution"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
@@ -358,8 +363,8 @@ class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, props):
-        return (f"Bake ALB_ and NOR_ at {props.size} x {props.size} px (the whole scene). "
-                "Export expects the textures at this size")
+        return (f"Bake ALB_, NOR_, BA_ and BN_ at {props.size} x {props.size} px (the whole "
+                "scene). Textures baked at another size count as outdated")
 
     def execute(self, context):
         common.settings(context.scene).resolution = self.size
