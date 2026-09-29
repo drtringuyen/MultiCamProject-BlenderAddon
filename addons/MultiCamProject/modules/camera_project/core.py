@@ -454,8 +454,13 @@ def ensure_material(obj):
 # itself: an ID property there would keep a deleted object alive.
 
 def _originals():
-    return {o.multicamproject_bake.source for o in bpy.data.objects
-            if o.type == 'MESH' and hasattr(o, "multicamproject_bake")} - {None}
+    """Remesh originals and picked high polys (every Bake Source): they own no MCP_/MAT_."""
+    out = set()
+    for o in bpy.data.objects:
+        if o.type == 'MESH' and hasattr(o, "multicamproject_bake"):
+            d = o.multicamproject_bake
+            out.update((d.source, getattr(d, "bake_source", None)))
+    return out - {None}
 
 
 def owners(ptr, name_fn):

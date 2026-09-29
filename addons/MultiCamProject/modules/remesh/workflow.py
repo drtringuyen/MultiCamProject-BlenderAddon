@@ -231,8 +231,8 @@ def repair_original(obj):
 
 
 def release_materials(obj):
-    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_ / BA_ / BN_: they belong to the copy now (the
-    copy takes the original's name). Its slots keep MCP_ (no face uses it)."""
+    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_ / BA_ / BN_: they belong to the copy
+    now (the copy takes the original's name). make_copy then drops them from its slots."""
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.material = None
     d = obj.multicamproject_bake
@@ -297,6 +297,7 @@ def make_copy(context, obj):
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.is_setup = False    # no longer a projection object
     release_materials(obj)
+    cp.arrange_slots(obj, [])           # the original keeps only its scan materials
     copy.multicamproject_bake.source = obj
     copy.multicamproject_bake.bake_source = obj
 

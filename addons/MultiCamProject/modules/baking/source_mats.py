@@ -1,5 +1,6 @@
-"""The Bake Source's own materials (the scan's): every material its faces use shows its
-image through a Principled BSDF - image -> Base Color, BSDF -> Material Output Surface.
+"""The Bake Source's own materials (the scan's). Its slots hold only the scan materials
+(no MCP_ / MAT_ - those belong to the low poly), and every material its faces use shows
+its image through a Principled BSDF - image -> Base Color, BSDF -> Material Output Surface.
 Scans often come unlit (image -> Emission -> Output, the BSDF left unconnected); Refresh
 Materials wires them. An Emission node is left in the tree, only disconnected.
 
@@ -65,12 +66,40 @@ def wire(mat):
     return True
 
 
+def addon_slots(src):
+    """The add-on's materials (MCP_, MAT_, MATMCP_) in the source's slots."""
+    return [s.material for s in src.material_slots if s.material is not None and cp._is_ours(s.material)]
+
+
+def strip_slots(src):
+    """Only the scan materials in the source's slots (faces and uv_index follow their
+    material; a face still on MCP_ goes back to its scan material first). Returns the
+    names removed."""
+    gone = [m.name for m in addon_slots(src)]
+    if not gone and all(s.material is not None for s in src.material_slots):
+        return []
+    if src.library or src.mode != 'OBJECT' or cp.shared_mesh(src):
+        return []
+    try:
+        from ..remesh import workflow
+        workflow.repair_original(src)       # faces on MCP_ -> their scan material (uv_index)
+    except ImportError:
+        pass
+    cp.arrange_slots(src, [])               # no head: the scan materials only
+    return gone
+
+
 def problems(obj):
     """[text] for obj's Bake Source materials. Reads only."""
     src = common.data(obj).bake_source
     if src is None or src.type != 'MESH':
         return []
-    return [f"{src.name}: {m.name} - {why}" for m in scan_materials(src) if (why := problem(m))]
+    out = []
+    ours = addon_slots(src)
+    if ours:
+        out.append(f"{src.name}: {', '.join(m.name for m in ours)} in its slots - only the "
+                   "scan materials belong there")
+    return out + [f"{src.name}: {m.name} - {why}" for m in scan_materials(src) if (why := problem(m))]
 
 
 def fix(obj):
@@ -79,6 +108,9 @@ def fix(obj):
     if src is None or src.type != 'MESH' or src.library:
         return []
     out = []
+    gone = strip_slots(src)
+    if gone:
+        out.append(f"source slots: {', '.join(gone)} removed - scan materials only")
     for m in scan_materials(src):
         if wire(m):
             users = sum(1 for o in src.users_scene[0].objects if o.type == 'MESH'

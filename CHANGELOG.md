@@ -3,6 +3,10 @@
 ## Unreleased
 
 ### Refresh Materials checks the Bake Source's materials (2026-09-29)
+- The source keeps only its scan materials: MCP_ / MAT_ (and any other add-on material)
+  leave its slots on Refresh - a face still on MCP_ goes back to its scan material by
+  uv_index. A new Remesh original is stripped the same way, and every Bake Source (also a
+  picked high poly) is treated as an original: material sync never gives it MCP_ / MAT_.
 - Every material the Bake Source's faces use must show its image through a Principled
   BSDF: image -> Base Color, BSDF -> Material Output Surface. The material row lists what
   is off ("Surface comes from Emission, not the Principled BSDF"), Export counts it as a
