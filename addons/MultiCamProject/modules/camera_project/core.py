@@ -413,8 +413,31 @@ def build_material(obj, warnings=None):
     b.link(gn_builder._sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
     if normal is not None:
         b.link(normal, bsdf.inputs["Normal"])
+    # the slot cameras' photos right away: a rebuild (e.g. after Bake from Source) must
+    # not wait for apply_slots
+    fill_cam_images(obj, mat)
     _place(nt, kept)
     return mat
+
+
+def fill_cam_images(obj, mat=None):
+    """CamTex_1..n of MCP_ show the slot cameras' photos (an Image Texture without an image
+    renders pink in Cycles). Returns the slots whose camera has no usable image."""
+    mat = mat or data(obj).material
+    if mat is None or mat.node_tree is None:
+        return []
+    missing = []
+    for i, cam in enumerate(get_slots(data(obj)), 1):
+        tex = mat.node_tree.nodes.get(f"CamTex_{i}")
+        if tex is None or cam is None:
+            continue
+        img = cam_image(cam)
+        if tex.image != img:
+            tex.image = img
+        tex.label = f"Cam {i}: {cam.name}"
+        if img is None or not image_ok(img):
+            missing.append(i)
+    return missing
 
 
 def _baked_ok(nodes, obj):

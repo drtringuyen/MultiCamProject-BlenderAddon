@@ -448,6 +448,10 @@ def bake_albedo(context, obj, progress=None):
             finally:
                 bpy.data.images.remove(src)
         else:
+            missing = cp.fill_cam_images(obj)       # never bake an empty (pink) Cam texture
+            if missing:
+                raise RuntimeError(f"Camera slot(s) {', '.join(map(str, missing))} have no "
+                                   "image - it would bake pink (Reload All / pick the photo)")
             gn_final.set_final(obj, scene, False)
             context.view_layer.update()
             prev = _uv_normal_active(obj)

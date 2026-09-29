@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### Fix: pink in ALB_ after Bake from Source (2026-09-29)
+- Bake from Source rebuilds MCP_ to show the new BA_, and the rebuild left CamTex_1..n
+  without their photos (only apply_slots filled them). An Image Texture without an image
+  renders pink in Cycles, so the projected areas baked pink into ALB_. build_material now
+  fills the slot cameras' photos itself, and Bake Final fills them again before baking -
+  and stops with an error when a slot camera has no usable photo.
+
 ### Refresh Materials checks the Bake Source's materials (2026-09-29)
 - Every material in the source's slots is checked and wired (not only those its faces
   use), against the Material Output Cycles bakes with (All / Cycles target, the active
