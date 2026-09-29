@@ -22,6 +22,11 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     ba_fingerprint: StringProperty(description="State of the mesh and uv_normal at the last "
                                                "Bake from Source")
     ba_size: IntProperty(description="Resolution of the last Bake from Source (0 = never)")
+    ba_far_share: FloatProperty(description="Share of the low poly farther from the source "
+                                            "than the Cage at the last Bake from Source")
+    ba_far_max: FloatProperty(description="Largest low poly - source distance at the last "
+                                          "Bake from Source", unit='LENGTH')
+    ba_fit_cage: FloatProperty(description="Cage that reaches 99% of the low poly", unit='LENGTH')
     last_ba_seconds: FloatProperty()
     material: PointerProperty(
         type=bpy.types.Material, name="Final Material",

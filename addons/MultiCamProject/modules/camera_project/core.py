@@ -1323,6 +1323,65 @@ def slot_layer(slot):
 PAINT_BRUSH = "brushes/essentials_brushes-mesh_vertex.blend/Brush/Paint Hard"
 
 
+def projection_layers(obj, names):
+    """{name: (domain, RGBA buffer)} of what GN-CameraProject computes from the cameras
+    alone (Previous Bake 0), read with the projection on and every modifier after it off -
+    Final hides the projection and GN-Final drops the layers, so reading the evaluated mesh
+    as it is could give nothing (and a blank layer mixes all cameras equally)."""
+    mod = get_modifier(obj)
+    if mod is None or not names:
+        return {}
+    mods = list(obj.modifiers)
+    idx = mods.index(mod)
+    saved = [(m, m.show_viewport) for m in mods]
+    prev = get_input(mod, "Previous Bake")
+    vl = bpy.context.view_layer
+    out = {}
+    try:
+        mod.show_viewport = True
+        for m in mods[idx + 1:]:
+            m.show_viewport = False
+        set_input(mod, "Previous Bake", 0.0)
+        obj.update_tag()
+        vl.update()
+        ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
+        for name in names:
+            src = ev.color_attributes.get(name)
+            if src is not None:
+                buf = np.empty(len(src.data) * 4, dtype=np.float32)
+                src.data.foreach_get("color", buf)
+                out[name] = (src.domain, buf)
+    finally:
+        for m, v in saved:
+            m.show_viewport = v
+        set_input(mod, "Previous Bake", prev)
+        obj.update_tag()
+        vl.update()
+    return out
+
+
+def reset_camera_mix(obj):
+    """VCMix / VCMix2 R, G, B (which camera shows where) from the cameras again; the alphas
+    (the blend mask: projected or baked) stay. Object Mode. Returns the layers reset."""
+    me = obj.data
+    names = [n for n in gn_builder.LAYERS if me.color_attributes.get(n) is not None]
+    fresh = projection_layers(obj, names)
+    done = []
+    for name in names:
+        a = me.color_attributes[name]
+        got = fresh.get(name)
+        if got is None or got[0] != a.domain or len(got[1]) != len(a.data) * 4:
+            continue
+        cur = np.empty(len(a.data) * 4, dtype=np.float32)
+        a.data.foreach_get("color", cur)
+        new = got[1].copy()
+        new[3::4] = cur[3::4]
+        a.data.foreach_set("color", new)
+        done.append(name)
+    obj.update_tag()
+    return done
+
+
 def ensure_paint_layer(obj, layer="VCMix"):
     """Painting edits the mesh's own VCMix / VCMix2 - the layers Previous Bake blends in,
     since the modifier recomputes them. Without one (never baked), each starts as a copy
@@ -1334,21 +1393,16 @@ def ensure_paint_layer(obj, layer="VCMix"):
     # modifier shows before adding anything to the mesh
     missing = [n for n in gn_builder.LAYERS[:1 + (slot_count(data(obj)) > 3)]
                if me.color_attributes.get(n) is None]
-    copies = {}
-    if missing:
-        ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data
-        for name in missing:
-            src = ev.color_attributes.get(name)
-            if src is not None:
-                buf = np.empty(len(src.data) * 4, dtype=np.float32)
-                src.data.foreach_get("color", buf)
-                copies[name] = (src.domain, buf)
+    copies = projection_layers(obj, missing) if missing else {}
     for name in missing:
         domain, buf = copies.get(name, ('CORNER', None))
         new = me.color_attributes.new(name, 'FLOAT_COLOR', domain)
         if buf is not None and len(buf) == len(new.data) * 4:
             new.data.foreach_set("color", buf)
             info.append(f"{name} copied into the mesh to paint on")
+        else:
+            info.append(f"{name}: the projection could not be read (a live Decimate?) - "
+                        "Reset Camera Mix after applying it")
     base = me.color_attributes.get(layer)
     me.color_attributes.active_color = base
     mod = get_modifier(obj)

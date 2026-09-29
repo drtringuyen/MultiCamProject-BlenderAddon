@@ -84,6 +84,26 @@ def source_poll_problem(obj):
     return ""
 
 
+class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
+    """Fit Cage: the Cage (scene-wide) to what reaches 99% of the active low poly, measured
+    at its last Bake from Source. Then bake from source again"""
+    bl_idname = "multicamproject.fit_cage"
+    bl_label = "Fit Cage"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and common.data(obj).ba_fit_cage > 0
+
+    def execute(self, context):
+        d = common.data(context.active_object)
+        s = common.settings(context.scene)
+        s.cage_extrusion = d.ba_fit_cage
+        self.report({'INFO'}, f"Cage {s.cage_extrusion:.3f} m - bake from source again")
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
     """04 Bake from Source: the Bake Source's colors into BA_ and its surface into BN_, on
     uv_normal at the scene's resolution (Selected to Active, Cage). Packed in the .blend, under
@@ -415,7 +435,8 @@ class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource,MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
+_classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
+            MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
             MULTICAMPROJECT_OT_MaterialRefresh)

@@ -106,6 +106,18 @@ def ensure_stack(obj, applied_ok=True):
 APPLIED_KEY = "multicamproject_decimated"   # on the object: the Decimate was applied (03)
 
 
+def clear_custom_normals(obj):
+    """A low poly keeps no custom normals: the scan's, carried through Decimate / Dyntopo,
+    point anywhere - Cycles shades and aims the Bake from Source rays with them. Object
+    Mode. Returns True when there were some."""
+    if obj.type != 'MESH' or not obj.data.has_custom_normals or obj.mode != 'OBJECT':
+        return False
+    with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj],
+                                   selected_editable_objects=[obj]):
+        bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    return not obj.data.has_custom_normals
+
+
 def apply_decimate(context, obj):
     """03: apply the Decimate (the stack before it is empty). Returns (faces before, after)."""
     dec = decimate_modifier(obj)
@@ -120,6 +132,7 @@ def apply_decimate(context, obj):
     with context.temp_override(object=obj, active_object=obj):
         bpy.ops.object.modifier_apply(modifier=dec.name)
     obj[APPLIED_KEY] = True
+    clear_custom_normals(obj)
     return before, len(obj.data.polygons)
 
 
@@ -150,6 +163,7 @@ def use_existing(context, low, high):
     if low == high or high.type != 'MESH':
         raise RuntimeError("Pick another mesh as the high poly")
     low.multicamproject_bake.bake_source = high
+    clear_custom_normals(low)
     if low.vertex_groups.get(VG_PROTECT) is None:
         low.vertex_groups.new(name=VG_PROTECT)
     try:
@@ -308,6 +322,7 @@ def make_copy(context, obj):
     obj.hide_set(True)
 
     ensure_stack(copy)
+    clear_custom_normals(copy)
     if module_manager.is_loaded("camera_project") and was_setup:
         warnings += cp.setup(copy, scene)       # 0B came first: the copy projects too
     if module_manager.is_loaded("baking"):

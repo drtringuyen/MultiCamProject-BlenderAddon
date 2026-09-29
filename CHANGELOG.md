@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### Fix: broken-looking bakes on a low poly (2026-09-29)
+- **All cameras averaged:** the paint layers were copied from the evaluated mesh, which
+  in Final has no projection (GN-CameraProject off, GN-Final drops the layers) - they
+  came out white, R = G = B = 1, an even mix of every camera. They are now read with the
+  projection on, from the cameras alone. **Reset Camera Mix** (05, next to All Projected /
+  All Baked) puts the camera weights back and keeps the mask.
+- **Custom normals:** a low poly inherited the scan's custom normals, which Decimate /
+  Dyntopo leave pointing anywhere - Cycles shades with them and aims the Bake from Source
+  rays with them. They are cleared on the Remesh copy, after Apply Decimate, on Use
+  existing high poly and at every Bake from Source.
+- **Cage:** Bake from Source measures how far the low poly is from the source. When more
+  than 2% is beyond the Cage, 04 says so and **Fit Cage** sets it to what reaches 99%.
+
 ### Decimate Brush button (2026-09-29)
 - Cutting & Modelling, below 01: **Decimate Brush (Density)** - Sculpt Mode, Blender's
   Density brush (Sculpt brushes > Other), Dyntopo switched on (Blender's own toggle, so it

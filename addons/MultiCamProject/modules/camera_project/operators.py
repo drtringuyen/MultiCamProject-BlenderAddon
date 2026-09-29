@@ -677,6 +677,28 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_ResetCameraMix(bpy.types.Operator):
+    """Reset Camera Mix: which camera shows where (VCMix / VCMix2 R, G, B) from the cameras
+    again - the blend mask (projected / baked, the alphas) stays. For a mix that shows all
+    cameras averaged, or after a mesh edit"""
+    bl_idname = "multicamproject.reset_camera_mix"
+    bl_label = "Reset Camera Mix"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _setup_poll(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        done = core.reset_camera_mix(obj)
+        if not done:
+            self.report({'WARNING'}, "Nothing reset (no painted layers, or a live Decimate)")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Camera mix reset: {', '.join(done)} (mask kept)")
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
     """Bake the camera mixture: apply the projection modifier (UV_cam + VCMix go into the
     mesh) and re-add it with the same settings, so the baked mixture becomes the base for
@@ -835,6 +857,7 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
 _classes = (
     MULTICAMPROJECT_OT_Setup,
     MULTICAMPROJECT_OT_MaskFill,
+    MULTICAMPROJECT_OT_ResetCameraMix,
     MULTICAMPROJECT_OT_AutoPick,
     MULTICAMPROJECT_OT_CheckSlots,
     MULTICAMPROJECT_OT_MeasureCoverage,

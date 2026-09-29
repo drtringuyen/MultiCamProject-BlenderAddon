@@ -138,6 +138,12 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 warn = box.row()
                 warn.alert = True
                 warn.label(text="Mesh or uv_normal changed - bake from source again", icon='ERROR')
+            if d.ba_far_share > 0.02 and d.ba_fit_cage > s.cage_extrusion:
+                row = box.row(align=True)
+                row.alert = True
+                row.label(text=f"{d.ba_far_share:.0%} beyond the Cage (up to {d.ba_far_max:.2f} m)",
+                          icon='ERROR')
+                row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
 
 
 def register():

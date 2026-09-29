@@ -349,6 +349,12 @@ def bake_from_source(context, obj, progress=None):
     t0 = time.perf_counter()
     src = d.bake_source
     size = s.resolution         # the one resolution: BA_ / BN_ match ALB_ / NOR_
+    try:
+        from ..remesh import workflow
+        workflow.clear_custom_normals(obj)      # they would aim the rays anywhere
+    except ImportError:
+        pass
+    d.ba_far_share, d.ba_far_max, d.ba_fit_cage = source_distance(obj, src)
     was_final = gn_final.is_final(obj)
     ba = _work_image(common.ba_name(obj), size, 'sRGB')
     bn = _work_image(common.bn_name(obj), size, 'Non-Color')
@@ -390,6 +396,31 @@ def bake_from_source(context, obj, progress=None):
     if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
         cp.build_material(obj)          # the BAKED frame shows the new BA_ / BN_
     return d.last_ba_seconds
+
+
+def source_distance(obj, src, samples=4000):
+    """(share farther than the Cage, largest distance, the Cage that reaches 99%) from the
+    low poly's vertices to the source's surface. Rays start Cage outside the low poly: a
+    part farther away than that misses the source (black in BA_) or hits the wrong side."""
+    from mathutils.bvhtree import BVHTree
+    s = common.settings(bpy.context.scene)
+    dg = bpy.context.evaluated_depsgraph_get()
+    tree = BVHTree.FromObject(src.evaluated_get(dg), dg)
+    me = obj.data
+    n = len(me.vertices)
+    if not n:
+        return 0.0, 0.0, s.cage_extrusion
+    co = np.empty(n * 3, np.float32)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)[np.linspace(0, n - 1, min(samples, n)).astype(int)]
+    m = np.array(src.matrix_world.inverted() @ obj.matrix_world, np.float32)
+    co = co @ m[:3, :3].T + m[:3, 3]
+    dist = np.array([(h[3] if (h := tree.find_nearest(p))[0] is not None else 1e9)
+                     for p in co.tolist()], np.float32)
+    scale = max(src.matrix_world.to_scale())        # the source's local units -> world
+    dist *= scale
+    return (float((dist > s.cage_extrusion).mean()), float(dist.max()),
+            float(np.percentile(dist, 99)) * 1.1)
 
 
 def needs_source_bake(obj):

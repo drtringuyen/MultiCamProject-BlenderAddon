@@ -67,6 +67,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             sub.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')
         row.operator("multicamproject.mask_fill", text="", icon='CAMERA_DATA').value = 1.0
         row.operator("multicamproject.mask_fill", text="", icon='TEXTURE').value = 0.0
+        row.operator("multicamproject.reset_camera_mix", text="", icon='LOOP_BACK')
 
     LABEL_UNITS = 2.6      # width of the Folder / Clip / Blend label column
     MODE_SPLIT = 0.66      # Clip | Mode and Blend | Occlusion share this split
