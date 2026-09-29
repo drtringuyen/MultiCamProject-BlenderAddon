@@ -354,7 +354,7 @@ class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
     bl_label = "Bake Resolution"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
 
-    size: bpy.props.IntProperty(default=8192)
+    size: bpy.props.IntProperty(default=1024)
 
     @classmethod
     def description(cls, context, props):

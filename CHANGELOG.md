@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Baking: 1K by default (2026-09-29)
+- New scenes bake ALB_ / NOR_ and BA_ / BN_ at 1K (was 8K and 4K). Scenes that set a
+  resolution keep it; the 1K-8K toggles are unchanged.
+
 ### Workflow v4, phases 2-5: steps 0A-07 (2026-09-29)
 - **Setup** panel: **0A. Project from Sides** (settings behind its gear; highlighted while the
   scene has no camera; runs 0B after), **0B. Setup Camera Projection** (off without cameras),
