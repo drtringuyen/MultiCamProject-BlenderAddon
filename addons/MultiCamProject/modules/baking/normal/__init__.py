@@ -9,7 +9,6 @@ import bpy
 from .. import common, engine, gn_final as final, material
 from . import ai, highpass, pngio
 
-PREVIEW = 2048
 LABELS = {'HIGHPASS': "High-pass", 'MESH': "Bake from mesh", 'BLEND': "Mesh + Albedo",
           'AI': "AI"}
 
@@ -68,14 +67,15 @@ def times(d):
     return sorted(out, key=lambda t: (-t[1], t[0]))
 
 
-def generate(context, obj, source, preview=False):
-    """Make NOR_<name> with `source`, save it, put it into MAT_. Returns the seconds."""
+def generate(context, obj, source):
+    """Make NOR_<name> with `source` at the scene's resolution, save it, put it into MAT_.
+    Returns the seconds."""
     from . import blend, mesh_bake
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
     was_final = final.is_final(obj)
-    size = min(PREVIEW, s.resolution) if preview else s.resolution
+    size = s.resolution
     t0 = time.perf_counter()
     try:
         if source == 'HIGHPASS':

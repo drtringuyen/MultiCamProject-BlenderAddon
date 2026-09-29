@@ -59,11 +59,12 @@ def _nor_sources(self, context):
 class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
     resolution: IntProperty(
         name="Resolution", default=8192, min=1024, max=16384,
-        description="Width and height of ALB_ and NOR_ in pixels")
+        description="Width and height of ALB_ and NOR_ in pixels (1K-8K from the toggles "
+                    "next to Bake, the whole scene)")
     margin: IntProperty(
-        name="Margin", default=16, min=0, max=256, subtype='PIXEL',
-        description="Pixels the bake extends past the UV islands (against seams in mip maps). "
-                    "16 at 8K")
+        name="Margin at 8K", default=16, min=0, max=256, subtype='PIXEL',
+        description="Pixels the bake extends past the UV islands (against seams in mip maps), "
+                    "at 8K - scaled with the resolution: 16 at 8K = 8 at 4K = 2 at 1K")
     device: EnumProperty(
         name="Device", default='GPU',
         items=(('GPU', "GPU", "Bake on the GPU set in Preferences > System (CPU if none)"),
@@ -90,13 +91,11 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
     nor_strength: FloatProperty(name="Strength", default=2.0, min=0.0, soft_max=20.0,
                                 description="Height of the relief read from the albedo")
     nor_radius: IntProperty(name="Radius", default=24, min=1, soft_max=256, subtype='PIXEL',
-                            description="High-pass radius in pixels at full resolution: details "
-                                        "smaller than this become relief, larger shading is ignored")
+                            description="High-pass radius in pixels at 8K (scaled with the "
+                                        "resolution): details smaller than this become relief, "
+                                        "larger shading is ignored")
     nor_invert: BoolProperty(name="Invert", default=False,
                              description="Dark = raised instead of dark = recessed")
-    nor_preview_2k: BoolProperty(name="Preview at 2K", default=False,
-                                 description="Make the normal map at 2048 px to tune the settings "
-                                             "quickly (the file is overwritten by the full-size run)")
     hp_object: PointerProperty(
         type=bpy.types.Object, name="High Poly", poll=lambda self, o: o.type == 'MESH',
         description="Mesh whose surface detail is baked onto the object (Bake from mesh)")

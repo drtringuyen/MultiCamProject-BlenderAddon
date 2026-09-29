@@ -19,7 +19,7 @@ def _object_mode(context):
     return context.mode == 'OBJECT'
 
 
-def bake_objects(context, objs, albedo=True, nor_source=None, preview=False):
+def bake_objects(context, objs, albedo=True, nor_source=None):
     """Albedo and/or normal bake for `objs`, one object after the other, with a progress
     bar. Returns (done, [(object name, error)])."""
     wm = context.window_manager
@@ -39,7 +39,7 @@ def bake_objects(context, objs, albedo=True, nor_source=None, preview=False):
                     why = normal.problem(obj, context.scene, nor_source)
                     if why:
                         raise RuntimeError(why)
-                    normal.generate(context, obj, nor_source, preview)
+                    normal.generate(context, obj, nor_source)
                     step += 1
                     wm.progress_update(step)
                 done.append(obj)
@@ -147,8 +147,7 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
     def execute(self, context):
         s = common.settings(context.scene)
         objs = scope_objects(context, self.scope)
-        done, failed = bake_objects(context, objs, albedo=False, nor_source=s.nor_source,
-                                    preview=s.nor_preview_2k)
+        done, failed = bake_objects(context, objs, albedo=False, nor_source=s.nor_source)
         _report(self, done, failed, "Normal map")
         return {'FINISHED'} if done else {'CANCELLED'}
 
@@ -246,7 +245,7 @@ class MULTICAMPROJECT_OT_BakeSetupAI(bpy.types.Operator):
 
 class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
     """Bake the selected meshes with the options above: Albedo, Normal or Both, the normal
-    map with the chosen method (Preview at 2K when on). Each object ends in Final"""
+    map with the chosen method, at the resolution of the 1K-8K toggles. Each object ends in Final"""
     bl_idname = "multicamproject.bake"
     bl_label = "Bake"
     bl_options = {'REGISTER', 'UNDO'}
@@ -278,15 +277,32 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
         objs = common.selected_meshes(context)
         albedo = s.bake_what in {'ALBEDO', 'BOTH'}
         src = s.nor_source if s.bake_what in {'NORMAL', 'BOTH'} else None
-        done, failed = bake_objects(context, objs, albedo=albedo, nor_source=src,
-                                    preview=s.nor_preview_2k)
+        done, failed = bake_objects(context, objs, albedo=albedo, nor_source=src)
         _report(self, done, failed, "Baked")
         return {'FINISHED'} if done else {'CANCELLED'}
 
 
+class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
+    """Resolution of ALB_ and NOR_ for the whole scene"""
+    bl_idname = "multicamproject.bake_resolution"
+    bl_label = "Bake Resolution"
+    bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
+
+    size: bpy.props.IntProperty(default=8192)
+
+    @classmethod
+    def description(cls, context, props):
+        return (f"Bake ALB_ and NOR_ at {props.size} x {props.size} px (the whole scene). "
+                "Export expects the textures at this size")
+
+    def execute(self, context):
+        common.settings(context.scene).resolution = self.size
+        return {'FINISHED'}
+
+
 _classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
-            MULTICAMPROJECT_OT_BakeSetupAI)
+            MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution)
 
 
 def register():

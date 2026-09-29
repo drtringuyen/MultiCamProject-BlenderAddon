@@ -137,7 +137,7 @@ def configure(scene, bake_type):
     b = scene.render.bake
     b.target = 'IMAGE_TEXTURES'
     b.use_clear = True
-    b.margin = s.margin
+    b.margin = common.margin_px(s)
     b.margin_type = 'EXTEND'
     b.use_selected_to_active = False
     if bake_type == 'DIFFUSE':
@@ -227,7 +227,8 @@ def bake_albedo(context, obj, progress=None):
                 configure(scene, 'DIFFUSE')
                 with context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
                                            selected_editable_objects=[obj]):
-                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'}, margin=s.margin,
+                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
+                                        margin=common.margin_px(s),
                                         use_clear=True, target='IMAGE_TEXTURES',
                                         uv_layer=common.UV_NORMAL)
         else:
@@ -240,7 +241,8 @@ def bake_albedo(context, obj, progress=None):
                 sel = [obj, twin]
                 with context.temp_override(active_object=obj, object=obj, selected_objects=sel,
                                            selected_editable_objects=sel):
-                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'}, margin=s.margin,
+                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
+                                        margin=common.margin_px(s),
                                         use_clear=True, target='IMAGE_TEXTURES',
                                         use_selected_to_active=True,
                                         cage_extrusion=s.cage_extrusion,
@@ -295,7 +297,7 @@ def bake_normal_from_mesh(context, obj, source, img):
             with context.temp_override(active_object=obj, object=obj,
                                        selected_objects=[obj, source],
                                        selected_editable_objects=[obj, source]):
-                bpy.ops.object.bake(type='NORMAL', margin=s.margin, use_clear=True,
+                bpy.ops.object.bake(type='NORMAL', margin=common.margin_px(s), use_clear=True,
                                     use_selected_to_active=True, cage_extrusion=s.cage_extrusion,
                                     normal_space='TANGENT', target='IMAGE_TEXTURES',
                                     uv_layer=common.UV_NORMAL)

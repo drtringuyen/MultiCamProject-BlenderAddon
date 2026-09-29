@@ -6,6 +6,8 @@ import bpy
 UV_NORMAL = "uv_normal"
 COLOR = "Color"
 CP_MOD = "GN-CameraProject"
+RESOLUTIONS = (1024, 2048, 4096, 8192)      # the toggles next to Bake
+REFERENCE = 8192        # margin and high-pass radius are set at 8K, scaled to the resolution
 
 
 def data(obj):
@@ -14,6 +16,11 @@ def data(obj):
 
 def settings(scene):
     return scene.multicamproject_bake_settings
+
+
+def margin_px(s):
+    """The bake margin at the scene's resolution (Margin is set at 8K)."""
+    return max(1, round(s.margin * s.resolution / REFERENCE)) if s.margin else 0
 
 
 def alb_name(obj):

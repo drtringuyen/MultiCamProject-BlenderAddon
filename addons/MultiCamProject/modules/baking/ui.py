@@ -94,8 +94,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             info.label(text=f"NOR {_res(d.nor_size)}  ·  {label}  ·  {d.last_nor_seconds:.1f} s",
                        icon='NORMALS_FACE')
             if d.alb_size and d.nor_size != d.alb_size:
-                info.label(text="Normal map is a preview - make it again at full size",
-                           icon='INFO')
+                info.label(text="ALB and NOR sizes differ - bake again", icon='INFO')
         # earlier normal map runs (other methods / sizes) to compare the times with
         current = (normal.LABELS.get(d.nor_source_used, d.nor_source_used), d.nor_size)
         others = [r for r in normal.times(d) if (r[0], r[1]) != current]
@@ -113,13 +112,19 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
     @staticmethod
     def _draw_bake_button(layout, s):
-        """One Bake for everything the options say, the bake settings' gear at its end."""
+        """[1K][2K][4K][8K] (the whole scene), one Bake for everything the options say, the
+        bake settings' gear at its end."""
         parts = {'ALBEDO': "Albedo", 'NORMAL': "Normal", 'BOTH': "Albedo + Normal"}[s.bake_what]
         if s.bake_what != 'ALBEDO':
-            parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)}"
-            parts += ", 2K preview)" if s.nor_preview_2k else ")"
+            parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)})"
         row = layout.row(align=True)
         row.scale_y = 1.5
+        sizes = row.row(align=True)
+        sizes.ui_units_x = 6
+        for n in common.RESOLUTIONS:
+            sizes.operator("multicamproject.bake_resolution", text=_res(n),
+                           depress=s.resolution == n).size = n
+        row.separator(factor=0.5)
         row.operator("multicamproject.bake", text=f"Bake {parts}", icon='RENDER_STILL')
         row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')
 
@@ -149,18 +154,15 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
         if not ai:
             row.menu("MULTICAMPROJECT_MT_normal_method", text=normal.LABELS.get(src, src))
 
-        # the method's settings; Preview at 2K always ends the last row
+        # the method's settings
         opts = col.column(align=True)
         mesh = src in {'MESH', 'BLEND'}
         if src in {'HIGHPASS', 'BLEND'}:
             row = opts.row(align=True)
             row.prop(s, "nor_strength", text="Strength")
             row.prop(s, "nor_radius", text="Radius")
-            row = opts.row(align=True)
-            row.prop(s, "nor_invert", text="Invert", toggle=True)
-            if not mesh:
-                row.prop(s, "nor_preview_2k", text="Preview at 2K", toggle=True)
-        if mesh:        # High Poly | Cage | Smooth | Iterations | 2K - one row
+            opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
+        if mesh:        # High Poly | Cage | Smooth | Iterations - one row
             row = opts.row(align=True)
             remesh_src = common.data(obj).source if obj is not None and obj.type == 'MESH' else None
             if remesh_src is not None:      # the Remesh original wins over the scene's pick
@@ -172,9 +174,6 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
             r = row.row(align=True)
             r.active = s.smooth_source
             r.prop(s, "smooth_iterations", text="")
-            row.prop(s, "nor_preview_2k", text="2K", toggle=True)
-        elif ai:
-            opts.row(align=True).prop(s, "nor_preview_2k", text="Preview at 2K", toggle=True)
         if obj is not None and obj.type == 'MESH':
             why = normal.problem(obj, context.scene, src)
             if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
@@ -198,6 +197,7 @@ class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
         col.prop(s, "output_dir", text="Folder")
         col.prop(s, "resolution")
         col.prop(s, "margin")
+        col.label(text=f"= {common.margin_px(s)} px at {_res(s.resolution)}")
         col.prop(s, "device")
         col.prop(s, "anti_alias")
         col.prop(s, "roughness")

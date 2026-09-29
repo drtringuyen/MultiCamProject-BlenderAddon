@@ -63,7 +63,7 @@ def make_uv_normal(context, obj):
                 bpy.ops.mesh.select_all(action='SELECT')
                 # margin: twice the bake margin, in UV units
                 bpy.ops.uv.smart_project(angle_limit=SMART_UV_ANGLE,
-                                         island_margin=2.0 * s.margin / s.resolution,
+                                         island_margin=2.0 * common.margin_px(s) / s.resolution,
                                          area_weight=0.0, correct_aspect=True,
                                          scale_to_bounds=False)
             finally:

@@ -7,6 +7,8 @@ outside the islands the map is flat.
 """
 import numpy as np
 
+from ..common import REFERENCE
+
 CHUNK = 512         # rows/columns blurred at once in float64
 
 
@@ -64,7 +66,7 @@ def high_pass(lum, mask, radius):
 
 
 def normals_from_height(hp, mask, strength, invert):
-    """Sobel slopes (per UV unit, so a 2K preview matches the 8K result) -> RGB 0..1,
+    """Sobel slopes (per UV unit, so every resolution looks the same) -> RGB 0..1,
     OpenGL (Y+): the rows are bottom-up, so +row = +V."""
     size = hp.shape[0]
     p = np.pad(hp, 1, mode="edge")
@@ -93,7 +95,7 @@ def generate(alb_img, size, settings):
     lum, mask = luminance_and_mask(rgb, size)
     del rgb
     full = max(alb_img.size[0], 1)
-    radius = max(1, round(settings.nor_radius * size / max(settings.resolution, 1)))
+    radius = max(1, round(settings.nor_radius * size / REFERENCE))
     hp = high_pass(lum, mask, radius)
     del lum
     if full < size:     # albedo smaller than asked (e.g. an old bake): upsample nearest
