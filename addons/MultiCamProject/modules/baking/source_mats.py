@@ -1,5 +1,5 @@
 """The Bake Source's own materials (the scan's). Its slots hold only the scan materials
-(no MCP_ / MAT_ - those belong to the low poly), and every material its faces use shows
+(no MCP_ / MAT_ - those belong to the low poly), and every material in its slots shows
 its image through a Principled BSDF - image -> Base Color, BSDF -> Material Output Surface.
 Scans often come unlit (image -> Emission -> Output, the BSDF left unconnected); Refresh
 Materials wires them. An Emission node is left in the tree, only disconnected.
@@ -11,8 +11,12 @@ from . import common, engine
 
 
 def _output(nt):
-    return (next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL' and n.is_active_output), None)
-            or next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL'), None))
+    """The Material Output Cycles renders (and bakes) with: the active one among those for
+    All / Cycles, else the first of those, else any."""
+    outs = [n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL']
+    cyc = [n for n in outs if n.target in {'ALL', 'CYCLES'}]
+    return (next((n for n in cyc if n.is_active_output), None) or (cyc[0] if cyc else None)
+            or (outs[0] if outs else None))
 
 
 def _image_color(nt):
@@ -26,14 +30,15 @@ def _image_color(nt):
 
 
 def scan_materials(src):
-    """The materials the source's faces use, without the add-on's own."""
-    return [m for m in engine._used_materials(src) if not cp._is_ours(m)]
+    """Every material in the source's slots, without the add-on's own."""
+    return list(dict.fromkeys(s.material for s in src.material_slots
+                              if s.material is not None and not cp._is_ours(s.material)))
 
 
 def problem(mat):
     """Why `mat` is not wired image -> Principled BSDF -> Output ('' = it is)."""
     if not mat.use_nodes or mat.node_tree is None:
-        return "no nodes"
+        return "does not use nodes"
     nt = mat.node_tree
     out = _output(nt)
     if out is None:
@@ -50,11 +55,17 @@ def problem(mat):
 
 
 def wire(mat):
-    """Image -> Principled BSDF Base Color -> Output Surface. Returns True when changed."""
-    if problem(mat) in ("", "no nodes", "no Material Output"):
+    """Image -> Principled BSDF Base Color -> Output Surface. Returns True when changed.
+    A material without nodes or without an Output gets them (Principled + Output)."""
+    if not problem(mat):
         return False
+    mat.use_nodes = True
     nt = mat.node_tree
     out = _output(nt)
+    if out is None:
+        out = nt.nodes.new("ShaderNodeOutputMaterial")
+        out.location = (300, 0)
+    out.is_active_output = True
     color = _image_color(nt)
     bsdf = next((n for n in nt.nodes if n.type == 'BSDF_PRINCIPLED'), None)
     if bsdf is None:

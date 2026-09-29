@@ -3,6 +3,9 @@
 ## Unreleased
 
 ### Refresh Materials checks the Bake Source's materials (2026-09-29)
+- Every material in the source's slots is checked and wired (not only those its faces
+  use), against the Material Output Cycles bakes with (All / Cycles target, the active
+  one); a material without nodes or an Output gets them.
 - The source keeps only its scan materials: MCP_ / MAT_ (and any other add-on material)
   leave its slots on Refresh - a face still on MCP_ goes back to its scan material by
   uv_index. A new Remesh original is stripped the same way, and every Bake Source (also a
