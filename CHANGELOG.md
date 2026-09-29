@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### 05: Clear Alpha next to Erase (2026-09-29)
+- The All Projected / All Baked / Reset Camera Mix icons on the mode line are gone (only
+  the VCMix layers, painted, decide the mix).
+- New **Clear Alpha** (X) next to each camera's Erase: VCMix and VCMix2 alpha = 0 on the
+  whole object at once. Works from Object, Vertex Paint, Edit and Sculpt Mode.
+
 ### Fix: broken-looking bakes on a low poly (2026-09-29)
 - **All cameras averaged:** the paint layers were copied from the evaluated mesh, which
   in Final has no projection (GN-CameraProject off, GN-Final drops the layers) - they

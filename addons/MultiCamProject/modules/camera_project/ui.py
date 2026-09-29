@@ -56,18 +56,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
     @staticmethod
     def _draw_mode(layout, obj):
-        """What the Processing material blends, and the whole-object mask buttons."""
+        """What the Processing material blends (the VCMix layers decide where)."""
         ba, _bn = core.baked_images(obj)
         row = layout.row(align=True)
-        sub = row.row(align=True)
-        sub.active = False
+        row.active = False
         if ba is not None:
-            sub.label(text="Mix: projection over BA_ (by the mask)", icon='NODE_MATERIAL')
+            row.label(text="Mix: projection over BA_ (by the mask)", icon='NODE_MATERIAL')
         else:
-            sub.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')
-        row.operator("multicamproject.mask_fill", text="", icon='CAMERA_DATA').value = 1.0
-        row.operator("multicamproject.mask_fill", text="", icon='TEXTURE').value = 0.0
-        row.operator("multicamproject.reset_camera_mix", text="", icon='LOOP_BACK')
+            row.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')
 
     LABEL_UNITS = 2.6      # width of the Folder / Clip / Blend label column
     MODE_SPLIT = 0.66      # Clip | Mode and Blend | Occlusion share this split
@@ -249,6 +245,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             sub.enabled = mode != 'FLOOD' or flood
             op = sub.operator("multicamproject.cam_paint", text="", **_icon(icon))
             op.camera, op.mode = cam.name, mode
+        # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
+        tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
         row = split.row(align=True)
         row.scale_y = TOOL_SCALE                 # same height: bottoms line up with the buttons
         row.prop(it, "shift", index=0, text="X", slider=True)

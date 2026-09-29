@@ -639,23 +639,24 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, props):
-        return ("All Projected: VCMix and VCMix2 alpha = 1 everywhere - the cameras show"
-                if props.value >= 0.5 else
-                "All Baked: VCMix and VCMix2 alpha = 0 everywhere - BA_ (baked from the Bake "
-                "Source) shows")
+        return ("VCMix and VCMix2 alpha = 1 on the whole object - the projection shows "
+                "everywhere" if props.value >= 0.5 else
+                "Clear Alpha: VCMix and VCMix2 alpha = 0 on the whole object - the projection "
+                "is erased everywhere (Erase on the whole mesh at once)")
 
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return (obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
-                and context.mode in {'OBJECT', 'PAINT_VERTEX'})
+                and context.mode in {'OBJECT', 'PAINT_VERTEX', 'EDIT_MESH', 'SCULPT'})
 
     def execute(self, context):
         import numpy as np
         obj = context.active_object
-        mode = context.mode
-        if obj.mode == 'VERTEX_PAINT':
+        mode = obj.mode
+        if mode == 'VERTEX_PAINT':
             paint_sync.sync(obj)
+        if mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         core.ensure_paint_layer(obj)
         me = obj.data
@@ -670,9 +671,13 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
         st = me.attributes.get(paint_sync.STASH)
         if st is not None:
             st.data.foreach_set("value", np.full(len(st.data), self.value, np.float32))
+        mod = core.get_modifier(obj)
+        if mod is not None and core.get_input(mod, "Previous Bake") < 1.0:
+            core.set_input(mod, "Previous Bake", 1.0)       # the mesh's layers show 1:1
         obj.update_tag()
-        if mode == 'PAINT_VERTEX':
-            bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+        if mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode=mode)
+        if mode == 'VERTEX_PAINT':
             paint_sync.reset(obj)
         return {'FINISHED'}
 
