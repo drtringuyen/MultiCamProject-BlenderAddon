@@ -55,6 +55,29 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                          text="01. Poly Cut & Seams (Sculpt: Ctrl+Click, L)", icon='SCULPTMODE_HLT')
         else:
             row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
+        # the decimate brush: Blender's Density brush, which only works with Dyntopo
+        row = col.row(align=True)
+        brush = context.tool_settings.sculpt.brush if context.mode == 'SCULPT' else None
+        on_density = brush is not None and getattr(brush, "sculpt_brush_type", "") == 'SIMPLIFY'
+        dyn = obj.use_dynamic_topology_sculpting
+        row.operator("multicamproject.remesh_density_brush",
+                     text="Decimate Brush (Density)" + ("  ·  active" if on_density and dyn else ""),
+                     icon='MOD_DECIM', depress=on_density and dyn)
+        if context.mode == 'SCULPT':
+            tog = row.row(align=True)
+            tog.alert = on_density and not dyn          # the brush does nothing without it
+            tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
+                         depress=dyn)
+        if context.mode == 'SCULPT' and dyn:
+            ts = context.tool_settings.sculpt
+            det = col.row(align=True)
+            det.prop(ts, "detail_type_method", text="")
+            if ts.detail_type_method in {'CONSTANT', 'MANUAL'}:
+                det.prop(ts, "constant_detail_resolution", text="Resolution")
+            elif ts.detail_type_method == 'BRUSH':
+                det.prop(ts, "detail_percent", text="Detail")
+            else:
+                det.prop(ts, "detail_size", text="Detail")
         row = col.row(align=True)
         sub = row.row(align=True)
         sub.enabled = in_mesh_mode
@@ -63,9 +86,6 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                      else "02. Set Selected Faces", icon='FACESEL')
         row.operator("multicamproject.remesh_set_faces", text="",
                      icon='FACE_MAPS').action = 'CLEAR_FACE_SETS'
-        tip = layout.column(align=True)
-        tip.active = False
-        tip.label(text="Local clean-up: Density brush (Sculpt ▸ Other, Dyntopo on)", icon='INFO')
 
         # 03: one Decimate (vg_Protect keeps parts), applied before the unwrap
         box = layout.box().column(align=True)

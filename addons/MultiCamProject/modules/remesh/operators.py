@@ -246,6 +246,47 @@ class MULTICAMPROJECT_OT_RemeshEnterTool(bpy.types.Operator):
         return {'FINISHED'}
 
 
+DENSITY_BRUSH = "brushes/essentials_brushes-mesh_sculpt.blend/Brush/Density"
+
+
+def dyntopo_on(obj):
+    return obj is not None and obj.type == 'MESH' and obj.use_dynamic_topology_sculpting
+
+
+class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
+    """Decimate brush: Sculpt Mode with Blender's Density brush (collapses short edges where
+    you paint - Sculpt brushes ▸ Other). It only works with Dyntopo, so Dyntopo is switched
+    on (Blender asks first when that would lose mesh data)"""
+    bl_idname = "multicamproject.remesh_density_brush"
+    bl_label = "Decimate Brush"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and not obj.library
+
+    def invoke(self, context, event):
+        obj = context.active_object
+        if obj.mode != 'SCULPT':
+            bpy.ops.object.mode_set(mode='SCULPT')
+        try:
+            bpy.ops.wm.tool_set_by_id(name="builtin.brush")
+            bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
+                                         relative_asset_identifier=DENSITY_BRUSH)
+        except (RuntimeError, TypeError) as e:
+            self.report({'ERROR'}, f"Density brush not available: {e}")
+            return {'CANCELLED'}
+        if not dyntopo_on(obj):
+            # Blender's own toggle: it warns when Dyntopo would drop mesh data
+            bpy.ops.sculpt.dynamic_topology_toggle('INVOKE_DEFAULT')
+        self.report({'INFO'}, "Density brush: paint to decimate (Dyntopo on)")
+        return {'FINISHED'}
+
+    def execute(self, context):
+        return self.invoke(context, None)
+
+
 def _mouse_ray(context, event):
     region, rv3d = context.region, context.region_data
     if region is None or rv3d is None or region.type != 'WINDOW':
@@ -530,7 +571,8 @@ class MULTICAMPROJECT_OT_RemeshSnap(bpy.types.Operator):
 
 
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
-            MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshPick,
+            MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
+            MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
             MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap)
 

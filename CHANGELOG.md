@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Decimate Brush button (2026-09-29)
+- Cutting & Modelling, below 01: **Decimate Brush (Density)** - Sculpt Mode, Blender's
+  Density brush (Sculpt brushes > Other), Dyntopo switched on (Blender's own toggle, so it
+  warns when mesh data would be lost). In Sculpt Mode a Dyntopo toggle sits next to it
+  (red while Density is active without Dyntopo) and the Dyntopo detail settings below.
+
 ### PolyCut in Sculpt Mode only; Clear all Face Sets (2026-09-29)
 - The PolyCut tool is gone from the Edit Mode toolbar: Edit Mode's L is Blender's Select
   Linked Pick again (and Ctrl+Click extrude to cursor). 01 always goes to Sculpt Mode.
