@@ -17,6 +17,8 @@ ERROR, WARNING, INFO = 'ERROR', 'WARNING', 'INFO'
 # code -> (summary text with {n}, fix operator or None, fix label)
 SUMMARY = {
     'NAME': ("{n} name(s) need renaming", "multicamproject.export_rename", "Rename objects"),
+    'MATERIAL': ("{n} with material problems", "multicamproject.material_refresh",
+                 "Refresh materials"),
     'TRANSFORM': ("{n} transform(s) not applied", "multicamproject.export_fix_transforms",
                   "Fix transforms"),
     'OUTDATED': ("{n} outdated bake(s)", "multicamproject.export_update_outdated",
@@ -51,6 +53,12 @@ def check_names(obj, plan):
             out.append(Issue(obj.name, 'NAME', f"file '{os.path.basename(path)}' should be "
                              f"'{img.name}.png'", WARNING))
     return out
+
+
+def check_materials(obj):
+    """Own MCP_ + MAT_, named after the object, in slots 1-2, wired into the GN modifiers."""
+    from ..baking import matsync
+    return [Issue(obj.name, 'MATERIAL', text, WARNING) for _k, text in matsync.problems(obj)]
 
 
 # ---------------------------------------------------------------- textures folders
@@ -285,7 +293,7 @@ def check_state(obj):
 
 
 def object_issues(obj, scene, plan):
-    return (check_names(obj, plan) + check_uv(obj) + check_color(obj, scene)
+    return (check_names(obj, plan) + check_materials(obj) + check_uv(obj) + check_color(obj, scene)
             + check_transform(obj) + check_mesh(obj) + check_textures(obj, scene)
             + check_state(obj))
 

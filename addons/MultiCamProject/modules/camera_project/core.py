@@ -409,8 +409,7 @@ def build_material(obj, warnings=None):
     """(Re)build MCP_<name> in place. Keeps the Original Scan value and where the nodes
     stand (by name - a node the rebuild adds takes its place from material_layout)."""
     warnings = [] if warnings is None else warnings
-    name = material_name(obj)
-    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
+    mat = ensure_own_material(obj)
     kept = {}
     if mat.use_nodes and mat.get(MAT_VERSION_KEY, 0) >= LAYOUT_VERSION:
         # older builds named their nodes Math.012 etc.: those names mean nothing now
@@ -456,20 +455,150 @@ def _material_ok(mat, n):
 
 
 def ensure_material(obj):
-    """Each object owns MCP_<name>. A duplicated object carries the original's
-    pointer, so a material with another name is not reused."""
-    mat = bpy.data.materials.get(material_name(obj))
+    """Each object owns its MCP_<name> (see ownership below), built for its camera count."""
+    mat = ensure_own_material(obj)
     if not _material_ok(mat, slot_count(data(obj))):
         mat = build_material(obj)
     data(obj).material = mat
     return mat
 
 
-def _move_slot_to_top(obj, index):
-    obj.active_material_index = index
-    with bpy.context.temp_override(object=obj, active_object=obj):
-        for _ in range(index):
-            bpy.ops.object.material_slot_move(direction='UP')   # also remaps the faces
+# ---------------------------------------------------------------- ownership
+# An object owns the MCP_ its multicamproject_cam.material points to (and the MAT_ its
+# multicamproject_bake.material points to). A duplicate (Shift+D) points to the same one:
+# the object named after it wins, else the first by name. Remesh originals and objects in
+# no collection (deleted, not purged yet) never own one. Nothing is stored on the material
+# itself: an ID property there would keep a deleted object alive.
+
+def _originals():
+    return {o.multicamproject_bake.source for o in bpy.data.objects
+            if o.type == 'MESH' and hasattr(o, "multicamproject_bake")} - {None}
+
+
+def owners(ptr, name_fn):
+    """{material: owner object} of every material an object points to through `ptr(obj)`.
+    `name_fn(obj)`: the name that material should have."""
+    skip = _originals()
+    users = {}
+    for o in bpy.data.objects:
+        if o.type != 'MESH' or o.library or o in skip or not o.users_collection:
+            continue
+        m = ptr(o)
+        if m is not None:
+            users.setdefault(m, []).append(o)
+    return {m: next((o for o in objs if name_fn(o) == m.name), None) or min(objs, key=lambda o: o.name)
+            for m, objs in users.items()}
+
+
+def mcp_pointer(obj):
+    d = getattr(obj, "multicamproject_cam", None)
+    m = d.material if d is not None else None
+    return m if m is not None and m.get(MAT_TAG) else None
+
+
+def mat_pointer(obj):
+    d = getattr(obj, "multicamproject_bake", None)
+    m = d.material if d is not None else None
+    return m if m is not None and m.get(BAKED_TAG) else None
+
+
+def baked_name(obj):
+    """MAT_<name> (the baking module's naming scheme when it is there)."""
+    try:
+        from ..baking.common import mat_name
+    except ImportError:
+        return f"{OLD_PREFIX}{obj.name}"
+    return mat_name(obj)
+
+
+def claim_name(idb, want, coll):
+    """Give `idb` the name `want`; an ID already holding it steps aside (<want>_stale)."""
+    if idb.name == want:
+        return
+    other = coll.get(want)
+    if other is not None and other is not idb:
+        other.name = want + "_stale"
+    idb.name = want
+
+
+def own_material(obj):
+    """obj's MCP_: the one it points to when it owns it, else the one named after it that
+    no other object owns. None when it has none (new, or a duplicate's)."""
+    own = owners(mcp_pointer, material_name)
+    m = mcp_pointer(obj)
+    if m is not None and own.get(m) is obj:
+        return m
+    m = bpy.data.materials.get(material_name(obj))
+    if m is not None and m.get(MAT_TAG) and own.get(m) in (None, obj):
+        return m
+    return None
+
+
+def ensure_own_material(obj):
+    """obj's own MCP_, named after it: its own (renamed after the object), a copy of the
+    original's on a duplicate (Original Scan and node layout kept), or a new one."""
+    mat = own_material(obj)
+    if mat is None:
+        src = mcp_pointer(obj)
+        mat = src.copy() if src is not None else bpy.data.materials.new(material_name(obj))
+    mat[MAT_TAG] = True
+    claim_name(mat, material_name(obj), bpy.data.materials)
+    data(obj).material = mat
+    return mat
+
+
+def own_baked(obj):
+    """obj's MAT_ when it owns the one it points to, else None."""
+    m = mat_pointer(obj)
+    return m if m is not None and owners(mat_pointer, baked_name).get(m) is obj else None
+
+
+def shared_mesh(obj):
+    return obj.data.users > 1 and sum(o.data == obj.data for o in bpy.data.objects) > 1
+
+
+def arrange_slots(obj, head):
+    """Material slots = `head` (MCP_, MAT_), then the scan materials in their order. Other
+    add-on materials (a duplicate's, MATMCP_) and empty slots go. The faces' material index
+    and uv_index follow their material. Returns True when the slots changed. A mesh shared
+    by several objects is left alone (its slots are every user's)."""
+    me = obj.data
+    slots = obj.material_slots
+    cur = [s.material for s in slots]
+    scan = []
+    for m in cur:
+        if m is not None and m not in head and not _is_ours(m) and m not in scan:
+            scan.append(m)
+    new = list(head) + scan
+    if cur == new and all(s.link == 'DATA' for s in slots):
+        return False
+    if shared_mesh(obj):
+        return False
+    remap = np.array([new.index(m) if m in new else 0 for m in cur] or [0], dtype=np.int32)
+    n = len(me.polygons)
+    mi = np.empty(n, dtype=np.int32)
+    me.polygons.foreach_get("material_index", mi)
+    mi = remap[np.clip(mi, 0, len(remap) - 1)]
+    attr = me.attributes.get(UV_INDEX)
+    ui = None
+    if attr is not None and attr.domain == 'FACE' and attr.data_type == 'INT':
+        ui = np.empty(n, dtype=np.int32)
+        attr.data.foreach_get("value", ui)
+        inside = (ui >= 0) & (ui < len(cur))
+        ui[inside] = remap[ui[inside]]
+    for s in slots:
+        if s.link == 'OBJECT':
+            s.material = None
+            s.link = 'DATA'
+    me.materials.clear()
+    for m in new:
+        me.materials.append(m)
+    me.polygons.foreach_set("material_index", mi)
+    if ui is not None:
+        me.attributes[UV_INDEX].data.foreach_set("value", ui)
+    me.update()
+    obj.active_material_index = 0
+    return True
 
 
 def _remove_legacy(obj):
@@ -482,31 +611,26 @@ def _remove_legacy(obj):
         bpy.data.node_groups.remove(ng)
 
 
-def _foreign(obj, mat):
-    """Another object's MCP_ material, e.g. on a duplicate that kept the original's."""
-    return mat is not None and mat.get(MAT_TAG) and mat.name != material_name(obj)
+# set by the baking module: obj -> its own MAT_ (made when missing, a duplicate's released)
+BAKED_HOOK = None
+
+
+def head_materials(obj):
+    """The slots every projection object starts with: MCP_, then MAT_ (always, with the
+    baking module; else once it has one)."""
+    baked = BAKED_HOOK(obj) if BAKED_HOOK is not None else own_baked(obj)
+    return [ensure_own_material(obj)] + ([baked] if baked is not None else [])
 
 
 def place_material(obj):
-    """MCP_<name> in slot 1; the other slots move down. A MATMCP_ slot, or a slot holding
-    another object's MCP_, is taken over in place (the MATMCP_ material is deleted)."""
-    name = material_name(obj)
-    mat = bpy.data.materials.get(name) or bpy.data.materials.new(name)
-    mat[MAT_TAG] = True
-    slots = obj.material_slots
-    idx = next((i for i, s in enumerate(slots) if s.material == mat), None)
+    """MCP_<name> in slot 1, MAT_<name> (once baked) in slot 2, the scan materials after
+    them. A MATMCP_ or another object's MCP_/MAT_ leaves the slots (MATMCP_ is deleted).
+    When the slots moved, MCP_ is rebuilt: its scan textures are picked by slot number."""
     legacy = bpy.data.materials.get(LEGACY_PREFIX + obj.name)
-    for i, s in enumerate(slots):
-        if (legacy and s.material == legacy) or _foreign(obj, s.material):
-            if idx is None:
-                s.material, idx = mat, i
-            else:
-                s.material = None
-    if idx is None:
-        obj.data.materials.append(mat)
-        idx = len(slots) - 1
-    if idx:
-        _move_slot_to_top(obj, idx)
+    head = head_materials(obj)
+    mat = head[0]
+    if arrange_slots(obj, head) and mat.node_tree and mat.node_tree.nodes.get(ORIGINAL_SCAN):
+        build_material(obj)
     if legacy and legacy.users == 0:
         bpy.data.materials.remove(legacy)
     obj.active_material_index = 0
@@ -1059,17 +1183,17 @@ def check_slots(obj, scene):
             fixes.append(f"Camera {i}: empty -> {b.name}")
     set_slots(d, slots)
 
-    own = material_name(obj)
-    foreign = sorted({s.material.name for s in obj.material_slots if _foreign(obj, s.material)})
-    if foreign or not any(s.material and s.material.name == own for s in obj.material_slots):
-        place_material(obj)
-        fixes.append(f"Material slot: {', '.join(foreign) or 'missing'} -> {own}")
+    before = [s.material.name if s.material else "" for s in obj.material_slots]
+    mat = place_material(obj)
+    own = mat.name
+    after = [s.material.name if s.material else "" for s in obj.material_slots]
+    if after != before:
+        fixes.append(f"Material slots: {', '.join(before[:3]) or 'none'} -> {', '.join(after[:3])}")
     mod = get_modifier(obj)
     mod_mat = get_input(mod, "Material") if mod else None
-    if mod_mat is not None and mod_mat.name != own:
+    if mod_mat is not None and mod_mat != mat:
         fixes.append(f"Modifier material: {mod_mat.name} -> {own}")
 
-    mat = bpy.data.materials.get(own)
     nodes = mat.node_tree.nodes if mat and mat.node_tree else {}
     for i, cam in enumerate(slots, 1):
         img = cam_image(cam) if cam is not None else None

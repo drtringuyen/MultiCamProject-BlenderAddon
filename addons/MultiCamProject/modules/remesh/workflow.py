@@ -174,6 +174,17 @@ def repair_original(obj):
     return _free_projection_faces(obj)
 
 
+def release_materials(obj):
+    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_: they belong to the copy now (the
+    copy takes the original's name). Its slots keep MCP_ (no face uses it)."""
+    if hasattr(obj, "multicamproject_cam"):
+        obj.multicamproject_cam.material = None
+    d = obj.multicamproject_bake
+    d.material = d.alb_image = d.nor_image = None
+    d.fingerprint = ""
+    d.alb_size = d.nor_size = 0
+
+
 def repair_originals():
     """On load: the originals made before these repairs existed."""
     sources = {o.multicamproject_bake.source for o in bpy.data.objects
@@ -181,6 +192,8 @@ def repair_originals():
     for obj in sources:
         if obj is not None and not any(m.type == 'NODES' for m in obj.modifiers):
             repair_original(obj)
+        if obj is not None and not obj.library:
+            release_materials(obj)
 
 
 def _export_collection(scene):
@@ -221,6 +234,7 @@ def make_copy(context, obj):
     repair_original(obj)                # its own UVs, no face on the projection material
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.is_setup = False    # no longer a projection object
+    release_materials(obj)
     copy.multicamproject_bake.source = obj
     copy.multicamproject_bake.bake_source = obj
 

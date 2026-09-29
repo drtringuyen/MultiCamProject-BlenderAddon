@@ -91,6 +91,10 @@ def run(context, p, log):
     objs = common.export_objects(scene)
     for sev, text in fixes.rename_all(objs, naming.scheme(scene)):
         log(sev, text)
+    from ..baking import matsync
+    for obj in matsync._duplicates(objs) + objs:
+        for text in matsync.sync(obj, scene):
+            log('INFO', f"{obj.name}: {text}")
     for obj in p.transforms:
         why = fixes.fix_transform(obj)
         cache.clear(obj)

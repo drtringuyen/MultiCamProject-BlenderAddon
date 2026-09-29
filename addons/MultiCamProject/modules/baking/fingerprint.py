@@ -73,7 +73,9 @@ def compute(obj, cached=False):
                            and not isinstance(v, str) else v))
         parts.append(_material_images(d.material))     # photos, scan images, Original Scan
     else:
-        parts += [_material_images(s.material) for s in obj.material_slots]
+        # the add-on's own MAT_ (slot 2 once baked) is the result, not an input
+        parts += [_material_images(s.material) for s in obj.material_slots
+                  if not (s.material and s.material.get(cp.BAKED_TAG))]
     return hashlib.sha1(repr(parts).encode()).hexdigest()
 
 

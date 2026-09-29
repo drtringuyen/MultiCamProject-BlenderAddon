@@ -300,9 +300,108 @@ class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
         return {'FINISHED'}
 
 
+last_refresh = {}       # object name -> what the last Refresh fixed (shown in the panel)
+
+
+class MULTICAMPROJECT_OT_MaterialRebuild(bpy.types.Operator):
+    """Rebuild this material of the selected meshes and show it (active slot - the Shader
+    Editor opens on it)"""
+    bl_idname = "multicamproject.material_rebuild"
+    bl_label = "Rebuild Material"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    kind: EnumProperty(items=(('MCP', "Projection", "MCP_<name>: the camera projection"),
+                              ('MAT', "Final", "MAT_<name>: the baked result")))
+
+    @classmethod
+    def description(cls, context, props):
+        if props.kind == 'MCP':
+            return ("Projection material MCP_<name>: rebuild it (cameras, scan textures, "
+                    "Original Scan kept), put it in slot 1 and show it")
+        return ("Final material MAT_<name>: rebuild it (ALB_ + NOR_ on uv_normal), put it in "
+                "slot 2 and show it")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if not _object_mode(context) or obj is None or obj.type != 'MESH':
+            return False
+        return True
+
+    def execute(self, context):
+        from ..camera_project import core as cp
+        from . import material, matsync
+        scene = context.scene
+        objs = common.selected_meshes(context)
+        if context.active_object not in objs:
+            objs.append(context.active_object)
+        done = []
+        for obj in objs:
+            if self.kind == 'MCP':
+                if not matsync.is_projection(obj):
+                    self.report({'WARNING'}, f"{obj.name}: no camera projection (Setup first)")
+                    continue
+                cp.place_material(obj)
+                cp.build_material(obj)
+                cp.apply_slots(obj, scene)
+                mat = cp.data(obj).material
+            else:
+                mat = material.build(obj, scene)
+                if gn_final.get_modifier(obj) is not None:
+                    gn_final.write_inputs(obj, scene)
+            idx = next((i for i, s in enumerate(obj.material_slots) if s.material == mat), None)
+            if idx is not None:
+                obj.active_material_index = idx
+            done.append(mat.name)
+        if done:
+            self.report({'INFO'}, f"Rebuilt {', '.join(done)}")
+        return {'FINISHED'} if done else {'CANCELLED'}
+
+
+class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
+    """Check and fix the materials: every object its own MCP_ (projection) and MAT_ (final),
+    named after it, in slots 1 and 2, wired into GN-CameraProject and GN-Final. A copy
+    (Shift+D) gets its own; materials of deleted objects are removed"""
+    bl_idname = "multicamproject.material_refresh"
+    bl_label = "Refresh Materials"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    scope: EnumProperty(items=SCOPES, default='EXPORT')
+
+    @classmethod
+    def poll(cls, context):
+        return _object_mode(context)
+
+    def execute(self, context):
+        from . import cache, matsync
+        scene = context.scene
+        objs = [o for o in scope_objects(context, self.scope) if matsync.in_scope(o)]
+        if self.scope == 'SELECTED' and context.active_object is not None \
+                and context.active_object not in objs and matsync.in_scope(context.active_object):
+            objs.append(context.active_object)
+        last_refresh.clear()
+        for o in matsync._duplicates(objs):     # copies first: the owners keep theirs
+            last_refresh.setdefault(o.name, []).extend(matsync.sync(o, scene))
+        for t in matsync.sync_names():
+            self.report({'INFO'}, f"Renamed {t}")
+        for o in objs:
+            lines = last_refresh.setdefault(o.name, [])
+            lines.extend(matsync.sync(o, scene, full=True))
+            left = matsync.problems(o)
+            lines.extend(f"still: {t}" for _k, t in left)
+            if not lines:
+                lines.append("materials OK")
+        for n in matsync.remove_orphans(everything=True):
+            self.report({'INFO'}, f"Removed {n} (its object is gone)")
+        cache.clear()
+        self.report({'INFO'}, f"Materials refreshed on {len(objs)} object(s)")
+        return {'FINISHED'}
+
+
 _classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
-            MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution)
+            MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
+            MULTICAMPROJECT_OT_MaterialRebuild, MULTICAMPROJECT_OT_MaterialRefresh)
 
 
 def register():

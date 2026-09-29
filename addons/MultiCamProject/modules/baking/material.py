@@ -3,6 +3,7 @@ Normal Map, both on uv_normal. Only nodes named mcp_bake_* are managed; nodes th
 adds survive a rebuild. The FBX exporter's Principled wrapper reads exactly this."""
 import bpy
 
+from ..camera_project import core as cp
 from ..camera_project.core import BAKED_TAG
 from ..camera_project.gn_builder import B
 from . import common
@@ -11,20 +12,41 @@ P = "mcp_bake_"
 
 
 def find(obj):
+    """obj's own MAT_ (see camera_project.core ownership): the one it points to, else the
+    one named after it that no other object owns. None on a duplicate or before a bake."""
+    own = cp.own_baked(obj)
+    if own is not None:
+        return own
+    m = bpy.data.materials.get(common.mat_name(obj))
+    if m is not None and m.get(BAKED_TAG) \
+            and cp.owners(cp.mat_pointer, cp.baked_name).get(m) in (None, obj):
+        return m
+    return None
+
+
+def place(obj):
+    """MAT_ into slot 2 after MCP_ (slot 1 without a projection), the scan materials after."""
+    if getattr(obj, "multicamproject_cam", None) is not None and obj.multicamproject_cam.is_setup:
+        cp.place_material(obj)
+    elif common.data(obj).material is not None:
+        cp.arrange_slots(obj, [common.data(obj).material])
+
+
+def release(obj):
+    """A duplicate lets go of the original's bake (MAT_, ALB_, NOR_): it gets baked on its own."""
     d = common.data(obj)
-    if d.material is not None:
-        return d.material
-    return bpy.data.materials.get(common.mat_name(obj))
+    d.material = d.alb_image = d.nor_image = None
+    d.fingerprint = ""
+    d.alb_size = d.nor_size = 0
 
 
-def build(obj, scene):
+def build(obj, scene, place_slots=True):
     d, s = common.data(obj), common.settings(scene)
     mat = find(obj)
     new = mat is None
     if new:
         mat = bpy.data.materials.new(common.mat_name(obj))
-    elif mat.name != common.mat_name(obj) and not bpy.data.materials.get(common.mat_name(obj)):
-        mat.name = common.mat_name(obj)
+    cp.claim_name(mat, common.mat_name(obj), bpy.data.materials)
     mat[BAKED_TAG] = True
     mat.use_nodes = True
     nt = mat.node_tree
@@ -57,4 +79,6 @@ def build(obj, scene):
         b.link(nor.outputs["Color"], nm.inputs["Color"])
         b.link(nm.outputs["Normal"], bsdf.inputs["Normal"])
     d.material = mat
+    if place_slots:
+        place(obj)
     return mat

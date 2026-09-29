@@ -1,6 +1,6 @@
 import bpy
 
-from . import common, fingerprint, gn_final, normal
+from . import common, fingerprint, gn_final, matsync, normal, operators
 
 
 def _res(n):
@@ -59,6 +59,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         top = layout.column()      # no indent: the Baking panel reads better flush
 
         draw_final_toggle(top, obj, "multicamproject_view")
+        self._draw_materials(top, obj)
         if not common.has_uv_normal(obj):
             box = top.box()
             box.alert = True
@@ -114,6 +115,37 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         if (why and s.bake_what != 'ALBEDO'
                 and not (s.bake_what == 'BOTH' and why == "Bake the albedo first")):
             layout.label(text=why, icon='ERROR')      # the popover is mostly closed
+
+    @staticmethod
+    def _draw_materials(layout, obj):
+        """[Projection Mat] [Final Mat] [Refresh]: rebuild + show one, or check and fix both.
+        Problems and what the last Refresh fixed show below, never in a popup."""
+        probs = matsync.problems(obj) if matsync.in_scope(obj) else []
+        kinds = {k for k, _t in probs}
+        row = layout.row(align=True)
+        for kind, text, ok_icon, enabled in (
+                ('MCP', "Projection Mat", 'NODE_MATERIAL', matsync.is_projection(obj)),
+                ('MAT', "Final Mat", 'SHADING_TEXTURE', True)):
+            b = row.row(align=True)
+            b.enabled = enabled
+            b.alert = kind in kinds
+            b.operator("multicamproject.material_rebuild", text=text,
+                       icon='ERROR' if kind in kinds else ok_icon).kind = kind
+        b = row.row(align=True)
+        b.alert = 'SLOTS' in kinds
+        b.operator("multicamproject.material_refresh", text="",
+                   icon='FILE_REFRESH').scope = 'SELECTED'
+        if probs:
+            col = layout.column(align=True)
+            col.alert = True
+            for _k, t in probs:
+                col.label(text=t, icon='ERROR')
+        done = operators.last_refresh.get(obj.name)
+        if done and done != ["materials OK"]:
+            col = layout.column(align=True)
+            col.active = False
+            for t in done[:4]:
+                col.label(text=t, icon='CHECKMARK')
 
     @staticmethod
     def _draw_bake_button(layout, s):
