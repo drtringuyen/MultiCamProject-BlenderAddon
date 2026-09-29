@@ -4,15 +4,20 @@
 
 Blender paints one color attribute per stroke, so this runs after each stroke: a timer
 waits until no paint stroke is running, compares the painted layer with its snapshot and
-scales the other layer's R, G, B down by the amount claimed. Alpha is never cleared (VCMix
-alpha is the scan mask of all cameras - Erase works there); a camera 4-6 stroke raises it,
-as a camera 1-3 stroke does through the brush. Each clear is its own undo step (Ctrl+Z
-once: the clear, twice: the stroke).
+scales the other layer's R, G, B down by the amount claimed. Each clear is its own undo
+step (Ctrl+Z once: the clear, twice: the stroke).
+
+Blend mask = VCMix alpha x VCMix2 alpha (0 = baked, 1 = projected), so both alphas move
+together: a camera 4-6 stroke raises VCMix alpha where it claims, and a VCMix stroke
+(cameras 1-3, Erase, Shift+Erase) moves VCMix2 alpha by the same amount.
 
 How much a camera 4-6 stroke claims: its largest R/G/B increase or its alpha increase.
-VCMix2 alpha is otherwise unused and kept at 0 between strokes, and the brush raises it
-(Affect Alpha) wherever it passes - so a stroke claims even where VCMix2 already had that
-color. A black brush claims nothing.
+During a camera 4-6 session VCMix2 alpha is the marker, kept at 0 between strokes, and
+the brush raises it (Affect Alpha) wherever it passes - so a stroke claims even where
+VCMix2 already had that color. Its real alpha waits in _mcp_mask2 meanwhile (the GN shows
+the larger of the two, so nothing flickers), and each stroke's marker is folded into it.
+The session ends when another layer is painted or Vertex Paint is left: _mcp_mask2 goes
+back into VCMix2 alpha. A black brush claims nothing.
 Only faces turned toward the painted camera are claimed: a brush that reaches through the
 mesh (or around its silhouette) must not hand the far side to a camera that cannot see it.
 """
@@ -23,11 +28,13 @@ from bpy.app.handlers import persistent
 from . import core, gn_builder
 
 L1, L2 = gn_builder.LAYERS
+STASH = gn_builder.MASK2_STASH
 STROKE_OPS = {"PAINT_OT_vertex_paint"}
 CLAIM_MIN = 1e-4
 
 _snap = {}          # mesh pointer -> {layer: color array}
 _dirty = set()      # mesh pointers changed since the last sync
+_sessions = set()   # names of objects with VCMix2 alpha in _mcp_mask2 (camera 4-6 session)
 
 
 def _key(me):
@@ -66,13 +73,81 @@ def reset(obj):
     _dirty.discard(_key(obj.data))
 
 
-def clear_marker(obj):
-    """VCMix2 alpha to 0, so the brush's alpha shows where the next stroke goes."""
-    attr = obj.data.color_attributes.get(L2)
+def _stash(me, create=False):
+    """The _mcp_mask2 float attribute on VCMix2's domain (None when missing)."""
+    l2 = me.color_attributes.get(L2)
+    a = me.attributes.get(STASH)
+    if a is not None and (l2 is None or a.domain != l2.domain or a.data_type != 'FLOAT'):
+        me.attributes.remove(a)
+        a = None
+    if a is None and create and l2 is not None:
+        a = me.attributes.new(STASH, 'FLOAT', l2.domain)
+        a.data.foreach_set("value", np.zeros(len(a.data), dtype=np.float32))
+    return a
+
+
+def _read_stash(a):
+    buf = np.empty(len(a.data), dtype=np.float32)
+    a.data.foreach_get("value", buf)
+    return buf
+
+
+def begin_session(obj):
+    """Camera 4-6 painting starts: VCMix2's real alpha into _mcp_mask2 (merged with one
+    left from before), VCMix2 alpha to 0 so the brush's alpha shows where a stroke goes."""
+    me = obj.data
+    attr = me.color_attributes.get(L2)
+    if attr is None:
+        return
+    arr = _read(attr)
+    fresh = me.attributes.get(STASH) is None
+    st = _stash(me, create=True)
+    real = arr[:, 3].copy() if fresh else np.maximum(_read_stash(st), arr[:, 3])
+    st.data.foreach_set("value", real)
+    arr[:, 3] = 0.0
+    _write(attr, arr)
+    _sessions.add(obj.name)
+
+
+def end_session(obj):
+    """VCMix2 alpha back from _mcp_mask2 (the larger of it and a marker not folded yet).
+    Returns True when there was a stash to put back."""
+    _sessions.discard(obj.name)
+    if obj.type != 'MESH' or obj.mode == 'EDIT':
+        return False
+    me = obj.data
+    st = _stash(me)
+    if st is None:
+        return False
+    attr = me.color_attributes.get(L2)
     if attr is not None:
         arr = _read(attr)
-        arr[:, 3] = 0.0
+        arr[:, 3] = np.maximum(arr[:, 3], _read_stash(st))
         _write(attr, arr)
+    me.attributes.remove(me.attributes[STASH])
+    obj.update_tag()
+    return True
+
+
+def _mirror_alpha(obj, cur, old):
+    """A VCMix stroke moved VCMix alpha: VCMix2 alpha (or its stash) moves by the same."""
+    d = cur[:, 3] - old[:, 3]
+    if np.abs(d).max(initial=0.0) <= CLAIM_MIN:
+        return False
+    me = obj.data
+    st = _stash(me)
+    if st is not None and len(st.data) == len(d):
+        st.data.foreach_set("value", np.clip(_read_stash(st) + d, 0.0, 1.0))
+        return True
+    attr = me.color_attributes.get(L2)
+    if attr is None:
+        return False
+    arr = _read(attr)
+    if len(arr) != len(d):
+        return False
+    arr[:, 3] = np.clip(arr[:, 3] + d, 0.0, 1.0)
+    _write(attr, arr)
+    return True
 
 
 def _undo_push(message):
@@ -138,14 +213,19 @@ def sync(obj, push_undo=True):
     if snap is None or active not in (L1, L2):
         reset(obj)
         return False
-    if active == L1:                    # cameras 1-3: adaptive off
-        reset(obj)
-        return False
-    other = L1
     cur, old = _read(ca[active]), snap.get(active)
     if old is None or old.shape != cur.shape:
         reset(obj)
         return False
+    if active == L1:                    # cameras 1-3 / Erase: no claim, the alphas move together
+        changed = _mirror_alpha(obj, cur, old)
+        reset(obj)
+        if changed:
+            obj.update_tag()
+            if push_undo:
+                _undo_push("Camera Paint: VCMix2 alpha")
+        return changed
+    other = L1
 
     claim = np.clip((cur[:, :3] - old[:, :3]).max(axis=1), 0.0, 1.0)
     claim = (np.zeros(len(cur), dtype=np.float32) if _brush_is_black()
@@ -163,6 +243,10 @@ def sync(obj, push_undo=True):
             _write(ca[other], oth)
             changed = True
     if cur[:, 3].max(initial=0.0) > 0.0:
+        st = _stash(me, create=True)    # the stroke's alpha is real mask: into the stash
+        if len(st.data) == len(cur):
+            st.data.foreach_set("value", np.maximum(_read_stash(st), cur[:, 3]))
+            changed = True
         cur[:, 3] = 0.0                 # marker back to 0 for the next stroke
         _write(ca[active], cur)
     reset(obj)
@@ -189,6 +273,11 @@ def _tick():
             # strokes made meanwhile (fewer than 4 cameras, other mode) are never claimed later
             _snap.clear()
             _dirty.clear()
+            for name in list(_sessions):        # Vertex Paint left: VCMix2 alpha back
+                o = bpy.data.objects.get(name)
+                if o is None or o.mode != 'VERTEX_PAINT':
+                    if o is None or not end_session(o):
+                        _sessions.discard(name)
             return 0.25
         if _stroke_running():
             return 0.05
@@ -196,7 +285,9 @@ def _tick():
         if key not in _snap:            # started watching (entered paint mode, after an undo)
             ca = obj.data.color_attributes
             if ca.active_color and ca.active_color.name == L2:
-                clear_marker(obj)
+                begin_session(obj)
+            elif obj.name in _sessions:
+                end_session(obj)
             reset(obj)
         elif key in _dirty:
             _dirty.discard(key)
@@ -224,6 +315,7 @@ def _on_undo(*_):
     # an undone/redone stroke or clear is the new baseline - never replay it
     _snap.clear()
     _dirty.clear()
+    _sessions.clear()       # the stash is undone with the mesh; begin_session merges a leftover
 
 
 def register():

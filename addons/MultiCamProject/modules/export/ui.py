@@ -86,7 +86,7 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
 
 
 class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
-    bl_label = "Export"
+    bl_label = "07. Final Export"
     bl_idname = "MULTICAMPROJECT_PT_export"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

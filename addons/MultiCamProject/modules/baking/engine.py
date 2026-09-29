@@ -1,17 +1,17 @@
-"""Cycles bake into ALB_ / NOR_ images.
+"""Cycles bakes: BA_ / BN_ from the Bake Source (04), ALB_ from the Processing material (06).
 
 The render/bake settings save + restore and the image preparation follow BakeLab 2
 (GPL-3, Shahzod Boyxonov) - only this small subset is ported.
 
-Every object is baked in its own bpy.ops.object.bake call: the scans share their scan
-materials, and a shared material can only point its active image node at one object's
-image at a time.
+Every object is baked in its own bpy.ops.object.bake call: a shared material can only
+point its active image node at one object's image at a time.
 """
 import os
 import time
 from contextlib import contextmanager
 
 import bpy
+import numpy as np
 
 from ..camera_project import core as cp
 from . import common, fingerprint, gn_final, material
@@ -163,101 +163,162 @@ def link_file(img, path):
     img.reload()
 
 
-TWIN_SUFFIX = "_MCP_ALB_TWIN_TMP"
-# the Remesh copy's own modifiers the full-resolution twin leaves out
-_TWIN_SKIP = {"GN-Remesh", "Decimate Overall", "Decimate Selective"}
+SUBDIV = "MCP_BAKE_SUBDIV"
+SUBDIV_BUDGET = 2_000_000       # faces the temporary subdivision may make
 
 
-def albedo_source(obj, s):
-    """The Bake Source the albedo is baked from (None: the object bakes itself)."""
-    src = common.data(obj).bake_source
-    if not s.albedo_from_source or src is None or src == obj or src.type != 'MESH':
-        return None
-    return src
+def subdiv_levels(obj):
+    """Simple subdivision levels for the bake: 2 on a low poly, fewer on a dense mesh."""
+    n = max(len(obj.data.polygons), 1)
+    levels = 0
+    while levels < 2 and n * 4 ** (levels + 1) <= SUBDIV_BUDGET:
+        levels += 1
+    return levels
 
 
 @contextmanager
-def projection_twin(context, obj, source):
-    """A temporary object with `source`'s full-resolution mesh (its own copy, the original
-    is never touched) and `obj`'s projection: GN-CameraProject with the same cameras,
-    shifts and settings, without GN-Remesh, the Decimates and GN-Final. Deleted after."""
-    twin = obj.copy()                   # modifiers, their inputs and the lens drivers
-    twin.data = source.data.copy()
-    twin.name = obj.name + TWIN_SUFFIX
-    twin.matrix_world = source.matrix_world.copy()
-    context.scene.collection.objects.link(twin)
-    for m in [m for m in twin.modifiers
-              if m.name in _TWIN_SKIP or gn_final.MOD_NAME == m.name]:
-        twin.modifiers.remove(m)
-    twin.hide_render = twin.hide_viewport = False
+def subdivided(context, obj):
+    """A temporary Simple Subdivision right before GN-CameraProject. The photos are placed
+    per vertex, and a perspective camera's UV is not linear across a big triangle: on a
+    low poly the photo would slide. More vertices keep it in place (uv_normal and the
+    VCMix layers only get linear in-between values)."""
+    cpm = common.cp_modifier(obj)
+    levels = subdiv_levels(obj)
+    if cpm is None or levels == 0:
+        yield
+        return
+    m = obj.modifiers.new(SUBDIV, 'SUBSURF')
+    m.subdivision_type = 'SIMPLE'
+    m.levels = m.render_levels = levels
+    if hasattr(m, "uv_smooth"):
+        m.uv_smooth = 'NONE'
+    name = m.name
+    with context.temp_override(object=obj, active_object=obj):
+        bpy.ops.object.modifier_move_to_index(modifier=name, index=list(obj.modifiers).index(cpm))
     context.view_layer.update()
     try:
-        yield twin
+        yield
     finally:
-        me = twin.data
-        bpy.data.objects.remove(twin)
-        if me.users == 0:
-            bpy.data.meshes.remove(me)
+        m = obj.modifiers.get(name)
+        if m is not None:
+            obj.modifiers.remove(m)
+        context.view_layer.update()
 
 
-def bake_albedo(context, obj, progress=None):
-    """Bake one object's projection into ALB_<name>, save it, build MAT_, store the
-    fingerprint. A Remesh copy (with From High Poly on) bakes its original's full-resolution
-    projection onto itself (Selected to Active). The object ends up in Final."""
+def _bake(context, obj, selected, bake_type, size, **kw):
+    """One bpy.ops.object.bake into the images of target_nodes, on uv_normal."""
+    s = common.settings(context.scene)
+    with context.temp_override(active_object=obj, object=obj, selected_objects=selected,
+                               selected_editable_objects=selected):
+        bpy.ops.object.bake(type=bake_type, margin=common.margin_px(s, size), use_clear=True,
+                            target='IMAGE_TEXTURES', uv_layer=common.UV_NORMAL, **kw)
+
+
+def _uv_normal_active(obj):
+    """uv_normal active while baking (the previous active UV comes back)."""
+    uvs = obj.data.uv_layers
+    prev = uvs.active.name if uvs.active else ""
+    uvs.active = uvs[common.UV_NORMAL]
+    return prev
+
+
+def _uv_restore(obj, prev):
+    uvs = obj.data.uv_layers
+    if uvs.get(prev):
+        uvs.active = uvs[prev]
+
+
+def _pack(img):
+    """Keep a baked work texture inside the .blend (PNG), whatever it pointed at before."""
+    img.file_format = 'PNG'
+    img.pack()
+
+
+# ---------------------------------------------------------------- 04 Bake from Source
+
+def source_problem(obj, context=None):
+    """Why Bake from Source cannot run for `obj` ('' = it can)."""
+    context = context or bpy.context
+    src = common.data(obj).bake_source
+    if src is None:
+        return "No Bake Source (0C Remesh, or pick the high poly)"
+    if src == obj or src.type != 'MESH':
+        return "The Bake Source must be another mesh"
+    if context.view_layer.objects.get(src.name) != src:
+        return f"'{src.name}' is not in the view layer (collection excluded?)"
+    if not common.has_uv_normal(obj):
+        return f"No '{common.UV_NORMAL}' UV map - unwrap the low poly first"
+    return ""
+
+
+def bake_from_source(context, obj, progress=None):
+    """BA_ (the source's colors) and BN_ (its surface, tangent normals) onto obj's
+    uv_normal - Selected to Active from the Bake Source, at the Work Resolution. Both stay
+    packed in the .blend and are overwritten on the next bake; MCP_ shows them under the
+    projection. Returns the seconds."""
+    from .normal import mesh_bake
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
+    why = source_problem(obj, context)
+    if why:
+        raise RuntimeError(why)
     t0 = time.perf_counter()
-    uvs = obj.data.uv_layers
-    gn_final.set_final(obj, scene, False)
-    context.view_layer.update()
-    prev = uvs.active.name if uvs.active else ""
-    uvs.active = uvs[common.UV_NORMAL]
-    name = common.alb_name(obj)
-    path = common.texture_path(scene, name)
-    src = albedo_source(obj, s)
-    # bake into a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
-    # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves as 16-bit
-    tmp = bpy.data.images.new(TMP_IMAGE, s.resolution, s.resolution, alpha=False,
-                              float_buffer=False)
-    tmp.colorspace_settings.name = 'sRGB'
+    src = d.bake_source
+    size = s.work_resolution
+    was_final = gn_final.is_final(obj)
+    ba = prepare_image(d.ba_image, common.ba_name(obj), size, False, 'sRGB')
+    bn = prepare_image(d.bn_image, common.bn_name(obj), size, False, 'Non-Color')
+    prev = _uv_normal_active(obj)
     try:
-        if src is None:
-            with render_state(scene), selection(context, obj, [obj]), target_nodes(obj, tmp):
+        with mesh_bake.visible(context, src), render_state(scene), \
+                selection(context, obj, [obj, src]):
+            with target_nodes(obj, ba):
                 configure(scene, 'DIFFUSE')
-                with context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
-                                           selected_editable_objects=[obj]):
-                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
-                                        margin=common.margin_px(s),
-                                        use_clear=True, target='IMAGE_TEXTURES',
-                                        uv_layer=common.UV_NORMAL)
-        else:
-            with projection_twin(context, obj, src) as twin, render_state(scene), \
-                    selection(context, obj, [obj, twin]), target_nodes(obj, tmp):
-                configure(scene, 'DIFFUSE')
-                scene.render.bake.use_selected_to_active = True
-                scene.render.bake.use_cage = False
-                scene.render.bake.cage_extrusion = s.cage_extrusion
-                sel = [obj, twin]
-                with context.temp_override(active_object=obj, object=obj, selected_objects=sel,
-                                           selected_editable_objects=sel):
-                    bpy.ops.object.bake(type='DIFFUSE', pass_filter={'COLOR'},
-                                        margin=common.margin_px(s),
-                                        use_clear=True, target='IMAGE_TEXTURES',
-                                        use_selected_to_active=True,
-                                        cage_extrusion=s.cage_extrusion,
-                                        uv_layer=common.UV_NORMAL)
-        if progress:
-            progress()
-        os.makedirs(os.path.dirname(path), exist_ok=True)
-        tmp.filepath_raw = path
-        tmp.file_format = 'PNG'
-        tmp.save(filepath=path)
+                _bake(context, obj, [obj, src], 'DIFFUSE', size, pass_filter={'COLOR'},
+                      use_selected_to_active=True, cage_extrusion=s.cage_extrusion)
+            if progress:
+                progress()
+            with mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
+                configure(scene, 'NORMAL')
+                b = scene.render.bake
+                b.normal_space = 'TANGENT'
+                b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
+                sel = [obj, hp]
+                hp.select_set(True)
+                _bake(context, obj, sel, 'NORMAL', size, use_selected_to_active=True,
+                      cage_extrusion=s.cage_extrusion, normal_space='TANGENT')
     finally:
-        bpy.data.images.remove(tmp)
-        if uvs.get(prev):
-            uvs.active = uvs[prev]
-    # ALB_<name>: the same image every time (no .001), pointing at the new file
+        _uv_restore(obj, prev)
+        if gn_final.is_final(obj) != was_final:
+            gn_final.set_final(obj, scene, was_final)
+    _pack(ba)
+    _pack(bn)
+    d.ba_image, d.bn_image = ba, bn
+    d.ba_size = size
+    d.ba_fingerprint = fingerprint.stamp_source(obj)
+    d.last_ba_seconds = time.perf_counter() - t0
+    if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
+        cp.build_material(obj)          # the BAKED frame shows the new BA_ / BN_
+    return d.last_ba_seconds
+
+
+def needs_source_bake(obj):
+    """A Bake Source without a current BA_: Bake Final bakes from the source first."""
+    d = common.data(obj)
+    return d.bake_source is not None and (d.ba_image is None or fingerprint.ba_outdated(obj))
+
+
+# ---------------------------------------------------------------- 06 Bake Final
+
+def _save_albedo(obj, scene, tmp, path):
+    """tmp (8-bit) into ALB_<name>.png; ALB_ is the same image every time, on that file."""
+    d = common.data(obj)
+    name = common.alb_name(obj)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp.filepath_raw = path
+    tmp.file_format = 'PNG'
+    tmp.save(filepath=path)
     img = d.alb_image or bpy.data.images.get(name)
     if img is None:
         img = bpy.data.images.load(path, check_existing=False)
@@ -267,6 +328,52 @@ def bake_albedo(context, obj, progress=None):
     img.colorspace_settings.name = 'sRGB'
     link_file(img, path)
     d.alb_image = img
+
+
+def bake_albedo(context, obj, progress=None):
+    """ALB_<name>: the Processing material (MCP_: BA_ and the projection, by the mask)
+    baked onto the object itself, with a temporary subdivision against sliding photos.
+    Without a projection ALB_ is BA_ at the final resolution. Builds MAT_, stores the
+    fingerprint; the object ends up in Final."""
+    scene = context.scene
+    s = common.settings(scene)
+    d = common.data(obj)
+    t0 = time.perf_counter()
+    name = common.alb_name(obj)
+    path = common.texture_path(scene, name)
+    # bake into a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
+    # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves as 16-bit
+    tmp = bpy.data.images.new(TMP_IMAGE, s.resolution, s.resolution, alpha=False,
+                              float_buffer=False)
+    tmp.colorspace_settings.name = 'sRGB'
+    try:
+        if common.cp_modifier(obj) is None:
+            if d.ba_image is None:
+                raise RuntimeError("Nothing to bake: no projection and no Bake from Source")
+            src = d.ba_image.copy()
+            try:
+                src.scale(s.resolution, s.resolution)
+                buf = np.empty(s.resolution * s.resolution * 4, dtype=np.float32)
+                src.pixels.foreach_get(buf)
+                tmp.pixels.foreach_set(buf)
+            finally:
+                bpy.data.images.remove(src)
+        else:
+            gn_final.set_final(obj, scene, False)
+            context.view_layer.update()
+            prev = _uv_normal_active(obj)
+            try:
+                with subdivided(context, obj), render_state(scene), \
+                        selection(context, obj, [obj]), target_nodes(obj, tmp):
+                    configure(scene, 'DIFFUSE')
+                    _bake(context, obj, [obj], 'DIFFUSE', s.resolution, pass_filter={'COLOR'})
+            finally:
+                _uv_restore(obj, prev)
+        if progress:
+            progress()
+        _save_albedo(obj, scene, tmp, path)
+    finally:
+        bpy.data.images.remove(tmp)
     d.alb_size = s.resolution
     material.build(obj, scene)
     d.fingerprint = fingerprint.compute(obj)
@@ -275,32 +382,45 @@ def bake_albedo(context, obj, progress=None):
     return d.last_bake_seconds
 
 
-def bake_normal_from_mesh(context, obj, source, img):
-    """Cycles NORMAL, tangent space, Selected to Active from `source` onto `obj`, into the
-    float image `img` (pixels stay in memory for the caller to save)."""
+MASK_EMIT = "MCP_MASK_EMIT_TMP"
+
+
+def bake_mask(context, obj, size):
+    """The blend mask (0 = baked, 1 = projected) on uv_normal as (size, size) floats, rows
+    bottom-up - MCP_'s mask sent to an Emission for one EMIT bake. None without a projection."""
     scene = context.scene
-    s = common.settings(scene)
-    uvs = obj.data.uv_layers
-    gn_final.set_final(obj, scene, False)
-    context.view_layer.update()
-    prev = uvs.active.name if uvs.active else ""
-    uvs.active = uvs[common.UV_NORMAL]
+    mat = cp.data(obj).material if hasattr(obj, "multicamproject_cam") else None
+    nt = mat.node_tree if mat is not None else None
+    mix = nt.nodes.get("Blend Mix") if nt is not None else None
+    out = nt.nodes.get("Material Output") if nt is not None else None
+    if common.cp_modifier(obj) is None or mix is None or out is None or not mix.inputs[0].links:
+        return None
+    mask_out = mix.inputs[0].links[0].from_socket
+    surface = out.inputs["Surface"]
+    old = surface.links[0].from_socket if surface.links else None
+    emit = nt.nodes.new("ShaderNodeEmission")
+    emit.name = MASK_EMIT
+    img = bpy.data.images.new("MCP_MASK_BAKE_TMP", size, size, alpha=False, float_buffer=True)
+    img.colorspace_settings.name = 'Non-Color'
+    was_final = gn_final.is_final(obj)
+    prev = _uv_normal_active(obj)
     try:
-        with render_state(scene), selection(context, obj, [obj, source]), target_nodes(obj, img):
-            configure(scene, 'NORMAL')
-            b = scene.render.bake
-            b.use_selected_to_active = True
-            b.use_cage = False
-            b.cage_extrusion = s.cage_extrusion
-            b.normal_space = 'TANGENT'
-            b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
-            with context.temp_override(active_object=obj, object=obj,
-                                       selected_objects=[obj, source],
-                                       selected_editable_objects=[obj, source]):
-                bpy.ops.object.bake(type='NORMAL', margin=common.margin_px(s), use_clear=True,
-                                    use_selected_to_active=True, cage_extrusion=s.cage_extrusion,
-                                    normal_space='TANGENT', target='IMAGE_TEXTURES',
-                                    uv_layer=common.UV_NORMAL)
+        nt.links.new(mask_out, emit.inputs["Color"])
+        nt.links.new(emit.outputs[0], surface)
+        gn_final.set_final(obj, scene, False)
+        context.view_layer.update()
+        with subdivided(context, obj), render_state(scene), selection(context, obj, [obj]), \
+                target_nodes(obj, img):
+            configure(scene, 'EMIT')
+            _bake(context, obj, [obj], 'EMIT', size)
+        buf = np.empty(size * size * 4, dtype=np.float32)
+        img.pixels.foreach_get(buf)
+        return np.clip(buf.reshape(size, size, 4)[:, :, 0], 0.0, 1.0).copy()
     finally:
-        if uvs.get(prev):
-            uvs.active = uvs[prev]
+        _uv_restore(obj, prev)
+        nt.nodes.remove(emit)
+        if old is not None:
+            nt.links.new(old, surface)
+        bpy.data.images.remove(img)
+        if gn_final.is_final(obj) != was_final:
+            gn_final.set_final(obj, scene, was_final)

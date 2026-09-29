@@ -1,6 +1,10 @@
-"""NOR_<name> sources. Lite: high-pass from the albedo, bake from a mesh. Full adds
-Mesh + Albedo and the AI model (onnxruntime). Every source writes the same file:
-<output dir>/NOR_<name>.png, 16-bit, Non-Color, OpenGL (Y+)."""
+"""NOR_<name>: 16-bit, Non-Color, OpenGL (Y+), always <output dir>/NOR_<name>.png.
+
+    with BN_ (baked from the Bake Source):  BN_ where the mask says baked, BN_ with the
+        albedo's detail on top (Reoriented Normal Mapping) where it says projected
+    without BN_:                            the albedo's detail alone
+
+The detail comes from ALB_: High-pass (Lite) or the AI model (Full build, onnxruntime)."""
 import os
 import time
 
@@ -9,8 +13,8 @@ import bpy
 from .. import common, engine, gn_final as final, material
 from . import ai, highpass, pngio
 
-LABELS = {'HIGHPASS': "High-pass", 'MESH': "Bake from mesh", 'BLEND': "Mesh + Albedo",
-          'AI': "AI"}
+LABELS = {'HIGHPASS': "High-pass", 'AI': "AI",
+          'MESH': "Bake from mesh", 'BLEND': "Mesh + Albedo"}     # the last two: older runs
 
 
 def is_full():
@@ -19,27 +23,54 @@ def is_full():
 
 
 def available_sources():
-    out = [('HIGHPASS', LABELS['HIGHPASS'], "Relief from the albedo's brightness (fast)"),
-           ('MESH', LABELS['MESH'], "Cycles normal bake from the High Poly mesh")]
-    if is_full():
-        out.append(('BLEND', LABELS['BLEND'], "Mesh bake + albedo high-pass detail on top"))
-        if ai.available():
-            out.append(('AI', LABELS['AI'], "Normal map predicted from the albedo by an AI model"))
+    """How the albedo's detail is made (the Bake Source's BN_ is used by itself)."""
+    out = [('HIGHPASS', LABELS['HIGHPASS'], "Relief from the albedo's brightness (fast)")]
+    if is_full() and ai.available():
+        out.append(('AI', LABELS['AI'], "Detail predicted from the albedo by an AI model"))
     return out
 
 
+def usable(source):
+    """`source`, or High-pass when it is not available (e.g. an older 'Bake from mesh')."""
+    return source if source in {k for k, _l, _d in available_sources()} else 'HIGHPASS'
+
+
 def problem(obj, scene, source):
-    """Why `source` cannot run for `obj` ('' = it can)."""
-    from . import mesh_bake
-    d = common.data(obj)
-    s = common.settings(scene)
-    if source in {'HIGHPASS', 'BLEND', 'AI'} and d.alb_image is None:
+    """Why NOR_ cannot be made for `obj` ('' = it can)."""
+    if common.data(obj).alb_image is None:
         return "Bake the albedo first"
-    if source in {'MESH', 'BLEND'}:
-        return mesh_bake.problem(obj, s)
-    if source not in {k for k, _l, _d in available_sources()}:
-        return f"'{LABELS.get(source, source)}' is not available in this build"
     return ""
+
+
+def _read_resized(img, size):
+    """RGB float32 (size, size, 3) of an image, rows bottom-up (a scaled copy when needed)."""
+    if tuple(img.size) == (size, size):
+        return highpass.read_pixels(img).copy()
+    tmp = img.copy()
+    try:
+        tmp.scale(size, size)
+        return highpass.read_pixels(tmp).copy()
+    finally:
+        bpy.data.images.remove(tmp)
+
+
+def compose(context, obj, detail, size):
+    """BN_ + detail by the blend mask (see the module doc); detail alone without BN_."""
+    import numpy as np
+    from .blend import rnm
+    d = common.data(obj)
+    if d.bn_image is None:
+        return detail
+    base = _read_resized(d.bn_image, size)
+    mask = engine.bake_mask(context, obj, size)
+    top = rnm(base, detail)
+    if mask is None:            # no projection: the source's normals alone
+        return base
+    m = mask[..., None]
+    out = base * (np.float32(1.0) - m) + top * m
+    n = out * np.float32(2.0) - np.float32(1.0)
+    n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-6)
+    return (n * 0.5 + 0.5).astype(np.float32)
 
 
 def record_time(d, source, size, seconds):
@@ -68,9 +99,9 @@ def times(d):
 
 
 def generate(context, obj, source):
-    """Make NOR_<name> with `source` at the scene's resolution, save it, put it into MAT_.
-    Returns the seconds."""
-    from . import blend, mesh_bake
+    """Make NOR_<name> (detail from `source`) at the scene's resolution, save it, put it
+    into MAT_. Returns the seconds."""
+    source = usable(source)
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
@@ -78,16 +109,11 @@ def generate(context, obj, source):
     size = s.resolution
     t0 = time.perf_counter()
     try:
-        if source == 'HIGHPASS':
-            rgb = highpass.generate(d.alb_image, size, s)
-        elif source == 'MESH':
-            rgb = mesh_bake.generate(context, obj, size)
-        elif source == 'BLEND':
-            rgb = blend.generate(context, obj, d.alb_image, size, s)
-        elif source == 'AI':
+        if source == 'AI':
             rgb = ai.generate(d.alb_image, size)
         else:
-            raise ValueError(f"Unknown normal source {source}")
+            rgb = highpass.generate(d.alb_image, size, s)
+        rgb = compose(context, obj, rgb, size)
     finally:
         if final.is_final(obj) != was_final:
             final.set_final(obj, scene, was_final)

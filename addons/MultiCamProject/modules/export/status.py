@@ -9,7 +9,7 @@ from . import checks
 STAGES = OrderedDict((
     ('OUTDATED', ("Outdated", 'STRIP_COLOR_01', 0)),
     ('ISSUES', ("Problems", 'ERROR', 1)),
-    ('PROJECTION', ("no uv_normal", 'STRIP_COLOR_02', 2)),
+    ('PROJECTION', ("no uv_normal / Decimate live", 'STRIP_COLOR_02', 2)),
     ('NOT_SET_UP', ("Not set up", 'STRIP_COLOR_09', 3)),
     ('READY_TO_BAKE', ("Ready to bake", 'STRIP_COLOR_03', 4)),
     ('BAKED', ("Baked (no normal)", 'STRIP_COLOR_05', 5)),
@@ -23,13 +23,13 @@ def stage_of(obj, issues):
     d = common.data(obj)
     alb = d.alb_image is not None and common.file_ok(d.alb_image)
     nor = d.nor_image is not None and common.file_ok(d.nor_image)
-    if common.cp_modifier(obj) is None and not alb:
+    if common.cp_modifier(obj) is None and not alb and d.bake_source is None:
         return 'NOT_SET_UP'
-    if not common.has_uv_normal(obj):
+    if not common.has_uv_normal(obj) or checks.live_decimate(obj):
         return 'PROJECTION'
     if not alb:
         return 'READY_TO_BAKE'
-    if fingerprint.is_outdated(obj):
+    if fingerprint.is_outdated(obj) or fingerprint.ba_outdated(obj):
         return 'OUTDATED'
     if not nor or d.material is None:
         return 'BAKED'

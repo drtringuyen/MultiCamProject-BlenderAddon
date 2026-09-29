@@ -9,9 +9,10 @@ SINGLE = "GN-CamProject_Single"
 MIX = "MCP-MixResult"
 MATINDEX = "MCP-MatIndex_to_uv"   # legacy (Convert Material button) - removed by setup
 MAIN = "GN-CameraProject"
-VERSION = 12         # bump when the node layout changes
+VERSION = 13         # bump when the node layout changes
 SLOT_COUNTS = (3, 4, 5, 6)
 LAYERS = ("VCMix", "VCMix2")        # cameras 1-3 / 4-6 in R, G, B
+MASK2_STASH = "_mcp_mask2"          # VCMix2 alpha while paint_sync uses it as its marker
 
 
 def mix_name(n):
@@ -227,9 +228,12 @@ def build_single():
 def build_mix(n):
     """UV_cam1..n (shifted) + VCMix / VCMix2 (Sharp/Smooth/Combined, blended with the
     mesh's own layers by Previous Bake) + material.
-    VCMix:  R, G, B = cameras 1-3, A = blend mask (cameras see the face; 0 = scan).
+    VCMix:  R, G, B = cameras 1-3, A = blend mask (cameras see the face; 0 = baked).
             Cameras 1-3 win: where their sum is 1, cameras 4-6 do not show.
-    VCMix2: R, G, B = cameras 4-6 - which of them shows where 1-3 leave room (A unused, 1).
+    VCMix2: R, G, B = cameras 4-6 - which of them shows where 1-3 leave room; A = blend
+            mask too (the material multiplies both alphas). During a camera 4-6 paint
+            session the mesh's VCMix2 alpha is paint_sync's marker and the real one waits
+            in _mcp_mask2: the stored alpha is the larger of the two.
     VCMix2 is stored first and VCMix last - VCMix is the top layer."""
     ng = _fresh_group(mix_name(n))
     ng.description = f"Store UV_cam1-{n} and the VCMix weights, set the material"
@@ -317,10 +321,7 @@ def build_mix(n):
             cc.label = f"{label} {LAYERS[layer]}"
             for w, sk in zip(chunk, ("Red", "Green", "Blue")):
                 b.link(w, cc.inputs[sk])
-            if layer:
-                cc.inputs["Alpha"].default_value = 1.0
-            else:
-                b.link(cov, cc.inputs["Alpha"])
+            b.link(cov, cc.inputs["Alpha"])
             out.append(cc.outputs[0])
         return out
 
@@ -338,13 +339,33 @@ def build_mix(n):
         olds.append((b.reroute(fac, (404, 219 - layer * 40)),
                      b.reroute(na.outputs["Attribute"], (430, 136 - layer * 40))))
 
+    stash = None
+    if len(sharp_c) > 1:
+        na = b.n("GeometryNodeInputNamedAttribute", (-641, -1047), data_type="FLOAT")
+        na.inputs["Name"].default_value = MASK2_STASH
+        na.label = "VCMix2 Alpha Stash"
+        stash = b.reroute(na.outputs["Attribute"], (430, 56))       # 0 when missing
+
     def blended(col, layer, loc):
         fac, old = olds[layer]
         mx = b.n("ShaderNodeMix", loc, data_type="RGBA")
         b.link(fac, mx.inputs[0])
         b.link(col, _sock(mx.inputs, "A"))
         b.link(old, _sock(mx.inputs, "B"))
-        return _sock(mx.outputs, "Result")
+        out = _sock(mx.outputs, "Result")
+        if layer == 0 or stash is None:
+            return out
+        # VCMix2 alpha = max(alpha, _mcp_mask2)
+        sep = b.n("FunctionNodeSeparateColor", (loc[0] + 60, loc[1] - 60))
+        sep.hide = True
+        b.link(out, sep.inputs[0])
+        cc = b.n("FunctionNodeCombineColor", (loc[0] + 120, loc[1] - 60))
+        cc.hide = True
+        for k in ("Red", "Green", "Blue"):
+            b.link(sep.outputs[k], cc.inputs[k])
+        b.link(b.math("MAXIMUM", sep.outputs["Alpha"], stash, (loc[0] + 90, loc[1] - 100)),
+               cc.inputs["Alpha"])
+        return cc.outputs[0]
 
     ms = b.n("GeometryNodeMenuSwitch", (1064, 301), data_type="GEOMETRY")
     ms.enum_items.clear()

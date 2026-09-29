@@ -346,7 +346,47 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_classes = (MULTICAMPROJECT_OT_ExportAdd, MULTICAMPROJECT_OT_ExportRemove,
+def uv_candidates(objs):
+    """Meshes without uv_normal that can get one now (not while the Decimate is live: the
+    unwrap would be collapsed with it)."""
+    from . import checks
+    return [o for o in objs if not common.has_uv_normal(o) and not checks.live_decimate(o)]
+
+
+class MULTICAMPROJECT_OT_ExportMakeUV(bpy.types.Operator):
+    """Make uv_normal by Smart UV Project (non-overlapping, 0-1, margin from the bake
+    settings) on the meshes that have none. The active and render UV maps stay as they are.
+    A low poly with an unapplied Decimate is skipped (apply it first, 03)"""
+    bl_idname = "multicamproject.export_make_uv"
+    bl_label = "Make uv_normal"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    scope: bpy.props.EnumProperty(items=(('EXPORT', "EXPORT", "Every mesh in EXPORT"),
+                                         ('SELECTED', "Selected", "The selected meshes")),
+                                  default='EXPORT')
+
+    @classmethod
+    def poll(cls, context):
+        if not _poll(context):
+            cls.poll_message_set("Object Mode only")
+            return False
+        return True
+
+    def execute(self, context):
+        objs = (common.export_objects(context.scene) if self.scope == 'EXPORT'
+                else common.selected_meshes(context))
+        todo = uv_candidates(objs)
+        if not todo:
+            self.report({'INFO'}, "Every mesh has uv_normal (or its Decimate is not applied)")
+            return {'CANCELLED'}
+        for obj in todo:
+            autofix.make_uv_normal(context, obj)
+            self.report({'INFO'}, f"{obj.name}: uv_normal made by Smart UV Project")
+        cache.clear()
+        return {'FINISHED'}
+
+
+_classes = (MULTICAMPROJECT_OT_ExportMakeUV, MULTICAMPROJECT_OT_ExportAdd, MULTICAMPROJECT_OT_ExportRemove,
             MULTICAMPROJECT_OT_ExportRename, MULTICAMPROJECT_OT_ExportFixTransforms,
             MULTICAMPROJECT_OT_ExportUpdateOutdated, MULTICAMPROJECT_OT_ExportBakeMissing,
             MULTICAMPROJECT_OT_ExportDeleteScene, MULTICAMPROJECT_OT_ExportCleanTextures,

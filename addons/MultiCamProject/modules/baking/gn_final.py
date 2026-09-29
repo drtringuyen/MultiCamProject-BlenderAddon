@@ -185,19 +185,28 @@ def scan_uv(obj):
     return cp._scan_uv(obj, warnings) or ""
 
 
+def color_source(obj, scene):
+    """The scene's Vertex Color source; a low poly (with a Bake Source) always samples ALB:
+    its scan color attribute did not survive the retopology / new geometry."""
+    if common.data(obj).bake_source is not None:
+        return 'FROM_ALB'
+    return common.settings(scene).color_source
+
+
 def write_inputs(obj, scene):
     """Push the object's bake results and the scene settings into GN-Final."""
     mod = ensure_modifier(obj)
     d, s = common.data(obj), common.settings(scene)
     cp.set_input(mod, "Baked Material", d.material)
     # GN samples the image as floats (1 GB at 8K): only hand it over when it is used
+    source = color_source(obj, scene)
     scan_missing = obj.data.color_attributes.get(s.scan_color_name) is None
-    uses_alb = s.color_source == 'FROM_ALB' or scan_missing
+    uses_alb = source == 'FROM_ALB' or scan_missing
     cp.set_input(mod, "Albedo", d.alb_image if uses_alb else None)
     cp.set_input(mod, "Keep UV", common.UV_NORMAL)
     cp.set_input(mod, "Scan Color", s.scan_color_name)
     cp.set_input(mod, "Scan UV", scan_uv(obj))
-    label = dict(COLOR_SOURCES)[s.color_source]
+    label = dict(COLOR_SOURCES)[source]
     if cp.get_input(mod, "Color Source") != label:
         cp.set_input(mod, "Color Source", label)
     return mod

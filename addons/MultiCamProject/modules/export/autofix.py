@@ -24,11 +24,15 @@ def plan(scene):
         codes = {i.code for i in issues}
         if 'TRANSFORM' in codes:
             transforms.append(o)
+        if 'DECIMATE' in codes:         # no Smart UV or bake on the dense mesh
+            warnings.append(f"{o.name}: Decimate not applied (03) - left out of the FBX")
+            continue
         if not common.has_uv_normal(o):
             make_uv.append(o)
         d = common.data(o)
         if (o in make_uv or d.alb_image is None or d.nor_image is None or d.material is None
-                or codes & {'FILE', 'TEXTURE'} or fingerprint.is_outdated(o)):
+                or codes & {'FILE', 'TEXTURE'} or fingerprint.is_outdated(o)
+                or fingerprint.ba_outdated(o)):
             bake.append(o)
         for i in issues:
             if i.code in {'SHARED_MESH', 'UV_BAD', 'MESH', 'UV_EXTRA', 'COLOR'}:

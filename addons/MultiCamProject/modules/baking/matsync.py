@@ -9,9 +9,10 @@ Ownership comes from the object's pointers (camera_project.core, "ownership"), n
 names, so:
   - rename: the materials follow the object's name (msgbus on Object.name, any object)
   - Shift+D: the copy gets its own MCP_ (a copy) and lets go of the original's bake
-  - delete: MCP_ / MAT_ / ALB_ / NOR_ no object owns any more are removed from the file;
-    the ALB_ / NOR_ files go to the Recycle Bin at the next save, and only if no image
-    uses them then (Ctrl+Z before the save brings everything back).
+  - delete: MCP_ / MAT_ / ALB_ / NOR_ / BA_ / BN_ no object owns any more are removed
+    from the file; the ALB_ / NOR_ files go to the Recycle Bin at the next save, and only
+    if no image uses them then (Ctrl+Z before the save brings everything back). BA_ / BN_
+    are packed: they have no file.
 """
 import os
 
@@ -28,6 +29,7 @@ _count = [-1]
 _pending_files = set()  # ALB_/NOR_ files of removed objects, recycled at the next save
 _baseline = set()       # materials already orphaned when the file loaded: left alone
 OWN_FILES = ("ALB_", "NOR_")
+OWN_WORK = ("BA_", "BN_")      # packed, baked from the Bake Source, used by MCP_
 
 
 def _cp_on():
@@ -45,7 +47,8 @@ def in_scope(obj, originals=None, export=None):
         return False
     if obj in (cp._originals() if originals is None else originals):
         return False
-    if is_projection(obj) or cp.mat_pointer(obj) is not None or common.data(obj).alb_image:
+    d = common.data(obj)
+    if is_projection(obj) or cp.mat_pointer(obj) is not None or d.alb_image or d.ba_image:
         return True
     coll = common.export_collection(bpy.context.scene) if export is None else export
     return coll is not None and coll in obj.users_collection
@@ -88,6 +91,9 @@ def sync(obj, scene, full=False):
         if full:
             material.build(obj, scene, place_slots=False)
         mat = cp.place_material(obj)        # MCP_ + MAT_ (through the hook) + scan
+        if not full and not cp._material_ok(mat, cp.slot_count(cp.data(obj)), obj):
+            cp.build_material(obj)          # e.g. a duplicate let go of the original's BA_
+            out.append(f"{mat.name} rebuilt (baked textures changed)")
         if full or shared:
             if full:
                 cp.build_material(obj)
@@ -166,9 +172,33 @@ def problems(obj):
 
 # ---------------------------------------------------------------- the whole file
 
+def _work_owners():
+    """{BA_/BN_ image: (owner, name it should have)} - from the objects' pointers; a
+    shared one goes to the object named after it, else the first by name."""
+    skip = cp._originals()
+    users = {}
+    for o in bpy.data.objects:
+        if o.type != 'MESH' or o.library or o in skip or not o.users_collection:
+            continue
+        d = common.data(o)
+        for img, fn in ((d.ba_image, common.ba_name), (d.bn_image, common.bn_name)):
+            if img is not None and not img.library:
+                users.setdefault(img, []).append((o, fn))
+    out = {}
+    for img, objs in users.items():
+        o, fn = next(((o, fn) for o, fn in objs if fn(o) == img.name), None)             or min(objs, key=lambda p: p[0].name)
+        out[img] = (o, fn(o))
+    return out
+
+
 def sync_names():
-    """Rename pass: every owned MCP_ / MAT_ gets its owner's name. Cheap."""
+    """Rename pass: every owned MCP_ / MAT_ / BA_ / BN_ gets its owner's name. Cheap."""
     changed = []
+    for img, (_o, want) in _work_owners().items():
+        if img.name != want:
+            old = img.name
+            cp.claim_name(img, want, bpy.data.images)
+            changed.append(f"{old} -> {img.name}")
     pairs = [(cp.owners(cp.mat_pointer, cp.baked_name), common.mat_name)]
     if _cp_on():
         pairs.insert(0, (cp.owners(cp.mcp_pointer, cp.material_name), cp.material_name))
@@ -226,9 +256,9 @@ def remove_orphans(everything=False):
     if not mats:
         return []
     queue = {m for m in mats if m.name not in _baseline}
-    images = {(n.image, m in queue) for m in mats if m.get(cp.BAKED_TAG) and m.node_tree
+    images = {(n.image, m in queue) for m in mats if m.node_tree
               for n in m.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image
-              and n.image.name.startswith(OWN_FILES)}
+              and n.image.name.startswith(OWN_FILES if m.get(cp.BAKED_TAG) else OWN_WORK)}
     # wrappers of deleted objects' modifiers hold MCP_ / MAT_ as node defaults
     spare = [ng for ng in bpy.data.node_groups
              if ng.users == 0 and wrapper.WRAP_KEY in ng and not ng.library]

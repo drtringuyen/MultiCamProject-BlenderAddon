@@ -19,9 +19,10 @@ def _object_mode(context):
     return context.mode == 'OBJECT'
 
 
-def bake_objects(context, objs, albedo=True, nor_source=None):
+def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
     """Albedo and/or normal bake for `objs`, one object after the other, with a progress
-    bar. Returns (done, [(object name, error)])."""
+    bar. An object with a Bake Source but no current BA_ bakes from its source first.
+    Returns (done, [(object name, error)])."""
     wm = context.window_manager
     steps = len(objs) * (int(albedo) + int(nor_source is not None))
     wm.progress_begin(0, max(steps, 1))
@@ -32,6 +33,10 @@ def bake_objects(context, objs, albedo=True, nor_source=None):
                 if albedo:
                     if not common.has_uv_normal(obj):
                         raise RuntimeError(f"no {common.UV_NORMAL}")
+                    if engine.needs_source_bake(obj):
+                        engine.bake_from_source(context, obj)
+                        if log:
+                            log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
                     engine.bake_albedo(context, obj)
                     step += 1
                     wm.progress_update(step)
@@ -55,6 +60,66 @@ def _report(op, done, failed, what):
         op.report({'ERROR'}, f"{name}: {err}")
     if done:
         op.report({'INFO'}, f"{what}: {', '.join(o.name for o in done)}")
+
+
+def source_poll_problem(obj):
+    """Why 04 Bake from Source is off for `obj` ('' = it can run)."""
+    why = engine.source_problem(obj)
+    if why:
+        return why
+    try:
+        from ..export import checks
+    except ImportError:
+        return ""
+    outside, overlap = checks.uv_stats(obj)
+    if outside > 0.001:
+        return f"{common.UV_NORMAL}: {outside:.1%} outside 0-1 - fix the unwrap"
+    if overlap > 0.01:
+        return f"{common.UV_NORMAL}: {overlap:.1%} overlapping - fix the unwrap"
+    return ""
+
+
+class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
+    """04 Bake from Source: the Bake Source's colors into BA_ and its surface into BN_, on
+    uv_normal at the Work Resolution (Selected to Active, Cage). Packed in the .blend, under
+    the projection - not the final textures (06 Bake Final makes those)"""
+    bl_idname = "multicamproject.bake_from_source"
+    bl_label = "Bake from Source"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not _object_mode(context):
+            cls.poll_message_set("Object Mode only")
+            return False
+        objs = common.selected_meshes(context)
+        if not objs:
+            cls.poll_message_set("Select the low poly")
+            return False
+        for o in objs:
+            why = source_poll_problem(o)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
+        return True
+
+    def execute(self, context):
+        objs = common.selected_meshes(context)
+        wm = context.window_manager
+        wm.progress_begin(0, len(objs))
+        done, failed = [], []
+        try:
+            for i, obj in enumerate(objs):
+                try:
+                    engine.bake_from_source(context, obj)
+                    done.append(obj)
+                except Exception as e:
+                    failed.append((obj.name, str(e)))
+                wm.progress_update(i + 1)
+        finally:
+            wm.progress_end()
+        _report(self, done, failed, "Baked from source")
+        return {'FINISHED'} if done else {'CANCELLED'}
 
 
 class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
@@ -89,8 +154,8 @@ class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
-    """Bake the projection (with the scan) into ALB_<name> on uv_normal and build MAT_.
-    Each object then switches to Final"""
+    """Bake the Processing material (BA_ + projection) into ALB_<name> on uv_normal and
+    build MAT_. Each object then switches to Final"""
     bl_idname = "multicamproject.bake_albedo"
     bl_label = "Bake Albedo"
     bl_options = {'REGISTER', 'UNDO'}
@@ -277,7 +342,8 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
         objs = common.selected_meshes(context)
         albedo = s.bake_what in {'ALBEDO', 'BOTH'}
         src = s.nor_source if s.bake_what in {'NORMAL', 'BOTH'} else None
-        done, failed = bake_objects(context, objs, albedo=albedo, nor_source=src)
+        done, failed = bake_objects(context, objs, albedo=albedo, nor_source=src,
+                                    log=lambda t: self.report({'INFO'}, t))
         _report(self, done, failed, "Baked")
         return {'FINISHED'} if done else {'CANCELLED'}
 
@@ -343,7 +409,7 @@ class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
+_classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource,MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
             MULTICAMPROJECT_OT_MaterialRefresh)

@@ -13,6 +13,16 @@ def _on_material(data):
 class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
     nor_image: PointerProperty(type=bpy.types.Image, name="Normal")
+    # baked from the Bake Source (04): packed work textures under the projection, never
+    # exported - BA_<name> (albedo) and BN_<name> (normal), overwritten on every bake
+    ba_image: PointerProperty(type=bpy.types.Image, name="Baked Albedo",
+                              description="BA_<name>: albedo baked from the Bake Source (packed)")
+    bn_image: PointerProperty(type=bpy.types.Image, name="Baked Normal",
+                              description="BN_<name>: normal baked from the Bake Source (packed)")
+    ba_fingerprint: StringProperty(description="State of the mesh and uv_normal at the last "
+                                               "Bake from Source")
+    ba_size: IntProperty(description="Resolution of the last Bake from Source (0 = never)")
+    last_ba_seconds: FloatProperty()
     material: PointerProperty(
         type=bpy.types.Material, name="Final Material",
         poll=lambda self, m: bool(m.get("multicamproject_baked")),
@@ -34,15 +44,14 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
         type=bpy.types.Object, name="Remesh Source", poll=lambda self, o: o.type == 'MESH',
         description="The original this Remesh copy was made from (the Remesh link; the bake "
                     "reads Bake Source)")
-    # the high poly this object bakes from: albedo (Selected to Active) and Bake from mesh.
-    # Starts as the Remesh original, any other mesh can be picked. Kept apart from `source`:
-    # Remesh repairs every `source` on load, a picked scan must never be touched
+    # the high poly this object bakes BA_ / BN_ from (Selected to Active). Starts as the
+    # Remesh original, any other mesh can be picked. Kept apart from `source`: Remesh
+    # repairs every `source` on load, a picked scan must never be touched
     bake_source: PointerProperty(
         type=bpy.types.Object, name="Bake Source",
         poll=lambda self, o: o.type == 'MESH' and o != self.id_data,
-        description="The high poly this object bakes from: its albedo (the projection on this "
-                    "mesh, Selected to Active) and Bake from mesh. Empty = the object bakes "
-                    "itself, Bake from mesh uses the scene's High Poly")
+        description="The high poly this object bakes BA_ (its colors) and BN_ (its surface) "
+                    "from - Bake from Source, Selected to Active. Empty = projection only")
 
 
 VIEW_ITEMS = (('PROJECTION', "Projection", "The camera projection setup, editable", 'CAMERA_DATA', 0),
@@ -76,6 +85,10 @@ def _nor_sources(self, context):
 
 
 class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
+    work_resolution: IntProperty(
+        name="Work Resolution", default=4096, min=512, max=8192,
+        description="Width and height of BA_ and BN_ (baked from the Bake Source, packed in "
+                    "the .blend - only a layer under the projection, so smaller than ALB_)")
     resolution: IntProperty(
         name="Resolution", default=8192, min=1024, max=16384,
         description="Width and height of ALB_ and NOR_ in pixels (1K-8K from the toggles "
@@ -115,20 +128,13 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
                                         "larger shading is ignored")
     nor_invert: BoolProperty(name="Invert", default=False,
                              description="Dark = raised instead of dark = recessed")
-    hp_object: PointerProperty(
-        type=bpy.types.Object, name="High Poly", poll=lambda self, o: o.type == 'MESH',
-        description="Mesh whose surface detail is baked onto the object (Bake from mesh)")
     cage_extrusion: FloatProperty(name="Cage Extrusion", default=0.02, min=0.0, unit='LENGTH',
-                                  description="How far rays start outside the object's surface")
+                                  description="Bake from Source: how far rays start outside the "
+                                              "low poly's surface to find the high poly")
     smooth_source: BoolProperty(name="Smooth Source", default=False,
-                                description="Smooth a temporary copy of the high poly first "
-                                            "(against scan noise)")
+                                description="Bake from Source: BN_ from a smoothed temporary "
+                                            "copy of the high poly (against scan noise)")
     smooth_iterations: IntProperty(name="Iterations", default=5, min=1, max=100)
-    albedo_from_source: BoolProperty(
-        name="Albedo from High Poly", default=True,
-        description="A Remesh copy bakes its albedo from the original's full-resolution mesh "
-                    "(its projection, Selected to Active, Cage Extrusion) instead of from its "
-                    "own decimated mesh")
 
     color_source: EnumProperty(
         name="Vertex Color", default='SCAN_ATTRIBUTE',

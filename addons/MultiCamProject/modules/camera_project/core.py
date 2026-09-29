@@ -188,21 +188,25 @@ def scene_cameras(scene):
 
 
 # ---------------------------------------------------------------- material
-# One projection material per object, MCP_<name>, in material slot 1 (MAT_<name> is the
-# baked export material of the baking module). Three frames:
-#   ORIGINAL MATERIALS  the scan's Base Color images, picked per face by uv_index
-#   PROJECTION          Cam 1..N on UV_cam1..N, weighted by VCMix (1-3) and VCMix2 (4-6)
-#   BLEND               Original Scan slider (0 = projection, 1 = scan), masked by VCMix alpha
+# One Processing material per object, MCP_<name>, in material slot 1 (MAT_<name>, the
+# Final material, is the baking module's). Three frames:
+#   BAKED       BA_ (albedo baked from the Bake Source) on uv_normal, grey before a bake
+#   PROJECTION  Cam 1..N on UV_cam1..N, weighted by VCMix (1-3) and VCMix2 (4-6)
+#   BLEND       mask = VCMix alpha x VCMix2 alpha x camera cover (0 = baked, 1 = projected)
+# The mode follows from the data: no BA_ = projection only (grey where erased), and an
+# object without cameras has no MCP_ at all (Final shows its bake).
 
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
-MAT_VERSION = 6         # bump when the material's node setup changes
+MAT_VERSION = 7         # bump when the material's node setup changes
 LAYOUT_VERSION = 6      # from here on nodes have stable names: a rebuild keeps their spots
 PREFIX = "MCP_"
 OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
 BAKED_TAG = "multicamproject_baked"     # MAT_<name> built by the baking module
 LEGACY_PREFIX = "MATMCP_"           # material of the removed Convert Material button
-ORIGINAL_SCAN = "Original Scan"     # name of the slider's Value node
+BAKED_ALBEDO = "Baked Albedo"       # the BA_ Image Texture node
+BAKED_NORMAL = "Baked Normal"       # the BN_ Image Texture node
+NO_BAKE = "No Bake"                 # the grey RGB node while there is no BA_
 UV_INDEX = "uv_index"               # face attribute: the face's material slot
 UV_NORMAL = "uv_normal"             # the user's non-overlapping bake UV (never touched here)
 
@@ -213,34 +217,6 @@ def material_name(obj):
 
 def _is_ours(mat):
     return bool(mat.get(MAT_TAG) or mat.get(BAKED_TAG)) or mat.name.startswith(LEGACY_PREFIX)
-
-
-def _base_color_image(mat):
-    """The Image Texture feeding the Principled BSDF's Base Color (through
-    reroutes/mix nodes), or None."""
-    if mat is None or not mat.use_nodes:
-        return None
-    bsdf = next((n for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED'), None)
-    if bsdf is None:
-        return None
-    todo, seen = [bsdf.inputs["Base Color"]], set()
-    while todo:
-        sock = todo.pop()
-        for link in sock.links:
-            node = link.from_node
-            if node.type == 'TEX_IMAGE' and node.image:
-                return node
-            if node.name not in seen:
-                seen.add(node.name)
-                todo.extend(node.inputs)
-    return None
-
-
-def original_textures(obj):
-    """[(slot index, Image Texture node)] of the scan materials. Materials built by the
-    addon (also another object's, e.g. on a duplicate) are never originals."""
-    return [(i, t) for i, s in enumerate(obj.material_slots)
-            if s.material and not _is_ours(s.material) and (t := _base_color_image(s.material))]
 
 
 def _scan_uv(obj, warnings):
@@ -263,39 +239,37 @@ def _named(node, name):
     return node
 
 
-def _build_original(b, uv_name, textures):
-    """ORIGINAL MATERIALS frame (hand-arranged layout). Returns its color output."""
-    f = _named(b.frame("ORIGINAL MATERIALS", (-1730, 411)), "ORIGINAL MATERIALS")
-    if not textures or uv_name is None:
-        rgb = _named(b.n("ShaderNodeRGB", (851, -36), f, label="No scan texture"), "No scan texture")
-        rgb.outputs[0].default_value = (0.8, 0.8, 0.8, 1.0)
-        return rgb.outputs[0]
-    uv = b.n("ShaderNodeUVMap", (29, -572), f, uv_map=uv_name)
-    attr = b.n("ShaderNodeAttribute", (36, -428), f, attribute_type='GEOMETRY', attribute_name=UV_INDEX)
-    uv_out = b.n("NodeReroute", (576, -600), f)
-    b.link(uv.outputs["UV"], uv_out.inputs[0])
-    uv_out = uv_out.outputs[0]
-    slot_out = b.n("NodeReroute", (711, -449), f)
-    b.link(attr.outputs["Fac"], slot_out.inputs[0])
-    slot_out = slot_out.outputs[0]
-    col = None
-    for row, (slot, src) in enumerate(textures):
-        y = -36 - row * 300
-        tex = b.n("ShaderNodeTexImage", (851, y), f, image=src.image,
-                  interpolation=src.interpolation, extension=src.extension)
-        tex.name = tex.label = f"Slot {slot}"
-        b.link(uv_out, tex.inputs["Vector"])
-        if col is None:
-            col = tex.outputs["Color"]
-            continue
-        hit = b.math("COMPARE", slot_out, float(slot), (1151, y + 100), f"uv_index = {slot}", f)
-        hit.node.inputs[2].default_value = 0.5
-        mix = b.n("ShaderNodeMix", (1351, y), f, data_type="RGBA")
-        b.link(hit, mix.inputs[0])
-        b.link(col, gn_builder._sock(mix.inputs, "A"))
-        b.link(tex.outputs["Color"], gn_builder._sock(mix.inputs, "B"))
-        col = gn_builder._sock(mix.outputs, "Result")
-    return col
+def baked_images(obj):
+    """(BA_, BN_) of the object - baked from its Bake Source (the baking module's data)."""
+    d = getattr(obj, "multicamproject_bake", None)
+    if d is None:
+        return None, None
+    return getattr(d, "ba_image", None), getattr(d, "bn_image", None)
+
+
+def _build_baked(b, ba, bn):
+    """BAKED frame: BA_ (the albedo baked from the Bake Source) on uv_normal, flat grey
+    before a bake. Returns (color, normal or None) - BN_ through a tangent Normal Map."""
+    f = _named(b.frame("BAKED", (-1730, 411)), "BAKED")
+    if ba is None:
+        rgb = _named(b.n("ShaderNodeRGB", (851, -36), f, label="Not baked from a source"), NO_BAKE)
+        rgb.outputs[0].default_value = (0.5, 0.5, 0.5, 1.0)
+        col = rgb.outputs[0]
+    else:
+        uv = _named(b.n("ShaderNodeUVMap", (29, -300), f, uv_map=UV_NORMAL), "Baked UV")
+        tex = _named(b.n("ShaderNodeTexImage", (400, -36), f, image=ba), BAKED_ALBEDO)
+        tex.label = "BA (Baked Albedo)"
+        b.link(uv.outputs["UV"], tex.inputs["Vector"])
+        col = tex.outputs["Color"]
+    if bn is None or ba is None:
+        return col, None
+    tex = _named(b.n("ShaderNodeTexImage", (400, -336), f, image=bn), BAKED_NORMAL)
+    tex.label = "BN (Baked Normal)"
+    b.link(b.t.nodes["Baked UV"].outputs["UV"], tex.inputs["Vector"])
+    nm = _named(b.n("ShaderNodeNormalMap", (700, -336), f, space='TANGENT', uv_map=UV_NORMAL),
+                "Baked Normal Map")
+    b.link(tex.outputs["Color"], nm.inputs["Color"])
+    return col, nm.outputs["Normal"]
 
 
 def _weighted(b, f, ws, cams, x, name):
@@ -334,7 +308,8 @@ def _build_projection(b, n):
     """PROJECTION frame: cameras 1-3 weighted by VCMix, 4-6 by VCMix2 (each normalised).
     Cameras 1-3 win (VCMix on top): s1 = sum(VCMix), w2 = sum(VCMix2) x (1 - s1), color =
     (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
-    mask = VCMix alpha x (s1 + w2): where no camera covers the face, the scan shows.
+    mask = VCMix alpha x VCMix2 alpha x (s1 + w2): erasing either alpha, or no camera
+    covering the face, shows the scan.
     Returns (color, blend mask)."""
     f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
     texs = []
@@ -367,7 +342,7 @@ def _build_projection(b, n):
     color, vc1, ws1 = layers[0]
     mask = vc1.outputs["Alpha"]
     if len(layers) > 1:
-        col2, _vc2, ws2 = layers[1]
+        col2, vc2, ws2 = layers[1]
 
         def layer_sum(ws, y, label):
             a = _named_math(b, f"{label} A", "ADD", ws[0], ws[1], (2700, y), parent=f)
@@ -391,7 +366,9 @@ def _build_projection(b, n):
         b.link(col2, gn_builder._sock(mx.inputs, "B"))
         color = gn_builder._sock(mx.outputs, "Result")
         # nothing covers the face (1-3 cleared, 4-6 do not see it): the scan shows
-        mask = _named_math(b, "Blend Mask", "MULTIPLY", mask, both, (3800, -1200), "Blend Mask", f)
+        alphas = _named_math(b, "Both Alphas", "MULTIPLY", mask, vc2.outputs["Alpha"],
+                             (3650, -1100), "VCMix a x VCMix2 a", f)
+        mask = _named_math(b, "Blend Mask", "MULTIPLY", alphas, both, (3800, -1200), "Blend Mask", f)
     return color, mask
 
 
@@ -406,8 +383,8 @@ def _place(nt, kept):
 
 
 def build_material(obj, warnings=None):
-    """(Re)build MCP_<name> in place. Keeps the Original Scan value and where the nodes
-    stand (by name - a node the rebuild adds takes its place from material_layout)."""
+    """(Re)build MCP_<name> in place. Keeps where the nodes stand (by name - a node the
+    rebuild adds takes its place from material_layout)."""
     warnings = [] if warnings is None else warnings
     mat = ensure_own_material(obj)
     kept = {}
@@ -418,46 +395,52 @@ def build_material(obj, warnings=None):
     mat[MAT_VERSION_KEY] = MAT_VERSION
     mat.use_nodes = True
     nt = mat.node_tree
-    old = nt.nodes.get(ORIGINAL_SCAN)
-    scan = old.outputs[0].default_value if old else 0.0
     nt.nodes.clear()
     b = B(nt)
     out = _named(b.n("ShaderNodeOutputMaterial", (1200, 0)), "Material Output")
     bsdf = _named(b.n("ShaderNodeBsdfPrincipled", (900, 0)), "Principled BSDF")
     b.link(bsdf.outputs[0], out.inputs["Surface"])
 
-    original = _build_original(b, _scan_uv(obj, warnings), original_textures(obj))
+    baked, normal = _build_baked(b, *baked_images(obj))
     projected, mask = _build_projection(b, slot_count(data(obj)))
 
-    # projection weight = mask x (1 - Original Scan)
+    # 0 = baked, 1 = projected
     f = _named(b.frame("BLEND", (-150, 250)), "BLEND")
-    val = _named(b.n("ShaderNodeValue", (20, -40), f, label=ORIGINAL_SCAN), ORIGINAL_SCAN)
-    val.outputs[0].default_value = scan
-    inv = _named_math(b, "Projection", "SUBTRACT", 1.0, val.outputs[0], (220, -40), "Projection", f)
-    inv.node.use_clamp = True
-    w = _named_math(b, "x Blend Mask", "MULTIPLY", mask, inv, (420, -40), "x Blend Mask", f)
     mix = _named(b.n("ShaderNodeMix", (620, -40), f, data_type="RGBA"), "Blend Mix")
-    b.link(w, mix.inputs[0])
-    b.link(original, gn_builder._sock(mix.inputs, "A"))
+    b.link(mask, mix.inputs[0])
+    b.link(baked, gn_builder._sock(mix.inputs, "A"))
     b.link(projected, gn_builder._sock(mix.inputs, "B"))
     b.link(gn_builder._sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
+    if normal is not None:
+        b.link(normal, bsdf.inputs["Normal"])
     _place(nt, kept)
     return mat
 
 
-def _material_ok(mat, n):
-    """Built for exactly `n` cameras (CamTex_1..n, no CamTex_n+1)."""
-    if mat is None or not mat.node_tree or not mat.node_tree.nodes.get(ORIGINAL_SCAN):
+def _baked_ok(nodes, obj):
+    """The BAKED frame shows the object's current BA_ / BN_ (or grey without BA_)."""
+    ba, bn = baked_images(obj)
+    if ba is None:
+        return nodes.get(NO_BAKE) is not None
+    tex, ntex = nodes.get(BAKED_ALBEDO), nodes.get(BAKED_NORMAL)
+    return (tex is not None and tex.image == ba
+            and (ntex.image if ntex is not None else None) == bn)
+
+
+def _material_ok(mat, n, obj=None):
+    """Built for exactly `n` cameras (CamTex_1..n, no CamTex_n+1) and, with `obj`, for its
+    BA_ / BN_."""
+    if mat is None or not mat.node_tree or mat.get(MAT_VERSION_KEY) != MAT_VERSION:
         return False
     nodes = mat.node_tree.nodes
-    return (mat.get(MAT_VERSION_KEY) == MAT_VERSION
-            and all(nodes.get(f"CamTex_{i}") for i in range(1, n + 1)) and not nodes.get(f"CamTex_{n + 1}"))
+    return (all(nodes.get(f"CamTex_{i}") for i in range(1, n + 1)) and not nodes.get(f"CamTex_{n + 1}")
+            and (obj is None or _baked_ok(nodes, obj)))
 
 
 def ensure_material(obj):
     """Each object owns its MCP_<name> (see ownership below), built for its camera count."""
     mat = ensure_own_material(obj)
-    if not _material_ok(mat, slot_count(data(obj))):
+    if not _material_ok(mat, slot_count(data(obj)), obj):
         mat = build_material(obj)
     data(obj).material = mat
     return mat
@@ -536,7 +519,7 @@ def own_material(obj):
 
 def ensure_own_material(obj):
     """obj's own MCP_, named after it: its own (renamed after the object), a copy of the
-    original's on a duplicate (Original Scan and node layout kept), or a new one."""
+    original's on a duplicate (node layout kept), or a new one."""
     mat = own_material(obj)
     if mat is None:
         src = mcp_pointer(obj)
@@ -557,16 +540,25 @@ def shared_mesh(obj):
     return obj.data.users > 1 and sum(o.data == obj.data for o in bpy.data.objects) > 1
 
 
+def keeps_scan(obj):
+    """Only an object without a Bake Source keeps its scan materials (after MCP_ / MAT_):
+    it may still become one (0C Remesh makes it the original). A Remesh copy or a picked
+    low poly bakes BA_ from its source - the scan's materials and UVs mean nothing there."""
+    d = getattr(obj, "multicamproject_bake", None)
+    return d is None or getattr(d, "bake_source", None) is None
+
+
 def arrange_slots(obj, head):
-    """Material slots = `head` (MCP_, MAT_), then the scan materials in their order. Other
-    add-on materials (a duplicate's, MATMCP_) and empty slots go. The faces' material index
-    and uv_index follow their material. Returns True when the slots changed. A mesh shared
-    by several objects is left alone (its slots are every user's)."""
+    """Material slots = `head` (MCP_, MAT_), then the scan materials in their order (only
+    while keeps_scan). Other add-on materials (a duplicate's, MATMCP_) and empty slots go.
+    The faces' material index and uv_index follow their material. Returns True when the
+    slots changed. A mesh shared by several objects is left alone (its slots are every
+    user's)."""
     me = obj.data
     slots = obj.material_slots
     cur = [s.material for s in slots]
     scan = []
-    for m in cur:
+    for m in cur if keeps_scan(obj) else ():
         if m is not None and m not in head and not _is_ours(m) and m not in scan:
             scan.append(m)
     new = list(head) + scan
@@ -623,14 +615,13 @@ def head_materials(obj):
 
 
 def place_material(obj):
-    """MCP_<name> in slot 1, MAT_<name> (once baked) in slot 2, the scan materials after
-    them. A MATMCP_ or another object's MCP_/MAT_ leaves the slots (MATMCP_ is deleted).
-    When the slots moved, MCP_ is rebuilt: its scan textures are picked by slot number."""
+    """MCP_<name> in slot 1, MAT_<name> in slot 2, the scan materials after them (see
+    keeps_scan). A MATMCP_ or another object's MCP_/MAT_ leaves the slots (MATMCP_ is
+    deleted)."""
     legacy = bpy.data.materials.get(LEGACY_PREFIX + obj.name)
     head = head_materials(obj)
     mat = head[0]
-    if arrange_slots(obj, head) and mat.node_tree and mat.node_tree.nodes.get(ORIGINAL_SCAN):
-        build_material(obj)
+    arrange_slots(obj, head)
     if legacy and legacy.users == 0:
         bpy.data.materials.remove(legacy)
     obj.active_material_index = 0
@@ -638,8 +629,9 @@ def place_material(obj):
 
 
 def write_uv_index(obj):
-    """uv_index (face, int) = the face's material slot, read by ORIGINAL MATERIALS.
-    Faces on slot 1 - the combined material, e.g. after a bake - keep their value."""
+    """uv_index (face, int) = the face's scan material slot: Remesh gives the original its
+    scan materials back with it (remesh.workflow.repair_original). Faces on slot 1 - after
+    Bake Camera Mixture - keep their value."""
     me = obj.data
     n = len(me.polygons)
     mi = np.empty(n, dtype=np.int32)
@@ -663,12 +655,13 @@ def write_uv_index(obj):
 
 
 def combine_materials(obj):
-    """Setup/Reload All step: one material for the scan and the projection.
+    """Setup/Reload All step: MCP_ + MAT_ in the slots, MCP_ rebuilt.
     Returns a list of warning strings."""
     warnings = []
     _remove_legacy(obj)
     place_material(obj)
-    write_uv_index(obj)
+    if keeps_scan(obj):
+        write_uv_index(obj)
     data(obj).material = build_material(obj, warnings)
     return warnings
 
@@ -935,7 +928,29 @@ def migrate_all():
             if old and not len(d.cameras):
                 print(f"[MultiCamProject] '{obj.name}': no camera sees it after the "
                       "coverage migration - press Measure Coverage to check")
+        if obj.type == 'MESH' and not obj.library:
+            migrate_mask2(obj)
     migrate_wrappers(scene)
+
+
+def migrate_mask2(obj):
+    """Before the blend mask was VCMix alpha x VCMix2 alpha, VCMix2 alpha was paint_sync's
+    marker, kept at 0: a painted VCMix2 with no alpha anywhere takes VCMix's alpha."""
+    ca = obj.data.color_attributes
+    l1, l2 = (ca.get(n) for n in gn_builder.LAYERS)
+    if (l1 is None or l2 is None or l1.domain != l2.domain
+            or obj.data.attributes.get(gn_builder.MASK2_STASH) is not None):
+        return False
+    a1 = np.empty(len(l1.data) * 4, dtype=np.float32)
+    l1.data.foreach_get("color", a1)
+    a2 = np.empty(len(l2.data) * 4, dtype=np.float32)
+    l2.data.foreach_get("color", a2)
+    if a2[3::4].max(initial=0.0) > 1e-4 or a1[3::4].max(initial=0.0) <= 1e-4:
+        return False
+    a2[3::4] = a1[3::4]
+    l2.data.foreach_set("color", a2)
+    print(f"[MultiCamProject] '{obj.name}': VCMix2 alpha taken from VCMix (blend mask)")
+    return True
 
 
 def migrate_wrappers(scene):

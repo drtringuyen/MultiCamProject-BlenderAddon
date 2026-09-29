@@ -11,8 +11,8 @@ LAYOUT = {
     "Material Output": (4345.4, -476.9),
     "Principled BSDF": (4030.7, -355.0),
 
-    "ORIGINAL MATERIALS": (3211.0, -710.0),
-    "No scan texture": (29.6, -36.1),
+    "BAKED": (3211.0, -710.0),
+    "No Bake": (29.6, -36.1),
 
     "PROJECTION": (-2536.0, 1486.0),
     "CamUV_1": (34.1, -86.2),
@@ -70,11 +70,9 @@ LAYOUT = {
     "Cameras Cover Max": (4591.6, -899.8),
     "4-6 Fraction": (4874.2, -932.6),
     "VCMix on top": (5407.4, -402.4),
+    "Both Alphas": (4755.3, -1173.9),
     "Blend Mask": (4905.3, -1323.9),
 
     "BLEND": (2836.0, -400.0),
-    "Original Scan": (30.1, -117.5),
-    "Projection": (230.1, -117.5),
-    "x Blend Mask": (430.1, -117.5),
     "Blend Mix": (748.9, -36.5),
 }

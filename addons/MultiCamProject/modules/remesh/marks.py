@@ -1,41 +1,46 @@
-"""Set Faces: what a face region is marked as, and the overlay that previews it.
+"""02 Select & Set: what happens to a face region, and the overlay that previews it.
 
-  High Density -> vertex group vg_HighRes = 1 (the Decimate Selective modifier reads it)
-  Delete Geo   -> vertex group vg_toDelete = 1 + face BOOL remesh_delete   (for GN-Remesh)
-  To Separate  -> vertex group vg_toSeparate = 1 + face BOOL remesh_detach (GN-Remesh decides)
-  Clear        -> none of them
+  Projected   -> VCMix and VCMix2 alpha = 1 on the region (the projection shows)
+  Baked       -> both alphas = 0 (BA_, baked from the Bake Source, shows)
+  Protect     -> vertex group vg_Protect = 1 (the Decimate leaves it as it is)
+  Unprotect   -> out of vg_Protect
+  Delete      -> the faces are deleted right away
+  Seam only   -> nothing but the seam option
 
-The options are exclusive: a region is cleared before it gets its new mark. The region's
-boundary can become a UV seam. Object Mode writes through the mesh API (Sculpt Mode goes
-there for the write), Edit Mode through bmesh (its undo records all of it).
+Seam: the region's outline gets a UV seam (Mark), loses it (Clear) or is left alone.
+The dialog only previews (overlay); the write happens on Set. Object Mode writes through
+the mesh API (Sculpt Mode goes there for the write), Edit Mode through bmesh (its undo
+records all of it).
 """
+import bmesh
 import bpy
 import gpu
 import numpy as np
 from gpu_extras.batch import batch_for_shader
 from mathutils.bvhtree import BVHTree
 
+from ..camera_project import gn_builder
 from . import core, workflow as wf
 
-ACTIONS = (('HIGH_DENSITY', "High Density", "Keep more detail: vertex group vg_HighRes = 1 "
-            "(the Decimate Selective modifier reads it)", 'MOD_DECIM', 0),
-           ('DELETE', "Delete Geo", "Vertex group vg_toDelete and face attribute "
-            "remesh_delete (GN-Remesh deletes it)", 'TRASH', 1),
-           ('SEPARATE', "To Separate", "Vertex group vg_toSeparate and face attribute "
-            "remesh_detach (marked only - GN-Remesh decides what happens)", 'MOD_EXPLODE', 2),
-           ('CLEAR', "Clear", "Remove the marks from the faces, and their boundary seam when "
-            "Mark boundary as seam is on", 'X', 3))
+ACTIONS = (('PROJECTED', "Projected", "VCMix + VCMix2 alpha = 1: the camera projection shows "
+            "on these faces", 'CAMERA_DATA', 0),
+           ('BAKED', "Baked", "VCMix + VCMix2 alpha = 0: BA_ (baked from the Bake Source) "
+            "shows on these faces", 'TEXTURE', 1),
+           ('PROTECT', "Protect from Decimate", "Vertex group vg_Protect = 1: the Decimate "
+            "keeps these faces as they are (new, clean geometry)", 'LOCKED', 2),
+           ('UNPROTECT', "Unprotect", "Out of vg_Protect: the Decimate reduces them again",
+            'UNLOCKED', 3),
+           ('DELETE', "Delete", "Delete these faces now", 'TRASH', 4),
+           ('SEAM_ONLY', "Seam only", "Only the seam option below", 'MOD_UVPROJECT', 5))
 
-COLORS = {'HIGH_DENSITY': (0.2, 0.55, 1.0), 'DELETE': (1.0, 0.2, 0.2),
-          'SEPARATE': (1.0, 0.7, 0.1), 'CLEAR': (0.7, 0.7, 0.7)}
+SEAMS = (('MARK', "Mark Seam", "The outline becomes a UV seam"),
+         ('CLEAR', "Clear Seam", "The outline's UV seam goes"),
+         ('KEEP', "Leave", "Seams stay as they are"))
 
-VGROUPS = {'HIGH_DENSITY': wf.VG_HIGHRES, 'DELETE': wf.VG_DELETE, 'SEPARATE': wf.VG_SEPARATE}
+COLORS = {'PROJECTED': (0.2, 0.55, 1.0), 'BAKED': (0.9, 0.6, 0.2), 'PROTECT': (0.3, 0.9, 0.4),
+          'UNPROTECT': (0.7, 0.7, 0.7), 'DELETE': (1.0, 0.2, 0.2), 'SEAM_ONLY': (1.0, 0.3, 0.9)}
 
-
-def ensure_groups(obj):
-    """action -> its vertex group, created when missing."""
-    return {a: obj.vertex_groups.get(n) or obj.vertex_groups.new(name=n)
-            for a, n in VGROUPS.items()}
+MASK_ACTIONS = {'PROJECTED': 1.0, 'BAKED': 0.0}
 
 _last_face_set = {}     # mesh name -> the face set picked or cut last
 
@@ -46,6 +51,22 @@ def last_face_set(obj):
 
 def remember_face_set(obj, fs):
     _last_face_set[obj.data.name] = fs
+
+
+def needs_paint_layers(obj, action):
+    """Projected / Baked write the mesh's own VCMix layers: they must exist (Object Mode
+    makes them with camera_project.core.ensure_paint_layer)."""
+    if action not in MASK_ACTIONS:
+        return False
+    ca = obj.data.color_attributes
+    return ca.get(gn_builder.LAYERS[0]) is None
+
+
+def mask_problem(obj, action):
+    if action in MASK_ACTIONS and not (hasattr(obj, "multicamproject_cam")
+                                       and obj.multicamproject_cam.is_setup):
+        return "Projected / Baked need the camera projection (0B)"
+    return ""
 
 
 # ---------------------------------------------------------------- mesh topology (numpy)
@@ -77,95 +98,62 @@ def face_mask(obj, face_set):
     return core._face_sets(obj.data) == face_set
 
 
-def _bool_attr(me, name):
-    a = me.attributes.get(name)
-    if a is not None and (a.domain != 'FACE' or a.data_type != 'BOOLEAN'):
-        me.attributes.remove(a)
-        a = None
-    if a is None:
-        a = me.attributes.new(name, 'BOOLEAN', 'FACE')
-    return a
-
-
-def _in_group(vg, index):
-    try:
-        return vg.weight(index) > 0.0
-    except RuntimeError:            # not in the group
-        return False
-
-
-def apply_object_mode(obj, faces, action, mark_seam):
-    """Write the marks for the faces (bool array) in Object Mode."""
-    me = obj.data
-    if not faces.any():
-        return 0
-    loop_vert = _loop_array(me, "vertex_index")
+def _set_alpha_object(me, faces, value):
+    """VCMix / VCMix2 alpha (and paint_sync's stash) = value on the region."""
     lf = _loop_faces(me)
-    verts = np.unique(loop_vert[faces[lf]])
+    corner = faces[lf]
+    point = np.zeros(len(me.vertices), bool)
+    point[np.unique(_loop_array(me, "vertex_index")[corner])] = True
+    sel = {'CORNER': corner, 'POINT': point}
+    for name in gn_builder.LAYERS:
+        a = me.color_attributes.get(name)
+        if a is None or a.domain not in sel:
+            continue
+        buf = np.empty(len(a.data) * 4, np.float32)
+        a.data.foreach_get("color", buf)
+        buf[3::4][sel[a.domain]] = value
+        a.data.foreach_set("color", buf)
+    st = me.attributes.get(gn_builder.MASK2_STASH)
+    if st is not None and st.domain in sel and st.data_type == 'FLOAT':
+        v = np.empty(len(st.data), np.float32)
+        st.data.foreach_get("value", v)
+        v[sel[st.domain]] = value
+        st.data.foreach_set("value", v)
 
-    groups = ensure_groups(obj)
-    # clear: a vertex keeps its weight in a group when a face outside the region that is in
-    # the same group uses it (only the faces touching the region are checked)
-    in_region = np.zeros(len(me.vertices), bool)
-    in_region[verts] = True
-    ring = ~faces & (np.bincount(lf, weights=in_region[loop_vert], minlength=len(faces)) > 0)
-    ring_faces = []
-    if ring.any():
-        starts = np.empty(len(me.polygons), np.int32)
-        totals = np.empty(len(me.polygons), np.int32)
-        me.polygons.foreach_get("loop_start", starts)
-        me.polygons.foreach_get("loop_total", totals)
-        ring_faces = [loop_vert[starts[fi]:starts[fi] + totals[fi]].tolist()
-                      for fi in np.flatnonzero(ring).tolist()]
-    for vg in groups.values():
-        kept = np.zeros(len(me.vertices), bool)
-        weighted = {}
-        for fv in ring_faces:
-            for i in fv:
-                if i not in weighted:
-                    weighted[i] = _in_group(vg, i)
-            if all(weighted[i] for i in fv):
-                kept[fv] = True
-        vg.remove([int(i) for i in verts if not kept[i]])
-    target = {'DELETE': wf.ATTR_DELETE, 'SEPARATE': wf.ATTR_DETACH}.get(action)
-    for name in (wf.ATTR_DELETE, wf.ATTR_DETACH):
-        if name in me.attributes or name == target:
-            a = _bool_attr(me, name)
-            vals = np.zeros(len(me.polygons), bool)
-            a.data.foreach_get("value", vals)
-            vals[faces] = False
-            a.data.foreach_set("value", vals)
 
-    if action in groups:
-        groups[action].add([int(i) for i in verts], 1.0, 'REPLACE')
-    if action in {'DELETE', 'SEPARATE'}:
-        a = _bool_attr(me, wf.ATTR_DELETE if action == 'DELETE' else wf.ATTR_DETACH)
-        vals = np.zeros(len(me.polygons), bool)
-        a.data.foreach_get("value", vals)
-        vals[faces] = True
-        a.data.foreach_set("value", vals)
-
-    if mark_seam:
+def apply_object_mode(obj, faces, action, seam):
+    """Do `action` on the faces (bool array) in Object Mode. Returns the face count."""
+    me = obj.data
+    n = int(faces.sum())
+    if not n:
+        return 0
+    if seam != 'KEEP':
         seams = np.empty(len(me.edges), bool)
         me.edges.foreach_get("use_seam", seams)
-        seams[boundary_edges(me, faces)] = action != 'CLEAR'
+        seams[boundary_edges(me, faces)] = seam == 'MARK'
         me.edges.foreach_set("use_seam", seams)
+    if action in MASK_ACTIONS:
+        _set_alpha_object(me, faces, MASK_ACTIONS[action])
+    elif action in {'PROTECT', 'UNPROTECT'}:
+        vg = obj.vertex_groups.get(wf.VG_PROTECT) or obj.vertex_groups.new(name=wf.VG_PROTECT)
+        verts = np.unique(_loop_array(me, "vertex_index")[faces[_loop_faces(me)]]).tolist()
+        if action == 'PROTECT':
+            vg.add(verts, 1.0, 'REPLACE')
+        else:
+            vg.remove(verts)
+    elif action == 'DELETE':
+        bm = bmesh.new()
+        bm.from_mesh(me)
+        bm.faces.ensure_lookup_table()
+        bmesh.ops.delete(bm, geom=[bm.faces[i] for i in np.flatnonzero(faces).tolist()],
+                         context='FACES')
+        bm.to_mesh(me)
+        bm.free()
     me.update()
-    return int(faces.sum())
+    return n
 
 
 # ---------------------------------------------------------------- Edit Mode (bmesh)
-
-def _bm_layers(bm):
-    """Face BOOL layers (int on a bmesh without bool layers)."""
-    layers = bm.faces.layers
-    return layers.bool if hasattr(layers, "bool") else layers.int
-
-
-def _bm_bool_layer(bm, name):
-    layers = _bm_layers(bm)
-    return layers.get(name) or layers.new(name)
-
 
 def edit_region(bm):
     return [f for f in bm.faces if f.select]
@@ -177,99 +165,57 @@ def _edit_boundary(faces):
             if len(e.link_faces) > 1 and any(g not in region for g in e.link_faces)]
 
 
-def edit_backup(obj, bm, faces):
-    """What apply_edit_mode may change, to put back when the dialog is cancelled."""
-    deform = bm.verts.layers.deform.active
-    verts = {v for f in faces for v in f.verts}
-    weights = {}                    # group name -> {vertex: weight or None}
-    for name in VGROUPS.values():
-        vg = obj.vertex_groups.get(name)
-        weights[name] = ({v.index: v[deform].get(vg.index) for v in verts}
-                         if vg is not None and deform is not None else {})
-    attrs = {}
-    for name in (wf.ATTR_DELETE, wf.ATTR_DETACH):
-        layers = _bm_layers(bm)
-        lay = layers.get(name)
-        attrs[name] = None if lay is None else {f.index: f[lay] for f in faces}
-    seams = {e.index: e.seam for e in _edit_boundary(faces)}
-    return {"weights": weights, "attrs": attrs, "seams": seams,
-            "verts": [v.index for v in verts]}
-
-
-def edit_restore(obj, bm, backup):
-    bm.verts.ensure_lookup_table()
-    bm.faces.ensure_lookup_table()
-    bm.edges.ensure_lookup_table()
-    deform = bm.verts.layers.deform.active
-    for name, weights in backup["weights"].items():
-        vg = obj.vertex_groups.get(name)
-        if vg is None or deform is None:
+def _set_alpha_edit(obj, bm, faces, value):
+    for name in gn_builder.LAYERS:
+        a = obj.data.color_attributes.get(name)
+        if a is None:
             continue
-        for i in backup["verts"]:
-            dv = bm.verts[i][deform]
-            w = weights.get(i)
-            if w is None:
-                if vg.index in dv.keys():
-                    del dv[vg.index]
-            else:
-                dv[vg.index] = w
-    for name, vals in backup["attrs"].items():
-        layers = _bm_layers(bm)
-        lay = layers.get(name)
+        if a.domain == 'CORNER':
+            lay = bm.loops.layers.float_color.get(name) or bm.loops.layers.color.get(name)
+            items = [loop for f in faces for loop in f.loops]
+        else:
+            lay = bm.verts.layers.float_color.get(name) or bm.verts.layers.color.get(name)
+            items = list({v for f in faces for v in f.verts})
         if lay is None:
             continue
-        if vals is None:
-            layers.remove(lay)
-            continue
-        for i, v in vals.items():
-            bm.faces[i][lay] = v
-    for i, s in backup["seams"].items():
-        bm.edges[i].seam = s
+        for it in items:
+            c = it[lay]
+            c[3] = value
+            it[lay] = c
+    lay = bm.loops.layers.float.get(gn_builder.MASK2_STASH)
+    if lay is not None:
+        for f in faces:
+            for loop in f.loops:
+                loop[lay] = value
+    lay = bm.verts.layers.float.get(gn_builder.MASK2_STASH)
+    if lay is not None:
+        for v in {v for f in faces for v in f.verts}:
+            v[lay] = value
 
 
-def apply_edit_mode(obj, bm, faces, action, mark_seam):
+def apply_edit_mode(obj, bm, faces, action, seam):
+    """Do `action` on the selected faces of the edit bmesh. Returns the face count."""
     if not faces:
         return 0
-    groups = ensure_groups(obj)
-    # every layer first: adding one frees the BMFace references taken before it
-    index = [f.index for f in faces]
-    deform = bm.verts.layers.deform.verify()
-    target = {'DELETE': wf.ATTR_DELETE, 'SEPARATE': wf.ATTR_DETACH}.get(action)
-    if target is not None:
-        _bm_bool_layer(bm, target)
-    layers = _bm_layers(bm)
-    attr_layers = [lay for lay in (layers.get(wf.ATTR_DELETE), layers.get(wf.ATTR_DETACH))
-                   if lay is not None]
-    bm.faces.ensure_lookup_table()
-    faces = [bm.faces[i] for i in index]
-    region = set(faces)
-    verts = {v for f in faces for v in f.verts}
-
-    def in_group(f, gi):
-        return all(v[deform].get(gi, 0.0) > 0.0 for v in f.verts)
-
-    for vg in groups.values():
-        gi = vg.index
-        for v in verts:
-            if gi in v[deform].keys() and not any(g not in region and in_group(g, gi)
-                                                  for g in v.link_faces):
-                del v[deform][gi]
-    for lay in attr_layers:
-        for f in faces:
-            f[lay] = False
-
-    if action in groups:
-        gi = groups[action].index
-        for v in verts:
-            v[deform][gi] = 1.0
-    if target is not None:
-        lay = layers.get(target)
-        for f in faces:
-            f[lay] = True
-    if mark_seam:
+    n = len(faces)
+    if seam != 'KEEP':
         for e in _edit_boundary(faces):
-            e.seam = action != 'CLEAR'
-    return len(faces)
+            e.seam = seam == 'MARK'
+    if action in MASK_ACTIONS:
+        _set_alpha_edit(obj, bm, faces, MASK_ACTIONS[action])
+    elif action in {'PROTECT', 'UNPROTECT'}:
+        vg = obj.vertex_groups.get(wf.VG_PROTECT) or obj.vertex_groups.new(name=wf.VG_PROTECT)
+        index = [f.index for f in faces]
+        deform = bm.verts.layers.deform.verify()        # frees earlier BMFace references
+        bm.faces.ensure_lookup_table()
+        for v in {v for i in index for v in bm.faces[i].verts}:
+            if action == 'PROTECT':
+                v[deform][vg.index] = 1.0
+            elif vg.index in v[deform].keys():
+                del v[deform][vg.index]
+    elif action == 'DELETE':
+        bmesh.ops.delete(bm, geom=faces, context='FACES')
+    return n
 
 
 def edit_select_face_set(bm, face_set):
@@ -328,7 +274,7 @@ def pick_face(obj, origin, direction, bm=None):
 
 # ---------------------------------------------------------------- overlay
 
-_overlay = {"handle": None, "tris": None, "lines": None, "action": 'HIGH_DENSITY'}
+_overlay = {"handle": None, "tris": None, "lines": None, "action": 'PROJECTED'}
 
 
 def _overlay_mesh(obj, faces):

@@ -71,11 +71,81 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
         pass
 
 
+class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
+    """Setup: 0A / 0B / 0C in any order - each adds its part to the same object:
+    MCP_ + MAT_, the camera lists, the Bake Source, EXPORT"""
+    bl_label = "Setup"
+    bl_idname = "MULTICAMPROJECT_PT_setup"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_parent_id = "MULTICAMPROJECT_PT_main"
+    bl_order = 0
+
+    def draw_header(self, context):
+        self.layout.label(icon='SETTINGS')
+
+    def draw(self, context):
+        from . import module_manager as mm
+        layout = self.layout
+        obj = context.active_object
+        mesh = obj is not None and obj.type == 'MESH'
+        if not mesh:
+            layout.label(text="Select a mesh", icon='INFO')
+        cams = any(o.type == 'CAMERA' for o in context.scene.objects)
+        col = layout.column(align=True)
+        col.scale_y = 1.3
+
+        if mm.is_loaded("project_sides"):
+            row = col.row(align=True)
+            # the default start while the scene has no camera
+            row.operator("multicamproject.project_sides", text="0A. Project from Sides",
+                         icon='AXIS_SIDE', depress=not cams)
+            row.popover(panel="MULTICAMPROJECT_PT_project_sides", text="", icon='PREFERENCES')
+
+        setup = mesh and hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup
+        if mm.is_loaded("camera_project"):
+            row = col.row(align=True)
+            row.enabled = cams
+            row.operator("multicamproject.setup", text="0B. Setup Camera Projection",
+                         icon='CHECKMARK' if setup else 'CAMERA_DATA')
+
+        low = False
+        if mm.is_loaded("remesh"):
+            from .modules.remesh import workflow as wf
+            low = mesh and wf.is_low_poly(obj)
+            row = col.row(align=True)
+            row.operator("multicamproject.remesh", text="0C. Remesh",
+                         icon='CHECKMARK' if low else 'MOD_REMESH')
+            row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
+
+        if not mesh:
+            return
+        # what the object has now
+        info = layout.column(align=True)
+        info.active = False
+        if not cams:
+            info.label(text="No camera in the scene: start with 0A", icon='INFO')
+        parts = []
+        if setup:
+            parts.append(f"{len(obj.multicamproject_cam.cameras)} cameras")
+        if low:
+            src = obj.multicamproject_bake.bake_source
+            parts.append(f"source: {src.name}" if src else "no Bake Source")
+        if hasattr(obj, "multicamproject_bake"):
+            d = obj.multicamproject_bake
+            parts.append("BA_ baked" if d.ba_image else "no BA_")
+        if parts:
+            info.label(text="  ·  ".join(parts), icon='OBJECT_DATA')
+
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_PT_Infos)
     bpy.utils.register_class(MULTICAMPROJECT_PT_MainPanel)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_Setup)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_Setup)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_MainPanel)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Infos)

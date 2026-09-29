@@ -18,9 +18,10 @@ def settings(scene):
     return scene.multicamproject_bake_settings
 
 
-def margin_px(s):
-    """The bake margin at the scene's resolution (Margin is set at 8K)."""
-    return max(1, round(s.margin * s.resolution / REFERENCE)) if s.margin else 0
+def margin_px(s, size=None):
+    """The bake margin at `size` (default: the scene's resolution); Margin is set at 8K."""
+    size = size or s.resolution
+    return max(1, round(s.margin * size / REFERENCE)) if s.margin else 0
 
 
 def alb_name(obj):
@@ -31,6 +32,16 @@ def alb_name(obj):
 def nor_name(obj):
     from .naming import typed_name
     return typed_name("NOR", obj)
+
+
+def ba_name(obj):
+    from .naming import typed_name
+    return typed_name("BA", obj)
+
+
+def bn_name(obj):
+    from .naming import typed_name
+    return typed_name("BN", obj)
 
 
 def mat_name(obj):

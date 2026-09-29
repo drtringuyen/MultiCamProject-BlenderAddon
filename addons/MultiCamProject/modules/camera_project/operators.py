@@ -31,15 +31,22 @@ def _report_warnings(op, warnings):
 
 
 class MULTICAMPROJECT_OT_Setup(bpy.types.Operator):
-    """Build the projection node groups, material and modifier on the active mesh,
-    then detect the cameras that see it"""
+    """0B: project the scene's cameras (their Background images) onto the active mesh -
+    the node groups, the Processing material MCP_ and the modifier - then detect the
+    cameras that see it"""
     bl_idname = "multicamproject.setup"
     bl_label = "Setup Camera Projection"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
-        return _mesh_poll(context)
+        if not _mesh_poll(context):
+            cls.poll_message_set("Object Mode, a mesh active")
+            return False
+        if not any(o.type == 'CAMERA' for o in context.scene.objects):
+            cls.poll_message_set("No camera in the scene - start with 0A Project from Sides")
+            return False
+        return True
 
     def execute(self, context):
         obj = context.active_object
@@ -569,8 +576,8 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
                         if slot > 3 else ""),
             'FLOOD': f"Fill the selected faces with this camera's color in {layer} "
                      "(Edit Mode, faces selected)",
-            'ERASE': "Erase the projection (all cameras, VCMix and VCMix2) - the original "
-                     "scan shows.\nShift+click: bring the projection back",
+            'ERASE': "Erase the projection (the alpha of VCMix and VCMix2) - the baked "
+                     "texture shows.\nShift+click: bring the projection back",
         }[props.mode]
 
     def invoke(self, context, event):
@@ -598,7 +605,9 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             self.report({'INFO'}, msg)
         claims = layer == paint_sync.L2 and self.mode != 'ERASE'
         if claims:
-            paint_sync.clear_marker(obj)    # the brush's alpha then marks the stroke
+            paint_sync.begin_session(obj)   # the brush's alpha then marks the stroke
+        else:
+            paint_sync.end_session(obj)     # VCMix2 alpha back before VCMix strokes mirror it
         bpy.ops.object.mode_set(mode='VERTEX_PAINT')
         paint_sync.reset(obj)
 
@@ -616,6 +625,55 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             obj.data.use_paint_mask = True
             bpy.ops.paint.vertex_color_set(use_alpha=True)
             paint_sync.sync(obj)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
+    """Set the blend mask on the whole object: All Projected (both alphas 1) or All Baked
+    (both 0, BA_ shows). Painting and Set Faces go on from there"""
+    bl_idname = "multicamproject.mask_fill"
+    bl_label = "Fill Blend Mask"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    value: bpy.props.FloatProperty(default=1.0, min=0.0, max=1.0, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return ("All Projected: VCMix and VCMix2 alpha = 1 everywhere - the cameras show"
+                if props.value >= 0.5 else
+                "All Baked: VCMix and VCMix2 alpha = 0 everywhere - BA_ (baked from the Bake "
+                "Source) shows")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
+                and context.mode in {'OBJECT', 'PAINT_VERTEX'})
+
+    def execute(self, context):
+        import numpy as np
+        obj = context.active_object
+        mode = context.mode
+        if obj.mode == 'VERTEX_PAINT':
+            paint_sync.sync(obj)
+            bpy.ops.object.mode_set(mode='OBJECT')
+        core.ensure_paint_layer(obj)
+        me = obj.data
+        for name in gn_builder.LAYERS:
+            a = me.color_attributes.get(name)
+            if a is None:
+                continue
+            buf = np.empty(len(a.data) * 4, np.float32)
+            a.data.foreach_get("color", buf)
+            buf[3::4] = self.value
+            a.data.foreach_set("color", buf)
+        st = me.attributes.get(paint_sync.STASH)
+        if st is not None:
+            st.data.foreach_set("value", np.full(len(st.data), self.value, np.float32))
+        obj.update_tag()
+        if mode == 'PAINT_VERTEX':
+            bpy.ops.object.mode_set(mode='VERTEX_PAINT')
+            paint_sync.reset(obj)
         return {'FINISHED'}
 
 
@@ -672,6 +730,11 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
         core.remove_drivers(obj, mod)
         with context.temp_override(object=obj, active_object=obj):
             bpy.ops.object.modifier_apply(modifier=name)
+        # the applied VCMix2 alpha already holds the stash (the GN stored the larger one)
+        stash = me.attributes.get(paint_sync.STASH)
+        if stash is not None:
+            me.attributes.remove(stash)
+        paint_sync._sessions.discard(obj.name)
 
         new = core.ensure_modifier(obj)
         new.name = name
@@ -771,6 +834,7 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
 
 _classes = (
     MULTICAMPROJECT_OT_Setup,
+    MULTICAMPROJECT_OT_MaskFill,
     MULTICAMPROJECT_OT_AutoPick,
     MULTICAMPROJECT_OT_CheckSlots,
     MULTICAMPROJECT_OT_MeasureCoverage,

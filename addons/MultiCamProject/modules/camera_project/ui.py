@@ -19,7 +19,9 @@ TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next t
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
-    bl_label = "Camera Project"
+    """05 Projection Painting: go through the cameras and paint VCMix / VCMix2 - which
+    camera shows where, and (alpha) projection or BA_. Shown once 0B is done"""
+    bl_label = "05. Projection Painting"
     bl_idname = "MULTICAMPROJECT_PT_camera_project"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -27,20 +29,18 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     bl_parent_id = "MULTICAMPROJECT_PT_main"
     bl_order = 2
 
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
+
     def draw_header(self, context):
-        self.layout.label(icon='GRID')
+        self.layout.label(icon='BRUSH_DATA')
 
     def draw(self, context):
         layout = self.layout
         obj = context.active_object
-        if obj is None or obj.type != 'MESH':
-            layout.alert = True
-            layout.label(text="Select a mesh object", icon='ERROR')
-            return
         d = core.data(obj)
-        if not d.is_setup:
-            layout.operator("multicamproject.setup", icon='CAMERA_DATA')
-            return
 
         mod = core.get_modifier(obj)
         if mod is None or mod.node_group is None:
@@ -50,8 +50,23 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             layout.operator("multicamproject.setup", text="Rebuild Setup", icon='FILE_REFRESH')
             return
 
+        self._draw_mode(layout, obj)
         # straight in the panel: Folder, Clip + Mode, blend row, then the camera sections
         self._draw_box(context, layout, obj, d, mod)
+
+    @staticmethod
+    def _draw_mode(layout, obj):
+        """What the Processing material blends, and the whole-object mask buttons."""
+        ba, _bn = core.baked_images(obj)
+        row = layout.row(align=True)
+        sub = row.row(align=True)
+        sub.active = False
+        if ba is not None:
+            sub.label(text="Mix: projection over BA_ (by the mask)", icon='NODE_MATERIAL')
+        else:
+            sub.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')
+        row.operator("multicamproject.mask_fill", text="", icon='CAMERA_DATA').value = 1.0
+        row.operator("multicamproject.mask_fill", text="", icon='TEXTURE').value = 0.0
 
     LABEL_UNITS = 2.6      # width of the Folder / Clip / Blend label column
     MODE_SPLIT = 0.66      # Clip | Mode and Blend | Occlusion share this split
@@ -89,10 +104,6 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         split = row.split(factor=self.MODE_SPLIT, align=True)     # Occlusion under Mode
         blend = split.row(align=True)
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
-        scan = d.material.node_tree.nodes.get(core.ORIGINAL_SCAN) if d.material else None
-        if scan:
-            # a Value node has no 0..1 range, so no slider (its bar would be wrong)
-            blend.prop(scan.outputs[0], "default_value", text="Original Scan")
         split.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion", toggle=True,
                    icon='MOD_MASK')
 

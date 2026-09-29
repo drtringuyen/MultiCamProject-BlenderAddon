@@ -23,7 +23,7 @@ SUMMARY = {
                   "Fix transforms"),
     'OUTDATED': ("{n} outdated bake(s)", "multicamproject.export_update_outdated",
                  "Update outdated"),
-    'UV_MISSING': ("{n} missing uv_normal", None, "create it by hand"),
+    'UV_MISSING': ("{n} missing uv_normal", "multicamproject.export_make_uv", "Make uv_normal"),
     'UV_BAD': ("{n} uv_normal outside 0-1 / overlapping", None, "fix it by hand"),
     'UV_EXTRA': ("{n} with extra UV maps (dropped in the FBX)", None, ""),
     'NOT_BAKED': ("{n} not baked", "multicamproject.export_bake_missing", "Bake missing"),
@@ -33,7 +33,17 @@ SUMMARY = {
     'SHARED_MESH': ("{n} mesh(es) shared by several objects", None, "make single user"),
     'MESH': ("{n} mesh warning(s)", None, ""),
     'COLOR': ("{n} without scan color (Color from ALB)", None, ""),
+    'DECIMATE': ("{n} with the Decimate not applied (03)", None, "apply it, then unwrap"),
 }
+
+DECIMATE = "Decimate"       # remesh.workflow.DECIMATE (export works without the module)
+
+
+def live_decimate(obj):
+    """The low poly's Decimate is still a modifier: uv_normal would be made on the dense
+    mesh and collapsed at export - it is left out of the FBX until 03 applies it."""
+    mod = obj.modifiers.get(DECIMATE)
+    return mod is not None and mod.type == 'DECIMATE' and mod.show_render
 
 # ---------------------------------------------------------------- names
 
@@ -160,7 +170,8 @@ def uv_stats(obj):
 def check_uv(obj):
     me = obj.data
     if me.uv_layers.get(common.UV_NORMAL) is None:
-        return [Issue(obj.name, 'UV_MISSING', "no uv_normal (make it by hand)", ERROR)]
+        return [Issue(obj.name, 'UV_MISSING', "no uv_normal (Smart UV on export, or unwrap "
+                      "it yourself)", ERROR)]
     out = []
     outside, overlap = uv_stats(obj)
     if outside > 0:
@@ -169,7 +180,9 @@ def check_uv(obj):
     if overlap > 0.005:
         out.append(Issue(obj.name, 'UV_BAD', f"uv_normal: {overlap:.1%} overlapping", WARNING))
     from ..camera_project import core as cp
-    known = {common.UV_NORMAL, cp._scan_uv(obj, [])}
+    known = {common.UV_NORMAL}
+    if cp.keeps_scan(obj):          # a low poly's scan UV means nothing (GN-Final drops it)
+        known.add(cp._scan_uv(obj, []))
     extra = [u.name for u in me.uv_layers if u.name not in known and not u.name.startswith("UV_cam")]
     if extra:
         out.append(Issue(obj.name, 'UV_EXTRA', f"extra UV maps {', '.join(extra)} "
@@ -179,6 +192,8 @@ def check_uv(obj):
 
 def check_color(obj, scene):
     s = common.settings(scene)
+    if common.data(obj).bake_source is not None:
+        return []               # a low poly takes Color from ALB (see gn_final.color_source)
     if s.color_source == 'SCAN_ATTRIBUTE' and obj.data.color_attributes.get(s.scan_color_name) is None:
         return [Issue(obj.name, 'COLOR', f"no '{s.scan_color_name}' - Color comes from ALB", INFO)]
     return []
@@ -286,10 +301,17 @@ def check_textures(obj, scene):
 
 
 def check_state(obj):
-    if fingerprint.is_outdated(obj):
-        return [Issue(obj.name, 'OUTDATED', "outdated - the projection changed since the bake",
-                      WARNING)]
-    return []
+    out = []
+    if live_decimate(obj):
+        out.append(Issue(obj.name, 'DECIMATE', "Decimate not applied (03) - left out of the FBX",
+                         ERROR))
+    if fingerprint.ba_outdated(obj):
+        out.append(Issue(obj.name, 'OUTDATED', "BA_ outdated - the mesh or uv_normal changed "
+                         "since Bake from Source", WARNING))
+    elif fingerprint.is_outdated(obj):
+        out.append(Issue(obj.name, 'OUTDATED', "outdated - the projection changed since the bake",
+                         WARNING))
+    return out
 
 
 def object_issues(obj, scene, plan):

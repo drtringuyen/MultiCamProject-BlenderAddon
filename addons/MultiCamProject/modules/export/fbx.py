@@ -176,8 +176,9 @@ def export(context, fix_log=()):
     es = scene.multicamproject_export
     t0 = time.perf_counter()
     objs, statuses, _g = status.scene_status(scene)
-    skipped = [o.name for o in objs if common.data(o).material is None]
-    objs = [o for o in objs if common.data(o).material is not None]
+    live = {o.name for o in objs if checks.live_decimate(o)}
+    skipped = [o.name for o in objs if common.data(o).material is None and o.name not in live]
+    objs = [o for o in objs if common.data(o).material is not None and o.name not in live]
     if not objs:
         raise RuntimeError("No baked meshes in the EXPORT collection")
     folder = bpy.path.abspath(es.folder)
@@ -238,6 +239,8 @@ def export(context, fix_log=()):
         write_unity_script(folder)
     for name in skipped:
         missing[name] = ["not baked - left out of the FBX"]
+    for name in live:
+        missing[name] = ["Decimate not applied (03) - left out of the FBX"]
     report = write_report(folder, scene, files, status.scene_status(scene)[1], missing,
                           time.perf_counter() - t0, fix_log) if es.write_report else ""
     return files, missing, report

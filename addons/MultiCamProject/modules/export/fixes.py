@@ -164,6 +164,8 @@ def release_shared(objs):
         for kind, idb, want in (("bake", d.material, common.mat_name(o)),
                                 ("bake", d.alb_image, common.alb_name(o)),
                                 ("bake", d.nor_image, common.nor_name(o)),
+                                ("bake", d.ba_image, common.ba_name(o)),
+                                ("bake", d.bn_image, common.bn_name(o)),
                                 ("mcp", _mcp_material(o), cp.PREFIX + o.name)):
             if idb is not None:
                 groups.setdefault((kind, idb.name, type(idb).__name__), []).append((o, want == idb.name))
@@ -176,11 +178,9 @@ def release_shared(objs):
                 continue
             if kind == "mcp":
                 mcp_off[o] = False
-            elif common.data(o).material is not None or common.data(o).alb_image is not None:
-                d = common.data(o)
-                d.material = d.alb_image = d.nor_image = None
-                d.fingerprint = ""
-                d.alb_size = d.nor_size = 0
+            elif any((common.data(o).material, common.data(o).alb_image, common.data(o).ba_image)):
+                from ..baking import material
+                material.release(o)
                 log.append(('WARNING', f"{o.name}: shared '{name}' with {owner.name} (a copy?) - "
                                        "its own bake is needed"))
     return mcp_off, log

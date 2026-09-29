@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Workflow v4, phases 2-5: steps 0A-07 (2026-09-29)
+- **Setup** panel: **0A. Project from Sides** (settings behind its gear; highlighted while the
+  scene has no camera; runs 0B after), **0B. Setup Camera Projection** (off without cameras),
+  **0C. Remesh** + **Use existing high poly** (link icon: the active low poly bakes from the
+  other selected mesh). Any order; 0C sets up the projection on the copy only after 0B.
+- **Cutting & Modelling** (only for a low poly): Bake Source + Cage, **01. Poly Cut & Seams**,
+  **02. Select & Set (L)** - Projected / Baked (both VCMix alphas), Protect from Decimate,
+  Unprotect, Delete (right away), Seam only; seam Mark / Clear / Leave. Previews as overlay
+  only. **03. Decimate amount** + **Apply** (one `Decimate`, `vg_Protect` inverted: weight 1 =
+  kept); optional **Snap to Source** (Shrinkwrap on `vg_Snap`). **04. Bake from Source**:
+  BA_ + BN_ at the Work Resolution, packed, enabled only with a clean `uv_normal`.
+- The v3 stack (GN-Remesh + Decimate Overall / Selective) becomes one Decimate on load;
+  the GN-Remesh group and the old vertex groups are left alone.
+- **05. Projection Painting** (the Camera Project panel, shown once 0B is done): mode line
+  (Mix / Projection only) + All Projected / All Baked.
+- **06. Bake Final**: ALB_ = the Processing material baked onto the object itself with a
+  temporary Simple Subdivision before GN-CameraProject (photos no longer slide on big
+  triangles); no projection = ALB_ from BA_. A missing / outdated BA_ is baked first. The
+  full-resolution twin and "Albedo from" are gone. NOR_ = BN_ + the albedo's detail
+  (High-pass or AI) where the mask says projected; detail alone without BN_. "Bake from
+  mesh" / "Mesh + Albedo" and the scene High Poly are gone (the Bake Source replaces them).
+- Two fingerprints: BA_ (low poly shape + uv_normal + source + cage) and ALB_ (which now
+  includes the BA_ bake).
+- **Make uv_normal** (Smart UV, non-overlapping, 0-1): a fix button on "missing uv_normal" in
+  the Export summary, in 06 Bake Final and in 04; Fix + Export still makes it where missing
+  (never on a low poly whose Decimate is not applied).
+- **07. Final Export**: a live Decimate is an error and the object is left out of the FBX;
+  BA_ outdated counts as outdated (Update outdated re-bakes BA_ first); a low poly takes
+  Color from ALB and its scan UV is not "known".
+
+### Workflow v4, phase 1: Processing material + BA_ / BN_ (2026-09-29)
+- MCP_ is now the **Processing** material: a **BAKED** frame (BA_ = albedo baked from the
+  Bake Source, on `uv_normal`, BN_ through a tangent Normal Map; flat grey before a bake)
+  replaces ORIGINAL MATERIALS. The **Original Scan** slider is gone: the blend mask alone
+  decides (0 = baked, 1 = projected).
+- New per-object `ba_image` / `bn_image` (packed work textures, named like ALB_/NOR_:
+  `BA_<name>`, `BN_<name>`), `ba_fingerprint`, `ba_size`; scene `work_resolution` (4K).
+  Material sync renames, releases (duplicates) and removes them with their object.
+- Slots: an object with a Bake Source keeps only MCP_ + MAT_; one without keeps its scan
+  materials after them (it may still become a Remesh original).
+
+### Workflow v4, phase 0: blend mask = VCMix alpha x VCMix2 alpha (2026-09-29)
+- The material multiplies both alphas. The GN writes camera coverage into VCMix2 alpha too.
+- Camera 4-6 painting keeps VCMix2 alpha as the stroke marker: the real alpha waits in the
+  hidden `_mcp_mask2` (the GN shows the larger of the two) and returns when another layer is
+  painted or Vertex Paint is left. VCMix strokes (cameras 1-3, Erase) move VCMix2 alpha by
+  the same amount; camera 4-6 strokes raise VCMix alpha where they claim.
+- Load migration: a painted VCMix2 with no alpha anywhere (the old marker) takes VCMix's.
+
 ### Baking: albedo from the Remesh original (2026-09-28)
 - A Remesh copy bakes its albedo from the original's full-resolution mesh: a temporary twin
   (the original's mesh, copied, + the copy's GN-CameraProject with its cameras, shifts and lens

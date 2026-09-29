@@ -1,11 +1,12 @@
-"""The Remesh copy: the scan is duplicated into a working copy that takes over its name,
-its EXPORT membership and its MCP_/MAT_/ALB_/NOR_, and gets the remesh modifier stack.
-The original is renamed <name>_original, moved to "Original Mesh", loses its GN modifiers
-and becomes the copy's high-poly source for Normal "Bake from mesh".
+"""The Remesh copy (0C): the scan is duplicated into a working copy that takes over its
+name, its EXPORT membership and its MCP_/MAT_/ALB_/NOR_, and gets the Decimate. The
+original is renamed <name>_original, moved to "Original Mesh", loses its GN modifiers and
+becomes the copy's Bake Source (BA_ / BN_, 04 Bake from Source).
 
 Stack of the copy:
-  GN-Remesh (empty, the user's) -> Decimate Overall -> Decimate Selective (vg_HighRes)
+  Decimate (vg_Protect: weight 1 = kept as is) -> [Snap: Shrinkwrap on vg_Snap, off]
   -> GN-CameraProject -> GN-Final
+The Decimate is applied (03) before uv_normal is unwrapped: it collapses across UV seams.
 """
 import bpy
 import numpy as np
@@ -15,15 +16,14 @@ from ..camera_project import core as cp
 
 ORIGINAL_SUFFIX = "_original"
 ORIGINAL_COLLECTION = "Original Mesh"
-GN_REMESH = "GN-Remesh"
-DEC_OVERALL = "Decimate Overall"
-DEC_SELECTIVE = "Decimate Selective"
-VG_HIGHRES = "vg_HighRes"
-VG_DELETE = "vg_toDelete"
-VG_SEPARATE = "vg_toSeparate"
-ATTR_DELETE = "remesh_delete"
-ATTR_DETACH = "remesh_detach"
+DECIMATE = "Decimate"
+SNAP = "Snap to Source"
+VG_PROTECT = "vg_Protect"
+VG_SNAP = "vg_Snap"
 DECIMATE_RATIO = 0.5
+# the v3 stack, replaced on load (the GN-Remesh group itself is the user's: never deleted)
+OLD_GN_REMESH = "GN-Remesh"
+OLD_DECIMATES = ("Decimate Overall", "Decimate Selective")
 
 
 def source_of(obj):
@@ -31,6 +31,13 @@ def source_of(obj):
     if obj is None or obj.type != 'MESH' or not hasattr(obj, "multicamproject_bake"):
         return None
     return obj.multicamproject_bake.source
+
+
+def bake_source_of(obj):
+    """The high poly obj bakes BA_ / BN_ from (a Remesh original or a picked mesh)."""
+    if obj is None or obj.type != 'MESH' or not hasattr(obj, "multicamproject_bake"):
+        return None
+    return obj.multicamproject_bake.bake_source
 
 
 def is_copy(obj):
@@ -41,33 +48,12 @@ def is_original(obj):
     return obj is not None and any(source_of(o) == obj for o in bpy.data.objects)
 
 
-# ---------------------------------------------------------------- GN-Remesh (user owned)
-
-def ensure_gn_remesh_group():
-    """GN-Remesh is the user's: created empty (Geometry in -> out) when missing, never
-    rebuilt. The Set Faces marks reach it as vg_HighRes / vg_toDelete / vg_toSeparate,
-    remesh_delete, remesh_detach and face_set (the Sculpt face sets)."""
-    ng = bpy.data.node_groups.get(GN_REMESH)
-    if ng is not None:
-        return ng
-    ng = bpy.data.node_groups.new(GN_REMESH, "GeometryNodeTree")
-    ng.is_modifier = True
-    ng.description = ("Yours to build. Face attributes: remesh_delete, remesh_detach, face_set; "
-                      "vertex groups vg_HighRes, vg_toDelete, vg_toSeparate")
-    ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
-    ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
-    gi = ng.nodes.new("NodeGroupInput")
-    gi.location = (-200, 0)
-    go = ng.nodes.new("NodeGroupOutput")
-    go.location = (200, 0)
-    ng.links.new(gi.outputs[0], go.inputs[0])
-    return ng
+def is_low_poly(obj):
+    """A Remesh copy or a mesh with a picked Bake Source: Cutting & Modelling applies."""
+    return bake_source_of(obj) is not None or is_copy(obj)
 
 
-def _gn_remesh_modifier(obj):
-    return next((m for m in obj.modifiers if m.type == 'NODES' and m.node_group
-                 and m.node_group.name == GN_REMESH), None)
-
+# ---------------------------------------------------------------- the stack
 
 def _move(obj, mod, index):
     if list(obj.modifiers).index(mod) != index:
@@ -75,32 +61,102 @@ def _move(obj, mod, index):
             bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=index)
 
 
-def ensure_stack(obj):
-    """GN-Remesh, Decimate Overall, Decimate Selective at the top of the stack, in that
-    order (GN-CameraProject and GN-Final follow)."""
-    for name in (VG_HIGHRES, VG_DELETE, VG_SEPARATE):
-        if obj.vertex_groups.get(name) is None:
-            obj.vertex_groups.new(name=name)
-    mod = _gn_remesh_modifier(obj)
-    if mod is None:
-        mod = obj.modifiers.new(GN_REMESH, 'NODES')
-        mod.node_group = ensure_gn_remesh_group()
-        # the v2 face set picker (GN-Remesh built by the add-on): show everything
-        try:
-            cp.set_input(mod, "Isolate", False)
-        except (KeyError, AttributeError, TypeError):
-            pass
-    _move(obj, mod, 0)
+def decimate_modifier(obj):
+    mod = obj.modifiers.get(DECIMATE)
+    return mod if mod is not None and mod.type == 'DECIMATE' else None
 
-    for index, name, group in ((1, DEC_OVERALL, ""), (2, DEC_SELECTIVE, VG_HIGHRES)):
-        dec = obj.modifiers.get(name)
-        if dec is None or dec.type != 'DECIMATE':
-            dec = obj.modifiers.new(name, 'DECIMATE')
-            dec.decimate_type = 'COLLAPSE'
-            dec.ratio = DECIMATE_RATIO
-            dec.vertex_group = group
-            dec.invert_vertex_group = False     # weight 1 = decimated further (as decided)
-        _move(obj, dec, index)
+
+def snap_modifier(obj):
+    mod = obj.modifiers.get(SNAP)
+    return mod if mod is not None and mod.type == 'SHRINKWRAP' else None
+
+
+def _drop_v3_stack(obj):
+    """GN-Remesh + Decimate Overall / Selective (v3) -> the ratio of Decimate Overall."""
+    ratio = None
+    for m in list(obj.modifiers):
+        if m.type == 'NODES' and m.node_group and m.node_group.name == OLD_GN_REMESH:
+            obj.modifiers.remove(m)
+        elif m.type == 'DECIMATE' and m.name in OLD_DECIMATES:
+            if m.name == OLD_DECIMATES[0]:
+                ratio = m.ratio
+            obj.modifiers.remove(m)
+    return ratio
+
+
+def ensure_stack(obj, applied_ok=True):
+    """The Decimate first in the stack (vg_Protect inverted: protected parts stay). With
+    `applied_ok` a copy whose Decimate was applied (03) gets no new one."""
+    if obj.vertex_groups.get(VG_PROTECT) is None:
+        obj.vertex_groups.new(name=VG_PROTECT)
+    ratio = _drop_v3_stack(obj)
+    dec = decimate_modifier(obj)
+    if dec is None:
+        if applied_ok and obj.get(APPLIED_KEY):
+            return None
+        dec = obj.modifiers.new(DECIMATE, 'DECIMATE')
+        dec.decimate_type = 'COLLAPSE'
+        dec.ratio = DECIMATE_RATIO if ratio is None else ratio
+        dec.vertex_group = VG_PROTECT
+        dec.invert_vertex_group = True      # weight 1 = protected = not decimated
+    _move(obj, dec, 0)
+    return dec
+
+
+APPLIED_KEY = "multicamproject_decimated"   # on the object: the Decimate was applied (03)
+
+
+def apply_decimate(context, obj):
+    """03: apply the Decimate (the stack before it is empty). Returns (faces before, after)."""
+    dec = decimate_modifier(obj)
+    if dec is None:
+        raise RuntimeError("No Decimate modifier")
+    if obj.data.shape_keys:
+        raise RuntimeError("The mesh has shape keys - a modifier cannot be applied")
+    if sum(o.data == obj.data for o in bpy.data.objects) > 1:
+        raise RuntimeError("The mesh is shared by several objects")
+    _move(obj, dec, 0)
+    before = len(obj.data.polygons)
+    with context.temp_override(object=obj, active_object=obj):
+        bpy.ops.object.modifier_apply(modifier=dec.name)
+    obj[APPLIED_KEY] = True
+    return before, len(obj.data.polygons)
+
+
+def set_snap(obj, on):
+    """Optional Shrinkwrap onto the Bake Source, limited to vg_Snap, right after the Decimate."""
+    mod = snap_modifier(obj)
+    src = bake_source_of(obj)
+    if not on:
+        if mod is not None:
+            obj.modifiers.remove(mod)
+        return None
+    if src is None:
+        raise RuntimeError("No Bake Source to snap to")
+    if obj.vertex_groups.get(VG_SNAP) is None:
+        obj.vertex_groups.new(name=VG_SNAP)
+    if mod is None:
+        mod = obj.modifiers.new(SNAP, 'SHRINKWRAP')
+        mod.wrap_method = 'NEAREST_SURFACEPOINT'
+        mod.vertex_group = VG_SNAP
+    mod.target = src
+    dec = decimate_modifier(obj)
+    _move(obj, mod, 1 if dec is not None else 0)
+    return mod
+
+
+def use_existing(context, low, high):
+    """'Use existing high poly': a low poly made outside the add-on bakes from `high`."""
+    if low == high or high.type != 'MESH':
+        raise RuntimeError("Pick another mesh as the high poly")
+    low.multicamproject_bake.bake_source = high
+    if low.vertex_groups.get(VG_PROTECT) is None:
+        low.vertex_groups.new(name=VG_PROTECT)
+    try:
+        from ..baking import matsync
+        matsync.sync(low, context.scene)        # the scan slots go (it has a source now)
+    except ImportError:
+        pass
 
 
 # ---------------------------------------------------------------- the Remesh button
@@ -175,20 +231,25 @@ def repair_original(obj):
 
 
 def release_materials(obj):
-    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_: they belong to the copy now (the
+    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_ / BA_ / BN_: they belong to the copy now (the
     copy takes the original's name). Its slots keep MCP_ (no face uses it)."""
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.material = None
     d = obj.multicamproject_bake
-    d.material = d.alb_image = d.nor_image = None
-    d.fingerprint = ""
-    d.alb_size = d.nor_size = 0
+    d.material = d.alb_image = d.nor_image = d.ba_image = d.bn_image = None
+    d.fingerprint = d.ba_fingerprint = ""
+    d.alb_size = d.nor_size = d.ba_size = 0
 
 
 def repair_originals():
     """On load: the originals made before these repairs existed."""
     sources = {o.multicamproject_bake.source for o in bpy.data.objects
                if o.type == 'MESH' and hasattr(o, "multicamproject_bake")}
+    for o in bpy.data.objects:          # the v3 stack (GN-Remesh + two Decimates) -> one Decimate
+        if (o.type == 'MESH' and not o.library and is_copy(o) and o.mode == 'OBJECT'
+                and any(m.name in OLD_DECIMATES for m in o.modifiers)):
+            ensure_stack(o)
+            print(f"[MultiCamProject] '{o.name}': Remesh stack -> one Decimate (vg_Protect)")
     for obj in sources:
         if obj is not None and not any(m.type == 'NODES' for m in obj.modifiers):
             repair_original(obj)
@@ -209,6 +270,7 @@ def make_copy(context, obj):
     scene = context.scene
     warnings = []
     name, mesh_name = obj.name, obj.data.name
+    was_setup = hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup
     collections = list(obj.users_collection)
 
     copy = obj.copy()                   # a full copy: a cut must never touch the original
@@ -245,8 +307,8 @@ def make_copy(context, obj):
     obj.hide_set(True)
 
     ensure_stack(copy)
-    if module_manager.is_loaded("camera_project"):
-        warnings += cp.setup(copy, scene)
+    if module_manager.is_loaded("camera_project") and was_setup:
+        warnings += cp.setup(copy, scene)       # 0B came first: the copy projects too
     if module_manager.is_loaded("baking"):
         from ..baking import gn_final
         if gn_final.get_modifier(copy) is not None:

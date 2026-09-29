@@ -196,10 +196,10 @@ def _enter_tool(context, obj, mode='SCULPT'):
 
 
 class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
-    """Make the remesh copy: the copy takes the name, EXPORT and the baked textures, gets
-    GN-Remesh, two Decimate modifiers and the camera projection. The original becomes
-    <name>_original in "Original Mesh" (no GN modifiers), the high poly for Bake from mesh.
-    Then Sculpt Mode with the PolyCut tool"""
+    """0C Remesh: make the low-poly copy. It takes the name, EXPORT and the textures, gets
+    a Decimate (vg_Protect) and the camera projection. The original becomes <name>_original
+    in "Original Mesh", the copy's Bake Source (BA_ / BN_). Then Sculpt Mode with the
+    PolyCut tool"""
     bl_idname = "multicamproject.remesh"
     bl_label = "Remesh"
     bl_options = {'REGISTER', 'UNDO'}
@@ -293,22 +293,22 @@ class MULTICAMPROJECT_OT_RemeshPick(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_state = {"action": 'HIGH_DENSITY', "mark_seam": True, "backup": None}
+_state = {"action": 'PROJECTED', "seam": 'MARK'}
 
 
 class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
-    """Mark faces for the remesh: High Density (vg_HighRes), Delete Geo (remesh_delete),
-    To Separate (remesh_detach) or Clear. Edit Mode: the selected faces. Sculpt Mode: the
-    face set picked with L or made by the last PolyCut"""
+    """02 Select & Set: Projected / Baked (the VCMix alphas), Protect from Decimate, Delete,
+    and the outline's seam. Edit Mode: the selected faces. Sculpt Mode: the face set picked
+    with L or made by the last PolyCut"""
     bl_idname = "multicamproject.remesh_set_faces"
     bl_label = "Set Faces"
     bl_options = {'REGISTER', 'UNDO'}
 
-    action: EnumProperty(name="Set", items=marks.ACTIONS, default='HIGH_DENSITY')
-    mark_seam: BoolProperty(name="Mark boundary as seam", default=True,
-                            description="The region's outline becomes a UV seam")
+    action: EnumProperty(name="Set", items=marks.ACTIONS, default='PROJECTED')
+    seam: EnumProperty(name="Seam", items=marks.SEAMS, default='MARK',
+                       description="What happens to the UV seam on the region's outline")
     face_set: IntProperty(name="Face Set", default=0, min=0, options={'SKIP_SAVE'},
-                          description="Face set to mark (0: Edit Mode selection, or the face "
+                          description="Face set to set (0: Edit Mode selection, or the face "
                                       "set picked / cut last in Sculpt Mode)")
 
     @classmethod
@@ -317,7 +317,6 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
         return (obj is not None and obj.type == 'MESH' and not obj.library
                 and context.mode in {'SCULPT', 'EDIT_MESH'})
 
-    # ------------------------------------------------------------ the region
     def _sculpt_face_set(self, obj):
         return self.face_set or marks.last_face_set(obj)
 
@@ -327,25 +326,19 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
         bm.faces.ensure_lookup_table()
         return obj, bm
 
-    # ------------------------------------------------------------ dialog
     def invoke(self, context, event):
         obj = context.active_object
-        self.action, self.mark_seam = _state["action"], _state["mark_seam"]
-        _state["backup"] = None
+        self.action, self.seam = _state["action"], _state["seam"]
         if context.mode == 'EDIT_MESH':
             obj, bm = self._edit(context)
             if self.face_set:
                 marks.edit_select_face_set(bm, self.face_set)
+                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
             faces = marks.edit_region(bm)
             if not faces:
                 self.report({'WARNING'}, "Select faces first")
                 return {'CANCELLED'}
-            # Edit Mode previews on the real data (its undo records it); Esc puts it back
-            _state["backup"] = (obj.name, marks.edit_backup(obj, bm, faces))
-            marks.apply_edit_mode(obj, bm, faces, self.action, self.mark_seam)
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
-            # a new layer frees the face references: take the selection again
-            marks.overlay_show(obj, marks.edit_region(bm), self.action, bm=bm)
+            marks.overlay_show(obj, faces, self.action, bm=bm)
         else:
             fs = self._sculpt_face_set(obj)
             if not fs:
@@ -357,70 +350,164 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
                 self.report({'WARNING'}, f"Face set {fs} has no faces")
                 return {'CANCELLED'}
             marks.overlay_show(obj, faces, self.action)
+        where = 'selection' if context.mode == 'EDIT_MESH' else f'face set {self.face_set}'
         return context.window_manager.invoke_props_dialog(
-            self, title=f"Set Faces ({'selection' if context.mode == 'EDIT_MESH' else f'face set {self.face_set}'})",
-            confirm_text="Set")
+            self, title=f"Set Faces ({where})", confirm_text="Set")
 
     def draw(self, context):
         col = self.layout.column()
         col.prop(self, "action", expand=True)
-        col.prop(self, "mark_seam")
+        col.separator()
+        col.row().prop(self, "seam", expand=True)
+        why = marks.mask_problem(context.active_object, self.action)
+        if why:
+            col.label(text=why, icon='ERROR')
 
     def check(self, context):
         marks.overlay_action(self.action)
-        if context.mode == 'EDIT_MESH' and _state["backup"] is not None:
-            obj, bm = self._edit(context)
-            marks.edit_restore(obj, bm, _state["backup"][1])
-            marks.apply_edit_mode(obj, bm, marks.edit_region(bm), self.action, self.mark_seam)
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
         return True
 
     def cancel(self, context):
         marks.overlay_hide()
-        backup, _state["backup"] = _state["backup"], None
-        obj = context.active_object
-        if backup is not None and context.mode == 'EDIT_MESH' and obj and obj.name == backup[0]:
-            _obj, bm = self._edit(context)
-            marks.edit_restore(obj, bm, backup[1])
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
 
     def execute(self, context):
         marks.overlay_hide()
-        _state["action"], _state["mark_seam"] = self.action, self.mark_seam
+        _state["action"], _state["seam"] = self.action, self.seam
         obj = context.active_object
+        why = marks.mask_problem(obj, self.action)
+        if why:
+            self.report({'ERROR'}, why)
+            return {'CANCELLED'}
         label = dict((k, l) for k, l, *_r in marks.ACTIONS)[self.action]
-        if context.mode == 'EDIT_MESH':
+        mode = context.mode
+        if marks.needs_paint_layers(obj, self.action):
+            # the mesh's own VCMix layers (a copy of what the projection shows now)
+            bpy.ops.object.mode_set(mode='OBJECT')
+            from ..camera_project import core as cp
+            cp.ensure_paint_layer(obj)
+            bpy.ops.object.mode_set(mode='EDIT' if mode == 'EDIT_MESH' else 'SCULPT')
+        if mode == 'EDIT_MESH':
             obj, bm = self._edit(context)
-            backup, _state["backup"] = _state["backup"], None
-            if backup is not None and backup[0] == obj.name:
-                marks.edit_restore(obj, bm, backup[1])
-            elif self.face_set:             # redo / run without the dialog
+            if self.face_set:               # redo / run without the dialog
                 marks.edit_select_face_set(bm, self.face_set)
-            n = marks.apply_edit_mode(obj, bm, marks.edit_region(bm), self.action,
-                                      self.mark_seam)
-            bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            n = marks.apply_edit_mode(obj, bm, marks.edit_region(bm), self.action, self.seam)
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=self.action == 'DELETE')
         else:
             fs = self._sculpt_face_set(obj)
             if not fs:
                 self.report({'WARNING'}, "Pick a face set with L or make one with a PolyCut")
                 return {'CANCELLED'}
-            # Sculpt undo does not record vertex groups or seams: write in Object Mode
+            # Sculpt undo does not record vertex groups, seams or colors: write in Object Mode
             bpy.ops.object.mode_set(mode='OBJECT')
             try:
-                n = marks.apply_object_mode(obj, marks.face_mask(obj, fs), self.action,
-                                            self.mark_seam)
+                n = marks.apply_object_mode(obj, marks.face_mask(obj, fs), self.action, self.seam)
             finally:
                 bpy.ops.object.mode_set(mode='SCULPT')
         if not n:
-            self.report({'WARNING'}, "No faces to mark")
+            self.report({'WARNING'}, "No faces to set")
             return {'CANCELLED'}
+        if self.action in marks.MASK_ACTIONS:
+            from ..camera_project import core as cp
+            mod = cp.get_modifier(obj)
+            if mod is not None and cp.get_input(mod, "Previous Bake") < 1.0:
+                cp.set_input(mod, "Previous Bake", 1.0)     # the mesh's layers show 1:1
+        obj.update_tag()
         self.report({'INFO'}, f"{label}: {n:,} faces")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_RemeshApplyDecimate(bpy.types.Operator):
+    """03 Apply Decimate: the low poly's topology becomes final (protected parts stay as they
+    are). Unwrap uv_normal after this - the Decimate collapses across UV seams. The Bake
+    Source keeps the full detail; Ctrl+Z brings the dense mesh back"""
+    bl_idname = "multicamproject.remesh_apply_decimate"
+    bl_label = "Apply Decimate"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or context.mode != 'OBJECT':
+            cls.poll_message_set("Object Mode, the low poly active")
+            return False
+        if wf.decimate_modifier(obj) is None:
+            cls.poll_message_set("No Decimate modifier")
+            return False
+        return True
+
+    def invoke(self, context, event):
+        dec = wf.decimate_modifier(context.active_object)
+        return context.window_manager.invoke_confirm(
+            self, event, title="Apply Decimate",
+            message=f"Apply the Decimate (ratio {dec.ratio:.2f}) into the mesh? "
+                    "Unwrap uv_normal after this.", confirm_text="Apply")
+
+    def execute(self, context):
+        try:
+            before, after = wf.apply_decimate(context, context.active_object)
+        except RuntimeError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Decimated: {before:,} -> {after:,} faces. Unwrap uv_normal next")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_RemeshUseExisting(bpy.types.Operator):
+    """Use existing high poly: the active mesh (a low poly made outside the add-on) bakes
+    from the other selected mesh - BA_ and BN_, 04 Bake from Source"""
+    bl_idname = "multicamproject.remesh_use_existing"
+    bl_label = "Use Existing High Poly"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        others = [o for o in context.selected_objects if o != obj and o.type == 'MESH']
+        if obj is None or obj.type != 'MESH' or context.mode != 'OBJECT' or len(others) != 1:
+            cls.poll_message_set("Select the high poly, then the low poly (active)")
+            return False
+        return True
+
+    def execute(self, context):
+        low = context.active_object
+        high = next(o for o in context.selected_objects if o != low and o.type == 'MESH')
+        try:
+            wf.use_existing(context, low, high)
+        except RuntimeError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        high.select_set(False)
+        self.report({'INFO'}, f"'{low.name}' bakes from '{high.name}'")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_RemeshSnap(bpy.types.Operator):
+    """Snap to Source: a Shrinkwrap onto the Bake Source for the vertices in vg_Snap only
+    (after the Decimate). Off by default: new clean parts must not stick to the scan"""
+    bl_idname = "multicamproject.remesh_snap"
+    bl_label = "Snap to Source"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    on: BoolProperty(default=True, options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and wf.bake_source_of(obj) is not None
+
+    def execute(self, context):
+        try:
+            wf.set_snap(context.active_object, self.on)
+        except RuntimeError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
         return {'FINISHED'}
 
 
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshPick,
-            MULTICAMPROJECT_OT_RemeshSetFaces)
+            MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
+            MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap)
 
 
 def _face_menu(self, context):

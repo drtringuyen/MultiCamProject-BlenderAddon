@@ -4,19 +4,16 @@ from . import core
 
 
 class MULTICAMPROJECT_PT_ProjectSides(bpy.types.Panel):
+    """0A's settings, opened from the gear next to it in Setup"""
     bl_label = "Project from Sides"
     bl_idname = "MULTICAMPROJECT_PT_project_sides"
     bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "MultiCamProject"
-    bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 0
-
-    def draw_header(self, context):
-        self.layout.label(icon='AXIS_SIDE')
+    bl_region_type = 'HEADER'           # a popover only - not drawn in the sidebar
+    bl_ui_units_x = 14
 
     def draw(self, context):
         layout = self.layout
+        layout.label(text="0A. Project from Sides", icon='AXIS_SIDE')
         if not core.camera_project_ready():
             layout.alert = True
             layout.label(text="Needs the Camera Project module", icon='ERROR')

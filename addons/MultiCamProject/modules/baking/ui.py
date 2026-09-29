@@ -37,7 +37,9 @@ def labeled(context, layout, label, units=LABEL_UNITS):
 
 
 class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
-    bl_label = "Baking"
+    """06 Bake Final: ALB_ (the Processing material baked onto the object) and NOR_, the
+    final 8K textures in MAT_"""
+    bl_label = "06. Bake Final"
     bl_idname = "MULTICAMPROJECT_PT_baking"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -64,7 +66,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             box = top.box()
             box.alert = True
             box.label(text=f"No '{common.UV_NORMAL}' UV map", icon='ERROR')
-            box.label(text="Make it by hand: non-overlapping, inside 0-1")
+            box.label(text="Unwrap it (non-overlapping, inside 0-1), or:")
+            if hasattr(bpy.types, "MULTICAMPROJECT_OT_ExportMakeUV"):     # the export module
+                box.alert = False
+                box.operator("multicamproject.export_make_uv", text="Make uv_normal (Smart UV)",
+                             icon='UV').scope = 'SELECTED'
         elif d.fingerprint and fingerprint.is_outdated(obj):
             box = top.box()
             box.alert = True
@@ -77,20 +83,17 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         row.prop_enum(s, "bake_what", 'NORMAL')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
         row.prop_enum(s, "bake_what", 'BOTH')
-        if s.bake_what != 'NORMAL':
-            # [link] Albedo from [Bake Source picker] [Cage]: the albedo from a high poly
-            # (the Remesh original by default) - the projection on its mesh, Selected to Active
-            row = box.row(align=True)
-            tog = row.row(align=True)
-            tog.ui_units_x = 5.5
-            tog.prop(s, "albedo_from_source", text="Albedo from", icon='LINKED', toggle=True)
-            sub = row.row(align=True)
-            sub.active = s.albedo_from_source
-            sub.prop(d, "bake_source", text="")
-            cage = sub.row(align=True)
-            cage.active = s.albedo_from_source and d.bake_source is not None
-            cage.ui_units_x = 4.5
-            cage.prop(s, "cage_extrusion", text="Cage")
+        if s.bake_what != 'NORMAL' and d.bake_source is not None:
+            # BA_ comes from 04 (Cutting & Modelling); Bake Final redoes it when outdated
+            row = box.row()
+            row.active = False
+            if d.ba_image is None:
+                row.label(text=f"No BA_ yet: bakes from {d.bake_source.name} first", icon='INFO')
+            elif fingerprint.ba_outdated(obj):
+                row.label(text="BA_ outdated: bakes from the source again first", icon='INFO')
+            else:
+                row.label(text=f"Over BA_ {_res(d.ba_size)} from {d.bake_source.name}",
+                          icon='LINKED')
         info = box.column(align=True)
         if d.alb_size:
             info.label(text=f"ALB {_res(d.alb_size)}  ·  {d.last_bake_seconds:.1f} s",
@@ -193,26 +196,18 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
         if not ai:
             row.menu("MULTICAMPROJECT_MT_normal_method", text=normal.LABELS.get(src, src))
 
-        # the method's settings
+        # the detail's settings; BN_ (from the Bake Source) is the base where it exists
         opts = col.column(align=True)
-        mesh = src in {'MESH', 'BLEND'}
-        if src in {'HIGHPASS', 'BLEND'}:
+        if src == 'HIGHPASS':
             row = opts.row(align=True)
             row.prop(s, "nor_strength", text="Strength")
             row.prop(s, "nor_radius", text="Radius")
             opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
-        if mesh:        # High Poly | Cage | Smooth | Iterations - one row
-            row = opts.row(align=True)
-            d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
-            if d is not None and d.bake_source is not None:   # the object's own pick wins
-                row.prop(d, "bake_source", text="", icon='LINKED')
-            else:
-                row.prop(s, "hp_object", text="")
-            row.prop(s, "cage_extrusion", text="Cage")
-            row.prop(s, "smooth_source", text="Smooth", toggle=True)
-            r = row.row(align=True)
-            r.active = s.smooth_source
-            r.prop(s, "smooth_iterations", text="")
+        d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
+        note = col.row()
+        note.active = False
+        note.label(text="BN_ + this detail where projected" if d is not None and d.bn_image
+                   else "No BN_: this detail alone", icon='INFO')
         if obj is not None and obj.type == 'MESH':
             why = normal.problem(obj, context.scene, src)
             if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
@@ -235,6 +230,13 @@ class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
         col.use_property_decorate = False
         col.prop(s, "output_dir", text="Folder")
         col.prop(s, "resolution")
+        col.prop(s, "work_resolution", text="BA_ / BN_")
+        col.prop(s, "cage_extrusion", text="Cage")
+        row = col.row(align=True)
+        row.prop(s, "smooth_source", text="Smooth BN_ Source")
+        sub = row.row(align=True)
+        sub.active = s.smooth_source
+        sub.prop(s, "smooth_iterations", text="")
         col.prop(s, "margin")
         col.label(text=f"= {common.margin_px(s)} px at {_res(s.resolution)}")
         col.prop(s, "device")
@@ -270,7 +272,7 @@ class MULTICAMPROJECT_MT_normal_engine(bpy.types.Menu):
 
 
 class MULTICAMPROJECT_MT_normal_method(bpy.types.Menu):
-    """Lite's methods: High-pass, Bake from mesh (+ Mesh + Albedo in the Full build)"""
+    """Lite's detail method: High-pass"""
     bl_label = "Normal Map Method"
     bl_idname = "MULTICAMPROJECT_MT_normal_method"
 
