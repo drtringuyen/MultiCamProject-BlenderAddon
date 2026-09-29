@@ -20,7 +20,7 @@ import bpy
 from bpy.app.handlers import persistent
 
 from ..camera_project import core as cp
-from . import common, fingerprint, gn_final, material
+from . import common, fingerprint, gn_final, material, source_mats
 
 _owner = object()
 _DELAY = 0.3
@@ -108,6 +108,8 @@ def sync(obj, scene, full=False):
     else:
         mat = material.build(obj, scene, place_slots=False) if full else ensure_mat(obj)
         cp.arrange_slots(obj, [mat])
+    if full:
+        out += source_mats.fix(obj)         # the Bake Source's scan materials -> Principled
     if gn_final.get_modifier(obj) is not None:
         mod = gn_final.ensure_modifier(obj)     # its own wrapper (a copy shares one)
         if full:
@@ -126,7 +128,8 @@ def sync(obj, scene, full=False):
 
 
 def problems(obj):
-    """[(kind, text)] of obj's materials - kind 'MCP', 'MAT' or 'SLOTS'. Reads only."""
+    """[(kind, text)] of obj's materials - kind 'MCP', 'MAT', 'SLOTS' or 'SOURCE' (the
+    Bake Source's materials not wired to a Principled BSDF). Reads only."""
     out = []
     head = []
     if is_projection(obj):
@@ -167,6 +170,7 @@ def problems(obj):
         out.append(('SLOTS', f"other objects' materials in the slots: {', '.join(foreign)}"))
     if (out and any(k == 'SLOTS' for k, _t in out)) and cp.shared_mesh(obj):
         out.append(('SLOTS', "mesh shared by several objects - its slots cannot be fixed"))
+    out.extend(('SOURCE', t) for t in source_mats.problems(obj))
     return out
 
 

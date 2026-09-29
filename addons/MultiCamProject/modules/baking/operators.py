@@ -377,7 +377,8 @@ last_refresh = {}       # object name -> what the last Refresh fixed (shown in t
 class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
     """Check and fix the materials: every object its own MCP_ (projection) and MAT_ (final),
     named after it, in slots 1 and 2, wired into GN-CameraProject and GN-Final. A copy
-    (Shift+D) gets its own; materials of deleted objects are removed"""
+    (Shift+D) gets its own; materials of deleted objects are removed. The Bake Source's
+    scan materials get image -> Principled BSDF -> Material Output (unlit scans bake black)"""
     bl_idname = "multicamproject.material_refresh"
     bl_label = "Refresh Materials"
     bl_options = {'REGISTER', 'UNDO'}

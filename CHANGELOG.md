@@ -2,6 +2,14 @@
 
 ## Unreleased
 
+### Refresh Materials checks the Bake Source's materials (2026-09-29)
+- Every material the Bake Source's faces use must show its image through a Principled
+  BSDF: image -> Base Color, BSDF -> Material Output Surface. The material row lists what
+  is off ("Surface comes from Emission, not the Principled BSDF"), Export counts it as a
+  material problem, and **Refresh** wires it (the Emission node stays, disconnected).
+  Scan materials are often shared by several scan objects: the log says how many render
+  lit instead of unlit afterwards.
+
 ### Fix: Bake from Source gave a black BA_ on unlit scans (2026-09-29)
 - The scan materials are unlit (image -> Emission, the Principled BSDF unconnected), which
   a Diffuse Color bake reads as black. BA_ is now an EMIT bake: for the bake, every
