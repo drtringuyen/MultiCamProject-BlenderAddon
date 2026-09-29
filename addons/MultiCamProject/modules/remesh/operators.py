@@ -38,8 +38,8 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return (obj is not None and obj.type == 'MESH' and context.area is not None
-                and context.area.type == 'VIEW_3D')
+        return (obj is not None and obj.type == 'MESH' and context.mode == 'SCULPT'
+                and context.area is not None and context.area.type == 'VIEW_3D')
 
     # ------------------------------------------------------------ points
     # The clicks are kept in 3D (on the surface under the mouse, or at the depth of the last
@@ -185,12 +185,12 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _enter_tool(context, obj, mode='SCULPT'):
-    """The object in Sculpt (or Edit) Mode with the PolyCut tool active."""
-    if obj.mode != mode:
-        bpy.ops.object.mode_set(mode=mode)
+def _enter_tool(context, obj):
+    """The object in Sculpt Mode with the PolyCut tool active."""
+    if obj.mode != 'SCULPT':
+        bpy.ops.object.mode_set(mode='SCULPT')
     try:
-        bpy.ops.wm.tool_set_by_id(name=tool.tool_id(context.mode))
+        bpy.ops.wm.tool_set_by_id(name=tool.tool_id())
     except (RuntimeError, TypeError):
         pass        # no 3D view in this context: the mode is set, the tool is one click away
 
@@ -236,16 +236,13 @@ class MULTICAMPROJECT_OT_RemeshEnterTool(bpy.types.Operator):
     bl_label = "PolyCut Tool"
     bl_options = {'REGISTER'}
 
-    mode: EnumProperty(items=(('SCULPT', "Sculpt", ""), ('EDIT', "Edit", "")), default='SCULPT',
-                       options={'SKIP_SAVE'})
-
     @classmethod
     def poll(cls, context):
         obj = context.active_object
         return obj is not None and obj.type == 'MESH' and not obj.library
 
     def execute(self, context):
-        _enter_tool(context, context.active_object, self.mode)
+        _enter_tool(context, context.active_object)
         return {'FINISHED'}
 
 
@@ -259,7 +256,7 @@ def _mouse_ray(context, event):
 
 
 class MULTICAMPROJECT_OT_RemeshPick(bpy.types.Operator):
-    """The face set under the mouse -> Set Faces"""
+    """The face set under the mouse -> Set Faces (the PolyCut tool, Sculpt Mode)"""
     bl_idname = "multicamproject.remesh_pick"
     bl_label = "Pick Face Set"
     bl_options = {'REGISTER'}
@@ -267,8 +264,7 @@ class MULTICAMPROJECT_OT_RemeshPick(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return (obj is not None and obj.type == 'MESH'
-                and context.mode in {'SCULPT', 'EDIT_MESH'})
+        return obj is not None and obj.type == 'MESH' and context.mode == 'SCULPT'
 
     def invoke(self, context, event):
         obj = context.active_object
@@ -315,7 +311,14 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         return (obj is not None and obj.type == 'MESH' and not obj.library
-                and context.mode in {'SCULPT', 'EDIT_MESH'})
+                and context.mode in {'SCULPT', 'EDIT_MESH', 'OBJECT'})
+
+    @classmethod
+    def description(cls, context, props):
+        if props.action == 'CLEAR_FACE_SETS':
+            return ("Clear all Face Sets: the whole mesh back to one face set (every PolyCut "
+                    "region and Sculpt face set goes; seams stay)")
+        return cls.__doc__
 
     def _sculpt_face_set(self, obj):
         return self.face_set or marks.last_face_set(obj)
@@ -328,6 +331,11 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
 
     def invoke(self, context, event):
         obj = context.active_object
+        if self.action == 'CLEAR_FACE_SETS':    # the button: no dialog, the whole mesh
+            return self.execute(context)
+        if context.mode == 'OBJECT':
+            self.report({'WARNING'}, "Sculpt Mode (L / PolyCut) or Edit Mode (select faces)")
+            return {'CANCELLED'}
         self.action, self.seam = _state["action"], _state["seam"]
         if context.mode == 'EDIT_MESH':
             obj, bm = self._edit(context)
@@ -372,8 +380,25 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
 
     def execute(self, context):
         marks.overlay_hide()
-        _state["action"], _state["seam"] = self.action, self.seam
+        if self.action != 'CLEAR_FACE_SETS':
+            _state["action"], _state["seam"] = self.action, self.seam
         obj = context.active_object
+        if self.action == 'CLEAR_FACE_SETS':    # the whole mesh, no region needed
+            mode = context.mode
+            if mode == 'EDIT_MESH':
+                obj, bm = self._edit(context)
+                n = marks.clear_face_sets_edit(bm)
+                bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
+            else:
+                if mode != 'OBJECT':
+                    bpy.ops.object.mode_set(mode='OBJECT')
+                try:
+                    n = marks.clear_face_sets(obj)
+                finally:
+                    if mode == 'SCULPT':
+                        bpy.ops.object.mode_set(mode='SCULPT')
+            self.report({'INFO'}, f"Face sets cleared: {n:,} faces in one set")
+            return {'FINISHED'}
         why = marks.mask_problem(obj, self.action)
         if why:
             self.report({'ERROR'}, why)

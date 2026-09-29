@@ -6,6 +6,7 @@
   Unprotect   -> out of vg_Protect
   Delete      -> the faces are deleted right away
   Seam only   -> nothing but the seam option
+  Clear all Face Sets -> the whole mesh back to one face set (the region does not matter)
 
 Seam: the region's outline gets a UV seam (Mark), loses it (Clear) or is left alone.
 The dialog only previews (overlay); the write happens on Set. Object Mode writes through
@@ -31,14 +32,17 @@ ACTIONS = (('PROJECTED', "Projected", "VCMix + VCMix2 alpha = 1: the camera proj
            ('UNPROTECT', "Unprotect", "Out of vg_Protect: the Decimate reduces them again",
             'UNLOCKED', 3),
            ('DELETE', "Delete", "Delete these faces now", 'TRASH', 4),
-           ('SEAM_ONLY', "Seam only", "Only the seam option below", 'MOD_UVPROJECT', 5))
+           ('SEAM_ONLY', "Seam only", "Only the seam option below", 'MOD_UVPROJECT', 5),
+           ('CLEAR_FACE_SETS', "Clear all Face Sets", "The whole mesh back to one face set "
+            "(every PolyCut region and Sculpt face set goes; seams stay)", 'FACE_MAPS', 6))
 
 SEAMS = (('MARK', "Mark Seam", "The outline becomes a UV seam"),
          ('CLEAR', "Clear Seam", "The outline's UV seam goes"),
          ('KEEP', "Leave", "Seams stay as they are"))
 
 COLORS = {'PROJECTED': (0.2, 0.55, 1.0), 'BAKED': (0.9, 0.6, 0.2), 'PROTECT': (0.3, 0.9, 0.4),
-          'UNPROTECT': (0.7, 0.7, 0.7), 'DELETE': (1.0, 0.2, 0.2), 'SEAM_ONLY': (1.0, 0.3, 0.9)}
+          'UNPROTECT': (0.7, 0.7, 0.7), 'DELETE': (1.0, 0.2, 0.2), 'SEAM_ONLY': (1.0, 0.3, 0.9),
+          'CLEAR_FACE_SETS': (0.6, 0.6, 0.6)}
 
 MASK_ACTIONS = {'PROJECTED': 1.0, 'BAKED': 0.0}
 
@@ -151,6 +155,29 @@ def apply_object_mode(obj, faces, action, seam):
         bm.free()
     me.update()
     return n
+
+
+def clear_face_sets(obj):
+    """Object Mode: every face back in one face set (.sculpt_face_set and its GN copy
+    face_set go). Returns the face count."""
+    from . import gn_remesh
+    me = obj.data
+    for name in (core.SCULPT_FACE_SET, gn_remesh.FACE_SET):
+        a = me.attributes.get(name)
+        if a is not None:
+            me.attributes.remove(a)
+    _last_face_set.pop(me.name, None)
+    core.sync_face_sets(obj)
+    me.update()
+    return len(me.polygons)
+
+
+def clear_face_sets_edit(bm):
+    """Edit Mode: the face set layer goes (Sculpt then shows one face set)."""
+    lay = bm.faces.layers.int.get(core.SCULPT_FACE_SET)
+    if lay is not None:
+        bm.faces.layers.int.remove(lay)
+    return len(bm.faces)
 
 
 # ---------------------------------------------------------------- Edit Mode (bmesh)

@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### PolyCut in Sculpt Mode only; Clear all Face Sets (2026-09-29)
+- The PolyCut tool is gone from the Edit Mode toolbar: Edit Mode's L is Blender's Select
+  Linked Pick again (and Ctrl+Click extrude to cursor). 01 always goes to Sculpt Mode.
+  Set Faces still works in Edit Mode on the selected faces (02, right-click Face menu).
+- Set Faces: **Clear all Face Sets** - the whole mesh back to one face set (every PolyCut
+  region / Sculpt face set goes, seams stay). Also a button next to 02, in any mode.
+
 ### Roughness 1 on every Principled BSDF (2026-09-29)
 - Material refreshes set Roughness = 1 (a Roughness link is removed) on MCP_, MAT_ and the
   Bake Source's scan materials; MCP_ and MAT_ are built with it. The Roughness setting

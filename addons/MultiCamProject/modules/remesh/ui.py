@@ -45,23 +45,24 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         col = layout.column(align=True)
         col.scale_y = 1.25
         in_mesh_mode = context.mode in {'SCULPT', 'EDIT_MESH'}
-        active = (context.workspace.tools.from_space_view3d_mode(context.mode, create=False)
-                  if in_mesh_mode else None)
-        on_tool = active is not None and active.idname == tool.tool_id(context.mode)
+        # PolyCut is a Sculpt Mode tool; Edit Mode keeps Blender's own L (Select Linked)
+        active = (context.workspace.tools.from_space_view3d_mode('SCULPT', create=False)
+                  if context.mode == 'SCULPT' else None)
+        on_tool = active is not None and active.idname == tool.tool_id()
         row = col.row(align=True)
-        if not in_mesh_mode or not on_tool:
+        if not on_tool:
             row.operator("multicamproject.remesh_enter_tool",
-                         text="01. Poly Cut & Seams (Ctrl+Click, L)",
-                         icon='SCULPTMODE_HLT').mode = 'EDIT' if context.mode == 'EDIT_MESH' else 'SCULPT'
-            if not in_mesh_mode:
-                row.operator("multicamproject.remesh_enter_tool", text="",
-                             icon='EDITMODE_HLT').mode = 'EDIT'
+                         text="01. Poly Cut & Seams (Sculpt: Ctrl+Click, L)", icon='SCULPTMODE_HLT')
         else:
             row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
         row = col.row(align=True)
-        row.enabled = in_mesh_mode
-        row.operator("multicamproject.remesh_set_faces", text="02. Select & Set (L)",
-                     icon='FACESEL')
+        sub = row.row(align=True)
+        sub.enabled = in_mesh_mode
+        sub.operator("multicamproject.remesh_set_faces",
+                     text="02. Select & Set (L)" if context.mode != 'EDIT_MESH'
+                     else "02. Set Selected Faces", icon='FACESEL')
+        row.operator("multicamproject.remesh_set_faces", text="",
+                     icon='FACE_MAPS').action = 'CLEAR_FACE_SETS'
         tip = layout.column(align=True)
         tip.active = False
         tip.label(text="Local clean-up: Density brush (Sculpt ▸ Other, Dyntopo on)", icon='INFO')
