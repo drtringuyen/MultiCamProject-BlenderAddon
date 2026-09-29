@@ -242,7 +242,6 @@ class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
         col.label(text=f"= {common.margin_px(s)} px at {_res(s.resolution)}")
         col.prop(s, "device")
         col.prop(s, "anti_alias")
-        col.prop(s, "roughness")
         col.separator()
         col.prop(s, "color_source")
         if s.color_source == 'SCAN_ATTRIBUTE':

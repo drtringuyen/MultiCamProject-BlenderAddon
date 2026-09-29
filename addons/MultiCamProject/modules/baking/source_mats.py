@@ -51,6 +51,8 @@ def problem(mat):
     color = _image_color(nt)
     if color is not None and not bsdf.inputs["Base Color"].links:
         return "the image is not in Base Color"
+    if not cp.roughness_ok(mat):
+        return f"Roughness is not {cp.ROUGHNESS:g}"
     return ""
 
 
@@ -74,6 +76,7 @@ def wire(mat):
     if color is not None and not bsdf.inputs["Base Color"].links:
         nt.links.new(color, bsdf.inputs["Base Color"])
     nt.links.new(bsdf.outputs[0], out.inputs["Surface"])
+    cp.set_roughness(mat)
     return True
 
 
@@ -127,5 +130,6 @@ def fix(obj):
             users = sum(1 for o in src.users_scene[0].objects if o.type == 'MESH'
                         and any(s.material == m for s in o.material_slots)) if src.users_scene else 1
             shared = f" (shared by {users} objects)" if users > 1 else ""
-            out.append(f"source {m.name}: image -> Principled BSDF -> Output{shared}")
+            out.append(f"source {m.name}: image -> Principled BSDF (Roughness "
+                       f"{cp.ROUGHNESS:g}) -> Output{shared}")
     return out

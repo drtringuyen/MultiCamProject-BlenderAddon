@@ -108,6 +108,9 @@ def sync(obj, scene, full=False):
     else:
         mat = material.build(obj, scene, place_slots=False) if full else ensure_mat(obj)
         cp.arrange_slots(obj, [mat])
+    for m in (cp.mcp_pointer(obj) if is_projection(obj) else None, d.material):
+        if m is not None and not m.library and cp.set_roughness(m):
+            out.append(f"{m.name}: Roughness {cp.ROUGHNESS:g}")
     if full:
         out += source_mats.fix(obj)         # the Bake Source's scan materials -> Principled
     if gn_final.get_modifier(obj) is not None:

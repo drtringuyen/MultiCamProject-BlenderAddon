@@ -215,6 +215,36 @@ def material_name(obj):
     return f"{PREFIX}{obj.name}"
 
 
+ROUGHNESS = 1.0         # every Principled BSDF the add-on touches (scans are fully rough)
+
+
+def set_roughness(mat, value=ROUGHNESS):
+    """Roughness = value on every Principled BSDF of `mat` (a Roughness link is removed).
+    Returns True when something changed."""
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return False
+    changed = False
+    nt = mat.node_tree
+    for n in nt.nodes:
+        if n.type != 'BSDF_PRINCIPLED':
+            continue
+        sock = n.inputs["Roughness"]
+        for link in list(sock.links):
+            nt.links.remove(link)
+            changed = True
+        if abs(sock.default_value - value) > 1e-6:
+            sock.default_value = value
+            changed = True
+    return changed
+
+
+def roughness_ok(mat, value=ROUGHNESS):
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return True
+    return all(not n.inputs["Roughness"].links and abs(n.inputs["Roughness"].default_value - value) <= 1e-6
+               for n in mat.node_tree.nodes if n.type == 'BSDF_PRINCIPLED')
+
+
 def _is_ours(mat):
     return bool(mat.get(MAT_TAG) or mat.get(BAKED_TAG)) or mat.name.startswith(LEGACY_PREFIX)
 
@@ -399,6 +429,7 @@ def build_material(obj, warnings=None):
     b = B(nt)
     out = _named(b.n("ShaderNodeOutputMaterial", (1200, 0)), "Material Output")
     bsdf = _named(b.n("ShaderNodeBsdfPrincipled", (900, 0)), "Principled BSDF")
+    bsdf.inputs["Roughness"].default_value = ROUGHNESS
     b.link(bsdf.outputs[0], out.inputs["Surface"])
 
     baked, normal = _build_baked(b, *baked_images(obj))

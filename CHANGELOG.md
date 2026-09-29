@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Roughness 1 on every Principled BSDF (2026-09-29)
+- Material refreshes set Roughness = 1 (a Roughness link is removed) on MCP_, MAT_ and the
+  Bake Source's scan materials; MCP_ and MAT_ are built with it. The Roughness setting
+  in Bake Settings (0.8) is gone.
+
 ### Fix: pink in ALB_ after Bake from Source (2026-09-29)
 - Bake from Source rebuilds MCP_ to show the new BA_, and the rebuild left CamTex_1..n
   without their photos (only apply_slots filled them). An Image Texture without an image

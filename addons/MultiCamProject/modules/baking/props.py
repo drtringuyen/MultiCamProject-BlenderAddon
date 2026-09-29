@@ -103,8 +103,6 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
     output_dir: StringProperty(
         name="Folder", default="//Textures/", subtype='DIR_PATH',
         description="Folder for ALB_<name>.png and NOR_<name>.png (same file on every bake)")
-    roughness: FloatProperty(name="Roughness", default=0.8, min=0.0, max=1.0, subtype='FACTOR',
-                             description="Roughness of the MAT_ material")
 
     bake_what: EnumProperty(
         name="Bake", default='BOTH',

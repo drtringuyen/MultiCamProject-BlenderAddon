@@ -63,7 +63,7 @@ def build(obj, scene, place_slots=True):
 
     out = node("ShaderNodeOutputMaterial", "out", (400, 0))
     bsdf = node("ShaderNodeBsdfPrincipled", "bsdf", (100, 0))
-    bsdf.inputs["Roughness"].default_value = s.roughness
+    bsdf.inputs["Roughness"].default_value = cp.ROUGHNESS
     bsdf.inputs["Metallic"].default_value = 0.0
     b.link(bsdf.outputs[0], out.inputs["Surface"])
     uv = node("ShaderNodeUVMap", "uv", (-700, -100), uv_map=common.UV_NORMAL)
