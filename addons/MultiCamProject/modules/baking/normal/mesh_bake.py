@@ -1,6 +1,6 @@
 """Normal map baked from a high-poly mesh (Cycles NORMAL, tangent space, Selected to
 Active). An object baked onto itself gives flat normals - the source must be another mesh:
-the object's own Remesh original when it has one, else the scene's hp_object."""
+the object's Bake Source (the Remesh original or a picked mesh), else the scene's hp_object."""
 from contextlib import contextmanager
 
 import bpy
@@ -12,8 +12,8 @@ TMP_IMAGE = "MCP_NOR_BAKE_TMP"
 
 
 def source(obj, s):
-    """The high poly for `obj`: its Remesh original first, then the scene's High Poly."""
-    return common.data(obj).source or s.hp_object
+    """The high poly for `obj`: its Bake Source first, then the scene's High Poly."""
+    return common.data(obj).bake_source or s.hp_object
 
 
 @contextmanager

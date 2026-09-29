@@ -22,8 +22,17 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     # the Remesh original: this object's high poly for Bake from mesh (before hp_object)
     source: PointerProperty(
         type=bpy.types.Object, name="Remesh Source", poll=lambda self, o: o.type == 'MESH',
-        description="The original this Remesh copy was made from - its high poly for "
-                    "Bake from mesh (instead of the scene's High Poly)")
+        description="The original this Remesh copy was made from (the Remesh link; the bake "
+                    "reads Bake Source)")
+    # the high poly this object bakes from: albedo (Selected to Active) and Bake from mesh.
+    # Starts as the Remesh original, any other mesh can be picked. Kept apart from `source`:
+    # Remesh repairs every `source` on load, a picked scan must never be touched
+    bake_source: PointerProperty(
+        type=bpy.types.Object, name="Bake Source",
+        poll=lambda self, o: o.type == 'MESH' and o != self.id_data,
+        description="The high poly this object bakes from: its albedo (the projection on this "
+                    "mesh, Selected to Active) and Bake from mesh. Empty = the object bakes "
+                    "itself, Bake from mesh uses the scene's High Poly")
 
 
 VIEW_ITEMS = (('PROJECTION', "Projection", "The camera projection setup, editable", 'CAMERA_DATA', 0),

@@ -76,15 +76,20 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         row.prop_enum(s, "bake_what", 'NORMAL')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
         row.prop_enum(s, "bake_what", 'BOTH')
-        if d.source is not None and s.bake_what != 'NORMAL':
-            # a Remesh copy: its albedo from the original's full-resolution projection
+        if s.bake_what != 'NORMAL':
+            # [link] Albedo from [Bake Source picker] [Cage]: the albedo from a high poly
+            # (the Remesh original by default) - the projection on its mesh, Selected to Active
             row = box.row(align=True)
-            row.prop(s, "albedo_from_source", text=f"Albedo from {d.source.name}",
-                     icon='LINKED', toggle=True)
+            tog = row.row(align=True)
+            tog.ui_units_x = 5.5
+            tog.prop(s, "albedo_from_source", text="Albedo from", icon='LINKED', toggle=True)
             sub = row.row(align=True)
             sub.active = s.albedo_from_source
-            sub.ui_units_x = 4.5
-            sub.prop(s, "cage_extrusion", text="Cage")
+            sub.prop(d, "bake_source", text="")
+            cage = sub.row(align=True)
+            cage.active = s.albedo_from_source and d.bake_source is not None
+            cage.ui_units_x = 4.5
+            cage.prop(s, "cage_extrusion", text="Cage")
         info = box.column(align=True)
         if d.alb_size:
             info.label(text=f"ALB {_res(d.alb_size)}  ·  {d.last_bake_seconds:.1f} s",
@@ -164,9 +169,9 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
             opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
         if mesh:        # High Poly | Cage | Smooth | Iterations - one row
             row = opts.row(align=True)
-            remesh_src = common.data(obj).source if obj is not None and obj.type == 'MESH' else None
-            if remesh_src is not None:      # the Remesh original wins over the scene's pick
-                row.label(text=remesh_src.name, icon='LINKED')
+            d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
+            if d is not None and d.bake_source is not None:   # the object's own pick wins
+                row.prop(d, "bake_source", text="", icon='LINKED')
             else:
                 row.prop(s, "hp_object", text="")
             row.prop(s, "cage_extrusion", text="Cage")

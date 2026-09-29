@@ -169,8 +169,8 @@ _TWIN_SKIP = {"GN-Remesh", "Decimate Overall", "Decimate Selective"}
 
 
 def albedo_source(obj, s):
-    """The Remesh original the albedo is baked from (None: the object bakes itself)."""
-    src = common.data(obj).source
+    """The Bake Source the albedo is baked from (None: the object bakes itself)."""
+    src = common.data(obj).bake_source
     if not s.albedo_from_source or src is None or src == obj or src.type != 'MESH':
         return None
     return src

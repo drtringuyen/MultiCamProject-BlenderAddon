@@ -7,12 +7,29 @@ from bpy.app.handlers import persistent
 from . import cache, props, operators, ui
 
 
+_SOURCE_KEY = "bake_source_migrated"
+
+
+def _migrate_bake_source():
+    """(2026-09-29) Remesh copies from before Bake Source bake from their original - once,
+    so a Bake Source the user cleared stays empty."""
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH' or obj.library:
+            continue
+        d = obj.multicamproject_bake
+        if d.source is not None and d.bake_source is None and not d.get(_SOURCE_KEY):
+            d.bake_source = d.source
+        if d.source is not None:
+            d[_SOURCE_KEY] = 1
+
+
 def _migrate():
     from . import gn_final
     try:
         gn_final.migrate_wrappers()
+        _migrate_bake_source()
     except Exception as e:  # never block addon startup or a file load
-        print(f"[MultiCamProject] GN-Final migration skipped: {e}")
+        print(f"[MultiCamProject] Baking migration skipped: {e}")
     return None
 
 

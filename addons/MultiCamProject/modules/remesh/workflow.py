@@ -222,6 +222,7 @@ def make_copy(context, obj):
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.is_setup = False    # no longer a projection object
     copy.multicamproject_bake.source = obj
+    copy.multicamproject_bake.bake_source = obj
 
     for o in context.selected_objects:
         o.select_set(False)
