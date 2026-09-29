@@ -254,6 +254,71 @@ def _pack_as(img, old, name):
 
 # ---------------------------------------------------------------- 04 Bake from Source
 
+SOURCE_EMIT = "MCP_SOURCE_EMIT_TMP"
+
+
+def _color_socket(nt):
+    """The color a scan material shows: a Principled BSDF's linked Base Color, else a
+    linked Emission Color, else (None, a Base Color / Emission default value)."""
+    nodes = list(nt.nodes)
+    for kind, sock in (('BSDF_PRINCIPLED', "Base Color"), ('EMISSION', "Color")):
+        for n in nodes:
+            if n.type == kind and n.inputs[sock].links:
+                return n.inputs[sock].links[0].from_socket, None
+    for kind, sock in (('BSDF_PRINCIPLED', "Base Color"), ('EMISSION', "Color")):
+        n = next((n for n in nodes if n.type == kind), None)
+        if n is not None:
+            return None, tuple(n.inputs[sock].default_value)
+    return None, (0.8, 0.8, 0.8, 1.0)
+
+
+def _used_materials(obj):
+    """The materials obj's faces use (by material index)."""
+    me = obj.data
+    mi = np.empty(len(me.polygons), np.int32)
+    me.polygons.foreach_get("material_index", mi)
+    slots = obj.material_slots
+    return list(dict.fromkeys(slots[i].material for i in np.unique(mi).tolist()
+                              if i < len(slots) and slots[i].material is not None))
+
+
+@contextmanager
+def source_colors(src):
+    """Every material the source's faces use shows its color as an Emission for one EMIT
+    bake: scans are often unlit (image -> Emission, BSDF unconnected), which a Diffuse
+    Color bake reads as black. The materials are put back after."""
+    changed = []
+    try:
+        for mat in _used_materials(src):
+            if not mat.use_nodes or mat.node_tree is None:
+                continue
+            nt = mat.node_tree
+            out = next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL' and n.is_active_output),
+                       None) or next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL'), None)
+            if out is None:
+                continue
+            surface = out.inputs["Surface"]
+            old = surface.links[0].from_socket if surface.links else None
+            sock, value = _color_socket(nt)
+            emit = nt.nodes.new("ShaderNodeEmission")
+            emit.name = SOURCE_EMIT
+            emit.inputs["Strength"].default_value = 1.0
+            if sock is not None:
+                nt.links.new(sock, emit.inputs["Color"])
+            else:
+                emit.inputs["Color"].default_value = value
+            nt.links.new(emit.outputs[0], surface)
+            changed.append((nt, emit, surface, old))
+        yield
+    finally:
+        for nt, emit, surface, old in changed:
+            try:
+                nt.nodes.remove(emit)
+                if old is not None:
+                    nt.links.new(old, surface)
+            except (ReferenceError, RuntimeError):
+                pass
+
 def source_problem(obj, context=None):
     """Why Bake from Source cannot run for `obj` ('' = it can)."""
     context = context or bpy.context
@@ -291,9 +356,10 @@ def bake_from_source(context, obj, progress=None):
     try:
         with mesh_bake.visible(context, src), render_state(scene), \
                 selection(context, obj, [obj, src]):
-            with target_nodes(obj, ba):
-                configure(scene, 'DIFFUSE')
-                _bake(context, obj, [obj, src], 'DIFFUSE', size, pass_filter={'COLOR'},
+            # the source's colors as Emission (lit or unlit scan alike), baked as EMIT
+            with source_colors(src), target_nodes(obj, ba):
+                configure(scene, 'EMIT')
+                _bake(context, obj, [obj, src], 'EMIT', size,
                       use_selected_to_active=True, cage_extrusion=s.cage_extrusion)
             if progress:
                 progress()

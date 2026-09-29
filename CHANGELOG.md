@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fix: Bake from Source gave a black BA_ on unlit scans (2026-09-29)
+- The scan materials are unlit (image -> Emission, the Principled BSDF unconnected), which
+  a Diffuse Color bake reads as black. BA_ is now an EMIT bake: for the bake, every
+  material the source's faces use sends its color (linked Base Color, else Emission
+  Color) through a temporary Emission node; the materials are put back after.
+
 ### Baking: one resolution, 1K by default (2026-09-29)
 - The 1K-8K toggles next to Bake are the only size control: ALB_, NOR_, BA_ and BN_ all
   bake at it. Work Resolution and the Resolution field in Bake Settings are gone.
