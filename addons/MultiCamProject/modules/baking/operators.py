@@ -57,6 +57,12 @@ def _bake_one(context, obj, albedo, nor_source, res, log, wm, step):
     if with_albedo:
         if not common.has_uv_normal(obj):
             raise RuntimeError(f"no {common.UV_NORMAL}")
+        if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
+            from ..camera_project import core as cp
+            if cp.get_modifier(obj) is not None and not cp.keep_mode(obj):
+                # a blank Mode projects nothing - Cycles would only say "no UV map"
+                raise RuntimeError("projection Mode is blank - pick Sharp / Smooth / Combined "
+                                   "in 05 Projection Painting, then bake again")
         if engine.needs_source_bake(obj):
             engine.bake_from_source(context, obj)
             if log:

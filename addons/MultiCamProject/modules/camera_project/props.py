@@ -83,6 +83,9 @@ def _on_slot_count(self, context):
 
 class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
     is_setup: BoolProperty(default=False)
+    mode_name: StringProperty(
+        options={'HIDDEN'}, description="The last valid projection Mode (Sharp / Smooth / "
+        "Combined) - put back when the modifier's menu value is lost (core.keep_mode)")
     cameras: CollectionProperty(type=MULTICAMPROJECT_CamItem)
     removed: CollectionProperty(
         type=MULTICAMPROJECT_CamRef,

@@ -774,8 +774,38 @@ def _read_keep(mod):
     return keep
 
 
+def keep_mode(obj, remember=True):
+    """The projection Mode is a menu: its stored value can end up matching no item (blank)
+    - GN-CameraProject then outputs no geometry and a bake finds "no UV map". A valid Mode
+    is remembered on the object (`remember`), a blank one gets the remembered Mode back.
+    Returns the Mode now ('' = still blank)."""
+    mod = get_modifier(obj)
+    if mod is None or mod.node_group is None:
+        return ""
+    try:
+        cur = get_input(mod, "Mode")
+    except (KeyError, AttributeError, TypeError):
+        return ""
+    d = data(obj)
+    if cur in MODES:
+        if remember and d.mode_name != cur:
+            d.mode_name = cur
+        return cur
+    if d.mode_name in MODES:
+        try:
+            set_input(mod, "Mode", d.mode_name)
+            cur = get_input(mod, "Mode")
+        except (KeyError, AttributeError, TypeError):
+            pass
+        if cur in MODES:
+            print(f"[MultiCamProject] '{obj.name}': projection Mode was blank - {cur} put back")
+    return cur if cur in MODES else ""
+
+
 def _write_keep(mod, keep):
     for k, v in keep.items():
+        if k == "Mode" and v not in MODES:
+            continue            # never write a blank Mode back over a good one
         try:
             if get_input(mod, k) != v:
                 set_input(mod, k, v)
@@ -823,6 +853,8 @@ def ensure_modifier(obj):
     for o, k in others:     # groups are up to date now, so this does not recurse
         _write_keep(get_modifier(o), k)
         apply_slots(o, bpy.context.scene)
+        keep_mode(o)
+    keep_mode(obj)
     return mod
 
 
@@ -1018,6 +1050,9 @@ def migrate_all():
         if obj.type == 'MESH' and not obj.library:
             migrate_mask2(obj)
     migrate_wrappers(scene)
+    for obj in _setup_objects():
+        if not obj.library:
+            keep_mode(obj, remember=False)      # loading must not mark the file changed
 
 
 def migrate_mask2(obj):

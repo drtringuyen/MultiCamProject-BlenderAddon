@@ -18,6 +18,12 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Guard: a blank projection Mode.** The Mode menu's stored value can end up matching no
+  item; GN-CameraProject then outputs nothing, the console fills with "current value '0'
+  matches no enum", and a bake fails with "No UV map found in the evaluated object". Each
+  object now remembers its last valid Mode (at save, after a group rebuild) and gets it
+  back on load, at save and before a bake. With nothing remembered the bake stops with
+  "projection Mode is blank - pick Sharp / Smooth / Combined".
 - **Fix: "Bake Source is not in the view layer (collection excluded?)".** A Remesh original
   in an excluded collection (e.g. Original Mesh) stopped Bake from Source. The low poly
   and its source - and any object being baked or exported - are now shown for the time
