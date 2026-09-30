@@ -18,6 +18,12 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Fix: "Bake Source is not in the view layer (collection excluded?)".** A Remesh original
+  in an excluded collection (e.g. Original Mesh) stopped Bake from Source. The low poly
+  and its source - and any object being baked or exported - are now shown for the time
+  of the bake / export (`common.shown`) and their collections put back afterwards. The
+  collections are looked up fresh each time: the old export helper held layer-collection
+  entries that go stale once one is excluded.
 - **07: a Fix column in the EXPORT list.** Every row that is not ready has a wrench button
   that makes that one object ready: apply a live Decimate (03) and unwrap uv_normal again,
   rename, apply the transform, make uv_normal, bake - only the steps it needs, in that

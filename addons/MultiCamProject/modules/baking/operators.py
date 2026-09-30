@@ -35,26 +35,9 @@ def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
             try:
                 if handmade.is_handmade(obj):
                     raise RuntimeError("handmade - baked by hand, not by the add-on")
-                # one resolution: a normal map alone at a new size remakes the albedo too
-                with_albedo = albedo or (nor_source is not None
-                                         and common.data(obj).alb_size not in (0, res))
-                if with_albedo:
-                    if not common.has_uv_normal(obj):
-                        raise RuntimeError(f"no {common.UV_NORMAL}")
-                    if engine.needs_source_bake(obj):
-                        engine.bake_from_source(context, obj)
-                        if log:
-                            log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
-                    engine.bake_albedo(context, obj)
-                    step += 1
-                    wm.progress_update(step)
-                if nor_source is not None:
-                    why = normal.problem(obj, context.scene, nor_source)
-                    if why:
-                        raise RuntimeError(why)
-                    normal.generate(context, obj, nor_source)
-                    step += 1
-                    wm.progress_update(step)
+                # an excluded / hidden collection bakes nothing: shown for the bake
+                with common.shown(context, [obj]):
+                    step = _bake_one(context, obj, albedo, nor_source, res, log, wm, step)
                 done.append(obj)
             except Exception as e:      # one object failing must not stop the others
                 failed.append((obj.name, str(e)))
@@ -64,6 +47,31 @@ def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
             from . import owned
             owned.record_used(context.scene)    # the new ALB_/NOR_ are this file's own
     return done, failed
+
+
+def _bake_one(context, obj, albedo, nor_source, res, log, wm, step):
+    """bake_objects' work for one object. Returns the progress step."""
+    # one resolution: a normal map alone at a new size remakes the albedo too
+    with_albedo = albedo or (nor_source is not None
+                             and common.data(obj).alb_size not in (0, res))
+    if with_albedo:
+        if not common.has_uv_normal(obj):
+            raise RuntimeError(f"no {common.UV_NORMAL}")
+        if engine.needs_source_bake(obj):
+            engine.bake_from_source(context, obj)
+            if log:
+                log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
+        engine.bake_albedo(context, obj)
+        step += 1
+        wm.progress_update(step)
+    if nor_source is not None:
+        why = normal.problem(obj, context.scene, nor_source)
+        if why:
+            raise RuntimeError(why)
+        normal.generate(context, obj, nor_source)
+        step += 1
+        wm.progress_update(step)
+    return step
 
 
 def _report(op, done, failed, what):

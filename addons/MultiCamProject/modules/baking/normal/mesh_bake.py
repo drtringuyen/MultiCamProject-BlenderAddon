@@ -6,20 +6,6 @@ import bpy
 
 
 @contextmanager
-def visible(context, src):
-    """The source shown for the bake (the Remesh original is kept hidden)."""
-    hidden = src.hide_get(view_layer=context.view_layer)
-    hv, hr = src.hide_viewport, src.hide_render
-    src.hide_set(False, view_layer=context.view_layer)
-    src.hide_viewport = src.hide_render = False
-    try:
-        yield
-    finally:
-        src.hide_viewport, src.hide_render = hv, hr
-        src.hide_set(hidden, view_layer=context.view_layer)
-
-
-@contextmanager
 def smoothed_source(context, src, s):
     """The high poly, or a temporary smoothed copy of it (deleted afterwards)."""
     if not s.smooth_source:

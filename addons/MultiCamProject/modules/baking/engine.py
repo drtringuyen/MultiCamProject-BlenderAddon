@@ -330,8 +330,8 @@ def source_problem(obj, context=None):
         return "No Bake Source (0C Remesh, or pick the high poly)"
     if src == obj or src.type != 'MESH':
         return "The Bake Source must be another mesh"
-    if context.view_layer.objects.get(src.name) != src:
-        return f"'{src.name}' is not in the view layer (collection excluded?)"
+    if context.scene.objects.get(src.name) != src:     # excluded is fine: shown for the bake
+        return f"'{src.name}' is not in this scene"
     if not common.has_uv_normal(obj):
         return f"No '{common.UV_NORMAL}' UV map - unwrap the low poly first"
     return ""
@@ -341,7 +341,16 @@ def bake_from_source(context, obj, progress=None):
     """BA_ (the source's colors) and BN_ (its surface, tangent normals) onto obj's
     uv_normal - Selected to Active from the Bake Source, at the scene's resolution. Both stay
     packed in the .blend and are overwritten on the next bake; MCP_ shows them under the
-    projection. Returns the seconds."""
+    projection. The low poly and its source are shown for the whole time (a Remesh original
+    usually sits in an excluded collection). Returns the seconds."""
+    why = source_problem(obj, context)
+    if why:
+        raise RuntimeError(why)
+    with common.shown(context, [obj, common.data(obj).bake_source]):
+        return _bake_from_source(context, obj, progress)
+
+
+def _bake_from_source(context, obj, progress):
     from .normal import mesh_bake
     scene = context.scene
     s = common.settings(scene)
@@ -363,7 +372,7 @@ def bake_from_source(context, obj, progress=None):
     bn = _work_image(common.bn_name(obj), size, 'Non-Color')
     prev = _uv_normal_active(obj)
     try:
-        with mesh_bake.visible(context, src), render_state(scene), \
+        with render_state(scene), \
                 selection(context, obj, [obj, src]):
             # the source's colors as Emission (lit or unlit scan alike), baked as EMIT
             with source_colors(src), target_nodes(obj, ba):
