@@ -3,7 +3,7 @@ import os
 import bpy
 from bpy.props import BoolProperty, EnumProperty
 
-from . import common, engine, gn_final, handmade, normal
+from . import common, engine, gn_final, handmade, jobs, normal
 
 SCOPES = (('SELECTED', "Selected", "The selected meshes"),
           ('EXPORT', "EXPORT", "Every mesh in the EXPORT collection"))
@@ -17,43 +17,53 @@ def scope_objects(context, scope, bake=True):
 
 
 def _object_mode(context):
-    return context.mode == 'OBJECT'
+    return context.mode == 'OBJECT' and not jobs.busy()
 
 
 def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
-    """Albedo and/or normal bake for `objs`, one object after the other, with a progress
-    bar. An object with a Bake Source but no current BA_ bakes from its source first; a
-    normal map at another size than the albedo remakes the albedo at that size too.
-    Returns (done, [(object name, error)])."""
-    wm = context.window_manager
-    steps = len(objs) * (int(albedo) + int(nor_source is not None))
-    wm.progress_begin(0, max(steps, 1))
-    done, failed, step = [], [], 0
+    """bake_objects_steps, blocking."""
+    return jobs.run_sync(bake_objects_steps(context, objs, albedo, nor_source, log))
+
+
+def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
+    """Albedo and/or normal bake for `objs`, one object after the other (each one an item of
+    the job's progress list; a stop request ends the run between objects). An object with a
+    Bake Source but no current BA_ bakes from its source first; a normal map at another size
+    than the albedo remakes the albedo at that size too. A generator (jobs); returns
+    (done, [(object name, error)])."""
+    done, failed = [], []
     try:
         res = common.settings(context.scene).resolution
         for obj in objs:
+            if jobs.stop_requested():
+                jobs.skip_rest()
+                break
+            name = obj.name
+            jobs.item_start(name)
             try:
                 if handmade.is_handmade(obj):
                     raise RuntimeError("handmade - baked by hand, not by the add-on")
                 # an excluded / hidden collection bakes nothing: shown for the bake
                 with common.shown(context, [obj]):
-                    step = _bake_one(context, obj, albedo, nor_source, res, log, wm, step)
+                    yield from _bake_one(context, obj, albedo, nor_source, res, log)
                 done.append(obj)
+                jobs.item_end(name)
             except Exception as e:      # one object failing must not stop the others
-                failed.append((obj.name, str(e)))
+                failed.append((name, str(e)))
+                jobs.item_end(name, str(e))
     finally:
-        wm.progress_end()
         if done:
             from . import owned
             owned.record_used(context.scene)    # the new ALB_/NOR_ are this file's own
     return done, failed
 
 
-def _bake_one(context, obj, albedo, nor_source, res, log, wm, step):
-    """bake_objects' work for one object. Returns the progress step."""
+def _bake_one(context, obj, albedo, nor_source, res, log):
+    """bake_objects' work for one object (a generator)."""
     # one resolution: a normal map alone at a new size remakes the albedo too
     with_albedo = albedo or (nor_source is not None
                              and common.data(obj).alb_size not in (0, res))
+    with_normal = nor_source is not None
     if with_albedo:
         if not common.has_uv_normal(obj):
             raise RuntimeError(f"no {common.UV_NORMAL}")
@@ -64,20 +74,18 @@ def _bake_one(context, obj, albedo, nor_source, res, log, wm, step):
                 raise RuntimeError("projection Mode is blank - pick Sharp / Smooth / Combined "
                                    "in 05 Projection Painting, then bake again")
         if engine.needs_source_bake(obj):
-            engine.bake_from_source(context, obj)
+            yield jobs.Step("Bake from Source", 0.0)
+            yield from engine.bake_from_source_steps(context, obj)
             if log:
                 log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
-        engine.bake_albedo(context, obj)
-        step += 1
-        wm.progress_update(step)
-    if nor_source is not None:
+        yield jobs.Step("Albedo", 0.1)
+        yield from engine.bake_albedo_steps(context, obj)
+    if with_normal:
         why = normal.problem(obj, context.scene, nor_source)
         if why:
             raise RuntimeError(why)
-        normal.generate(context, obj, nor_source)
-        step += 1
-        wm.progress_update(step)
-    return step
+        yield jobs.Step("Normal", 0.6 if with_albedo else 0.0)
+        yield from normal.generate_steps(context, obj, nor_source)
 
 
 def _report(op, done, failed, what):

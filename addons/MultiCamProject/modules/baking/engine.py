@@ -14,7 +14,7 @@ import bpy
 import numpy as np
 
 from ..camera_project import core as cp
-from . import common, fingerprint, gn_final, material
+from . import common, fingerprint, gn_final, jobs, material
 
 TMP_NODE = "MCP_BAKE_TMP"
 TMP_IMAGE = "MCP_ALB_BAKE_TMP"
@@ -208,13 +208,13 @@ def subdivided(context, obj):
         context.view_layer.update()
 
 
-def _bake(context, obj, selected, bake_type, size, **kw):
-    """One bpy.ops.object.bake into the images of target_nodes, on uv_normal."""
+def _bake(context, obj, selected, bake_type, size, image, **kw):
+    """One bpy.ops.object.bake into `image` (the one of target_nodes), on uv_normal - a
+    generator: yields the jobs.BakeJob (`yield from` it)."""
     s = common.settings(context.scene)
-    with context.temp_override(active_object=obj, object=obj, selected_objects=selected,
-                               selected_editable_objects=selected):
-        bpy.ops.object.bake(type=bake_type, margin=common.margin_px(s, size), use_clear=True,
-                            target='IMAGE_TEXTURES', uv_layer=common.UV_NORMAL, **kw)
+    yield jobs.BakeJob(context, obj, selected, image,
+                       dict(type=bake_type, margin=common.margin_px(s, size), use_clear=True,
+                            target='IMAGE_TEXTURES', uv_layer=common.UV_NORMAL, **kw))
 
 
 def _uv_normal_active(obj):
@@ -337,20 +337,25 @@ def source_problem(obj, context=None):
     return ""
 
 
-def bake_from_source(context, obj, progress=None):
+def bake_from_source(context, obj):
+    """bake_from_source_steps, blocking."""
+    return jobs.run_sync(bake_from_source_steps(context, obj))
+
+
+def bake_from_source_steps(context, obj):
     """BA_ (the source's colors) and BN_ (its surface, tangent normals) onto obj's
     uv_normal - Selected to Active from the Bake Source, at the scene's resolution. Both stay
     packed in the .blend and are overwritten on the next bake; MCP_ shows them under the
     projection. The low poly and its source are shown for the whole time (a Remesh original
-    usually sits in an excluded collection). Returns the seconds."""
+    usually sits in an excluded collection). A generator (jobs); returns the seconds."""
     why = source_problem(obj, context)
     if why:
         raise RuntimeError(why)
     with common.shown(context, [obj, common.data(obj).bake_source]):
-        return _bake_from_source(context, obj, progress)
+        return (yield from _bake_from_source(context, obj))
 
 
-def _bake_from_source(context, obj, progress):
+def _bake_from_source(context, obj):
     from .normal import mesh_bake
     scene = context.scene
     s = common.settings(scene)
@@ -377,10 +382,9 @@ def _bake_from_source(context, obj, progress):
             # the source's colors as Emission (lit or unlit scan alike), baked as EMIT
             with source_colors(src), target_nodes(obj, ba):
                 configure(scene, 'EMIT')
-                _bake(context, obj, [obj, src], 'EMIT', size,
-                      use_selected_to_active=True, cage_extrusion=s.cage_extrusion)
-            if progress:
-                progress()
+                yield jobs.Step("Bake from Source: colors (BA_)")
+                yield from _bake(context, obj, [obj, src], 'EMIT', size, ba,
+                                 use_selected_to_active=True, cage_extrusion=s.cage_extrusion)
             with mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
                 configure(scene, 'NORMAL')
                 b = scene.render.bake
@@ -388,8 +392,9 @@ def _bake_from_source(context, obj, progress):
                 b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
                 sel = [obj, hp]
                 hp.select_set(True)
-                _bake(context, obj, sel, 'NORMAL', size, use_selected_to_active=True,
-                      cage_extrusion=s.cage_extrusion, normal_space='TANGENT')
+                yield jobs.Step("Bake from Source: surface (BN_)")
+                yield from _bake(context, obj, sel, 'NORMAL', size, bn, use_selected_to_active=True,
+                                 cage_extrusion=s.cage_extrusion, normal_space='TANGENT')
     except Exception:
         bpy.data.images.remove(ba)      # the old BA_ / BN_ stay as they were
         bpy.data.images.remove(bn)
@@ -462,11 +467,16 @@ def _save_albedo(obj, scene, tmp, path):
     d.alb_image = img
 
 
-def bake_albedo(context, obj, progress=None):
+def bake_albedo(context, obj):
+    """bake_albedo_steps, blocking."""
+    return jobs.run_sync(bake_albedo_steps(context, obj))
+
+
+def bake_albedo_steps(context, obj):
     """ALB_<name>: the Processing material (MCP_: BA_ and the projection, by the mask)
     baked onto the object itself, with a temporary subdivision against sliding photos.
     Without a projection ALB_ is BA_ at the final resolution. Builds MAT_, stores the
-    fingerprint; the object ends up in Final."""
+    fingerprint; the object ends up in Final. A generator (jobs); returns the seconds."""
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
@@ -502,11 +512,12 @@ def bake_albedo(context, obj, progress=None):
                 with subdivided(context, obj), render_state(scene), \
                         selection(context, obj, [obj]), target_nodes(obj, tmp):
                     configure(scene, 'DIFFUSE')
-                    _bake(context, obj, [obj], 'DIFFUSE', s.resolution, pass_filter={'COLOR'})
+                    yield jobs.Step("Albedo: Cycles bake")
+                    yield from _bake(context, obj, [obj], 'DIFFUSE', s.resolution, tmp,
+                                     pass_filter={'COLOR'})
             finally:
                 _uv_restore(obj, prev)
-        if progress:
-            progress()
+        yield jobs.Step(f"Albedo: writing {os.path.basename(path)}")
         _save_albedo(obj, scene, tmp, path)
     finally:
         bpy.data.images.remove(tmp)
@@ -522,8 +533,14 @@ MASK_EMIT = "MCP_MASK_EMIT_TMP"
 
 
 def bake_mask(context, obj, size):
+    """bake_mask_steps, blocking."""
+    return jobs.run_sync(bake_mask_steps(context, obj, size))
+
+
+def bake_mask_steps(context, obj, size):
     """The blend mask (0 = baked, 1 = projected) on uv_normal as (size, size) floats, rows
-    bottom-up - MCP_'s mask sent to an Emission for one EMIT bake. None without a projection."""
+    bottom-up - MCP_'s mask sent to an Emission for one EMIT bake. None without a projection.
+    A generator (jobs)."""
     scene = context.scene
     mat = cp.data(obj).material if hasattr(obj, "multicamproject_cam") else None
     nt = mat.node_tree if mat is not None else None
@@ -548,7 +565,8 @@ def bake_mask(context, obj, size):
         with subdivided(context, obj), render_state(scene), selection(context, obj, [obj]), \
                 target_nodes(obj, img):
             configure(scene, 'EMIT')
-            _bake(context, obj, [obj], 'EMIT', size)
+            yield jobs.Step("Normal: blend mask bake")
+            yield from _bake(context, obj, [obj], 'EMIT', size, img)
         buf = np.empty(size * size * 4, dtype=np.float32)
         img.pixels.foreach_get(buf)
         return np.clip(buf.reshape(size, size, 4)[:, :, 0], 0.0, 1.0).copy()

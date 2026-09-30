@@ -14,7 +14,7 @@ from contextlib import contextmanager
 import bpy
 import numpy as np
 
-from ..baking import common, gn_final
+from ..baking import common, gn_final, jobs
 from . import checks, fixes, status
 
 TMP = "__mcp_export_tmp"
@@ -169,9 +169,14 @@ def write_report(folder, scene, files, statuses, missing, seconds, fix_log=()):
 
 
 def export(context, fix_log=()):
+    """export_steps, blocking."""
+    return jobs.run_sync(export_steps(context, fix_log))
+
+
+def export_steps(context, fix_log=()):
     """Export the active scene's baked EXPORT meshes (never-baked ones are left out and
     reported). The exported objects stay in Final - Blender then shows what the FBX holds.
-    Returns (files, {name: missing or skipped}, report)."""
+    A generator (jobs); returns (files, {name: missing or skipped}, report)."""
     scene = context.scene
     es = scene.multicamproject_export
     t0 = time.perf_counter()
@@ -192,9 +197,11 @@ def export(context, fix_log=()):
         for o in objs:
             if not finals[o]:
                 gn_final.set_final(o, scene, True)
+        yield jobs.Step(f"Copying {2 * len(objs)} textures to Textures/", 0.1)
         copies = copy_textures(objs, folder)
         from ..baking import owned
         owned.add(scene, list(copies.values()))    # a later export may replace them
+        yield jobs.Step("Evaluating the Final meshes", 0.4)
         with common.shown(context, objs):
             made = make_copies(context, objs, copies, coll, temps)
         context.view_layer.update()
@@ -215,14 +222,17 @@ def export(context, fix_log=()):
                     missing[cp.name] = miss
             copies_list = [cp for cp, _n in temps["objects"]]
             if es.split == 'PER_OBJECT':
-                for cp in copies_list:
+                for i, cp in enumerate(copies_list):
                     path = os.path.join(folder, cp.name + ".fbx")
+                    yield jobs.Step(f"Writing {os.path.basename(path)}",
+                                    0.5 + 0.5 * i / len(copies_list))
                     write_fbx(context, path, [cp])
                     files.append(path)
             else:
                 from ..baking import naming
                 name = naming.fbx_name(scene)
                 path = os.path.join(folder, name + ".fbx")
+                yield jobs.Step(f"Writing {os.path.basename(path)}", 0.6)
                 write_fbx(context, path, copies_list)
                 files.append(path)
             # the temporaries leave with their borrowed names still on them

@@ -9,6 +9,9 @@ _DELAY = 0.2
 
 
 def _fix():
+    from ..baking import jobs
+    if jobs.busy():         # the export sets names aside between its steps: afterwards
+        return 0.5
     try:
         from ..baking import cache, common, naming
         from . import fixes

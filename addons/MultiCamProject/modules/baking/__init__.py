@@ -4,7 +4,7 @@ Works without camera_project: any mesh with uv_normal can be baked."""
 import bpy
 from bpy.app.handlers import persistent
 
-from . import cache, matsync, owned, props, operators, ui
+from . import cache, jobs, matsync, owned, props, operators, ui
 
 
 _SOURCE_KEY = "bake_source_migrated"
@@ -40,6 +40,7 @@ def _on_load(_):
 
 def register():
     props.register()
+    jobs.register()
     operators.register()
     ui.register()
     cache.register()
@@ -57,4 +58,5 @@ def unregister():
     cache.unregister()
     ui.unregister()
     operators.unregister()
+    jobs.unregister()
     props.unregister()

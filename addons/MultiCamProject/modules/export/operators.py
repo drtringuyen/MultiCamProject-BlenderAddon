@@ -3,12 +3,12 @@ import os
 import bpy
 from bpy.props import StringProperty
 
-from ..baking import cache, common
+from ..baking import cache, common, jobs
 from . import autofix, fbx, fixes, status
 
 
 def _poll(context):
-    return context.mode == 'OBJECT'
+    return context.mode == 'OBJECT' and not jobs.busy()
 
 
 def select_and_frame_row(context, es):
@@ -116,19 +116,37 @@ class MULTICAMPROJECT_OT_ExportFixTransforms(bpy.types.Operator):
         return {'FINISHED'}
 
 
-def _rebake(op, context, objs):
+def _rebake_steps(context, objs):
     from ..baking import operators as bake_ops
     s = common.settings(context.scene)
-    ok = 0
-    for obj in objs:
-        src = common.data(obj).nor_source_used or s.nor_source
-        done, failed = bake_ops.bake_objects(context, [obj], albedo=True, nor_source=src)
-        ok += len(done)
-        for name, err in failed:
-            op.report({'ERROR'}, f"{name}: {err}")
-    cache.clear()
-    op.report({'INFO'}, f"Baked {ok} of {len(objs)}")
-    return {'FINISHED'} if ok else {'CANCELLED'}
+    done, failed = [], []
+    try:
+        for obj in objs:
+            src = common.data(obj).nor_source_used or s.nor_source
+            d, f = yield from bake_ops.bake_objects_steps(context, [obj], albedo=True,
+                                                          nor_source=src)
+            done += d
+            failed += f
+    finally:
+        cache.clear()
+    return done, failed
+
+
+def _rebake(op, context, objs, title):
+    if not objs:
+        op.report({'INFO'}, "Nothing to bake")
+        return {'CANCELLED'}
+    n = len(objs)
+
+    def finish(result, error):
+        if result is None:
+            return []
+        done, failed = result
+        lines = [('ERROR', f"{name}: {err}") for name, err in failed]
+        stopped = " (stopped)" if len(done) + len(failed) < n else ""
+        return lines + [('INFO', f"Baked {len(done)} of {n}{stopped}")]
+    return jobs.start(op, context, title, [o.name for o in objs], _rebake_steps(context, objs),
+                      finish)
 
 
 class MULTICAMPROJECT_OT_ExportUpdateOutdated(bpy.types.Operator):
@@ -143,7 +161,8 @@ class MULTICAMPROJECT_OT_ExportUpdateOutdated(bpy.types.Operator):
         return _poll(context)
 
     def execute(self, context):
-        return _rebake(self, context, status.objects_with(context.scene, {'OUTDATED'}))
+        return _rebake(self, context, status.objects_with(context.scene, {'OUTDATED'}),
+                       "Update Outdated")
 
 
 class MULTICAMPROJECT_OT_ExportBakeMissing(bpy.types.Operator):
@@ -159,7 +178,7 @@ class MULTICAMPROJECT_OT_ExportBakeMissing(bpy.types.Operator):
     def execute(self, context):
         objs = [o for o in status.objects_with(context.scene, {'NOT_BAKED', 'FILE', 'TEXTURE'})
                 if common.has_uv_normal(o)]
-        return _rebake(self, context, objs)
+        return _rebake(self, context, objs, "Bake Missing")
 
 
 class MULTICAMPROJECT_OT_ExportDeleteScene(bpy.types.Operator):
@@ -318,7 +337,8 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
                 if len(names) > 8:
                     col.label(text=f"      ... and {len(names) - 8} more")
         if p.bake:
-            col.label(text="Baking freezes Blender until it is done", icon='TIME')
+            col.label(text="The progress shows in the status bar and above the list. "
+                           "Esc: stop after the object", icon='TIME')
         if p.warnings:
             col.separator()
             col.label(text="Not fixed automatically:", icon='ERROR')
@@ -331,21 +351,42 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
 
     def execute(self, context):
         p = getattr(self, "_plan", None) or autofix.plan(context.scene)
-        log = []
-        autofix.run(context, p, lambda sev, text: log.append((sev, text)))
-        log += [('WARNING', w) for w in p.warnings]
-        for sev, text in log:
-            if sev != 'INFO':
-                self.report({sev}, text)
-        try:
-            files, missing, report = fbx.export(context, log)
-        except (RuntimeError, OSError) as e:
-            self.report({'ERROR'}, str(e))
-            return {'CANCELLED'}
-        for name, miss in missing.items():
-            self.report({'WARNING'}, f"{name}: {', '.join(miss)}")
-        self.report({'INFO'}, f"Exported {', '.join(files)}")
-        return {'FINISHED'}
+        names = [o.name for o in p.bake] + [FBX_ITEM]
+        return jobs.start(self, context, "Fix + Export", names, _export_steps(context, p),
+                          _export_finish, light=(FBX_ITEM,))
+
+
+FBX_ITEM = "Write FBX"
+
+
+def _export_steps(context, p):
+    """ExportFBX's work: the fixes and bakes of plan `p`, then the FBX. A generator (jobs);
+    returns (log, files, missing) - files None when stopped or the export failed."""
+    log = []
+    ok = yield from autofix.run_steps(context, p, lambda sev, text: log.append((sev, text)))
+    log += [('WARNING', w) for w in p.warnings]
+    if not ok:
+        jobs.item_end(FBX_ITEM, "stopped", skipped=True)
+        return log, None, {}
+    jobs.item_start(FBX_ITEM)
+    try:
+        files, missing, _report = yield from fbx.export_steps(context, log)
+    except (RuntimeError, OSError) as e:
+        jobs.item_end(FBX_ITEM, str(e))
+        return log + [('ERROR', str(e))], None, {}
+    jobs.item_end(FBX_ITEM)
+    return log, files, missing
+
+
+def _export_finish(result, error):
+    if result is None:
+        return []
+    log, files, missing = result
+    lines = [(sev, text) for sev, text in log if sev != 'INFO']
+    lines += [('WARNING', f"{name}: {', '.join(miss)}") for name, miss in missing.items()]
+    if files:
+        lines.append(('INFO', f"Exported {', '.join(files)}"))
+    return lines
 
 
 def uv_candidates(objs):
@@ -431,15 +472,18 @@ class MULTICAMPROJECT_OT_ExportFixObject(bpy.types.Operator):
         obj = bpy.data.objects.get(self.object_name)
         if obj is None:
             return {'CANCELLED'}
+        lines = []
+        name = self.object_name
 
-        def log(sev, text):
-            self.report({'ERROR' if sev == 'ERROR' else 'WARNING' if sev == 'WARNING' else 'INFO'}, text)
-        try:
-            autofix.run_object(context, obj, log)
-        except RuntimeError as e:
-            self.report({'ERROR'}, f"{self.object_name}: {e}")
-            return {'CANCELLED'}
-        return {'FINISHED'}
+        def steps():
+            try:
+                yield from autofix.run_object_steps(context, obj, lambda s, t: lines.append((s, t)))
+            except RuntimeError as e:
+                lines.append(('ERROR', f"{name}: {e}"))
+
+        def finish(result, error):
+            return lines
+        return jobs.start(self, context, f"Fix {name}", [name], steps(), finish)
 
 
 class MULTICAMPROJECT_OT_ExportApplyDecimate(bpy.types.Operator):

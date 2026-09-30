@@ -6,7 +6,7 @@ from collections import namedtuple
 
 import bpy
 
-from ..baking import cache, common, fingerprint, naming, normal
+from ..baking import cache, common, fingerprint, jobs, naming, normal
 from . import checks, fixes, status
 
 Plan = namedtuple("Plan", "rename transforms make_uv bake unused warnings")
@@ -100,7 +100,12 @@ def apply_decimate_unwrap(context, obj):
 
 
 def run_object(context, obj, log):
-    """Make `obj` ready: the Steps of object_steps. `log(severity, text)`."""
+    """run_object_steps, blocking."""
+    return jobs.run_sync(run_object_steps(context, obj, log))
+
+
+def run_object_steps(context, obj, log):
+    """Make `obj` ready: the Steps of object_steps. `log(severity, text)`. A generator (jobs)."""
     from ..baking import matsync
     from ..baking import operators as bake_ops
     scene = context.scene
@@ -113,8 +118,10 @@ def run_object(context, obj, log):
     if steps.rename:
         sc = naming.scheme(scene)
         want = fixes.planned_names(common.export_objects(scene), sc).get(obj)
+        old = obj.name
         for sev, text in fixes.rename_all([obj], sc, plan={obj: want} if want else {}):
             log(sev, text)
+        jobs.rename_items([obj], [old])
     for text in matsync.sync(obj, scene):
         log('INFO', f"{obj.name}: {text}")
     if steps.transform:
@@ -126,12 +133,7 @@ def run_object(context, obj, log):
         make_uv_normal(context, obj)
         log('INFO', f"{obj.name}: uv_normal made by Smart UV Project")
     if steps.bake:
-        src = _nor_source(obj, scene)
-        done, failed = bake_ops.bake_objects(context, [obj], albedo=True, nor_source=src)
-        for name, err in failed:
-            log('ERROR', f"{name}: bake failed - {err}")
-        if done:
-            log('INFO', f"{obj.name}: baked (normal: {normal.LABELS.get(src, src)})")
+        yield from _bake_logged(context, obj, scene, log)
     cache.clear()
     return steps
 
@@ -177,13 +179,35 @@ def _nor_source(obj, scene):
     return src
 
 
-def run(context, p, log):
-    """Apply plan `p`. `log(severity, text)` collects what happened."""
+def _bake_logged(context, obj, scene, log):
+    """Bake `obj` (albedo + the normal source it was made with), logged. A generator;
+    returns True when it baked."""
     from ..baking import operators as bake_ops
+    src = _nor_source(obj, scene)
+    done, failed = yield from bake_ops.bake_objects_steps(context, [obj], albedo=True,
+                                                          nor_source=src)
+    for name, err in failed:
+        log('ERROR', f"{name}: bake failed - {err}")
+    if done:
+        log('INFO', f"{obj.name}: baked (normal: {normal.LABELS.get(src, src)})")
+    return bool(done)
+
+
+def run(context, p, log):
+    """run_steps, blocking."""
+    return jobs.run_sync(run_steps(context, p, log))
+
+
+def run_steps(context, p, log):
+    """Apply plan `p`. `log(severity, text)` collects what happened. A generator (jobs);
+    returns False when the user stopped it (the rest is not baked)."""
     scene = context.scene
+    yield jobs.Step("Names, materials, transforms")
     objs = common.export_objects(scene)
+    old = [o.name for o in objs]
     for sev, text in fixes.rename_all(objs, naming.scheme(scene)):
         log(sev, text)
+    jobs.rename_items(objs, old)
     from ..baking import matsync
     for obj in matsync._duplicates(objs) + objs:
         for text in matsync.sync(obj, scene):
@@ -194,15 +218,21 @@ def run(context, p, log):
         log('WARNING' if why else 'INFO',
             f"{obj.name}: transform {'not fixed, ' + why if why else 'applied, origin at bottom center'}")
     for obj in p.make_uv:
+        yield jobs.Step(f"{obj.name}: uv_normal (Smart UV)")
         make_uv_normal(context, obj)
         log('INFO', f"{obj.name}: uv_normal made by Smart UV Project")
     for obj in p.bake:
-        src = _nor_source(obj, scene)
-        done, failed = bake_ops.bake_objects(context, [obj], albedo=True, nor_source=src)
-        for name, err in failed:
-            log('ERROR', f"{name}: bake failed - {err}")
-        if done:
-            log('INFO', f"{obj.name}: baked (normal: {normal.LABELS.get(src, src)})")
+        if jobs.stop_requested():
+            jobs.skip_rest()
+            log('WARNING', "Stopped by the user - the rest is not baked, nothing exported")
+            cache.clear()
+            return False
+        yield from _bake_logged(context, obj, scene, log)
+    if jobs.stop_requested():       # stopped during the last object
+        log('WARNING', "Stopped by the user - nothing exported")
+        cache.clear()
+        return False
     for path in fixes.to_recycle_bin(checks.unused_textures(scene)):
         log('INFO', f"Unused {os.path.basename(path)} moved to the Recycle Bin")
     cache.clear()
+    return True

@@ -10,7 +10,7 @@ import time
 
 import bpy
 
-from .. import common, engine, gn_final as final, material
+from .. import common, engine, gn_final as final, jobs, material
 from . import ai, highpass, pngio
 
 LABELS = {'HIGHPASS': "High-pass", 'AI': "AI",
@@ -55,14 +55,21 @@ def _read_resized(img, size):
 
 
 def compose(context, obj, detail, size):
-    """BN_ + detail by the blend mask (see the module doc); detail alone without BN_."""
+    """compose_steps, blocking."""
+    return jobs.run_sync(compose_steps(context, obj, detail, size))
+
+
+def compose_steps(context, obj, detail, size):
+    """BN_ + detail by the blend mask (see the module doc); detail alone without BN_.
+    A generator (jobs)."""
     import numpy as np
     from .blend import rnm
     d = common.data(obj)
     if d.bn_image is None:
         return detail
     base = _read_resized(d.bn_image, size)
-    mask = engine.bake_mask(context, obj, size)
+    mask = yield from engine.bake_mask_steps(context, obj, size)
+    yield jobs.Step("Normal: combining with BN_")
     top = rnm(base, detail)
     if mask is None:            # no projection: the source's normals alone
         return base
@@ -99,8 +106,13 @@ def times(d):
 
 
 def generate(context, obj, source):
+    """generate_steps, blocking."""
+    return jobs.run_sync(generate_steps(context, obj, source))
+
+
+def generate_steps(context, obj, source):
     """Make NOR_<name> (detail from `source`) at the scene's resolution, save it, put it
-    into MAT_. Returns the seconds."""
+    into MAT_. A generator (jobs); returns the seconds."""
     source = usable(source)
     scene = context.scene
     s = common.settings(scene)
@@ -109,17 +121,19 @@ def generate(context, obj, source):
     size = s.resolution
     t0 = time.perf_counter()
     try:
+        yield jobs.Step(f"Normal: {LABELS[source]} from the albedo")
         if source == 'AI':
             rgb = ai.generate(d.alb_image, size)
         else:
             rgb = highpass.generate(d.alb_image, size, s)
-        rgb = compose(context, obj, rgb, size)
+        rgb = yield from compose_steps(context, obj, rgb, size)
     finally:
         if final.is_final(obj) != was_final:
             final.set_final(obj, scene, was_final)
     name = common.nor_name(obj)
     path = common.texture_path(scene, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
+    yield jobs.Step(f"Normal: writing {os.path.basename(path)} (16-bit)")
     pngio.write_rgb16(path, rgb, s.png_compression)
     del rgb
     img = d.nor_image or bpy.data.images.get(name)

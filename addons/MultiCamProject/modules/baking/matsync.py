@@ -311,9 +311,17 @@ def _msg(text):
     print(f"[MultiCamProject] {text}")
 
 
+def _job_running():
+    """A bake / export job is between steps: its temporary objects and set-aside names
+    must not be synced - the timer tries again afterwards."""
+    from . import jobs
+    return jobs.busy()
+
+
 def _ready():
     ctx = bpy.context
-    return ctx.mode == 'OBJECT' and not getattr(ctx.window_manager, "is_interface_locked", False)
+    return (ctx.mode == 'OBJECT' and not getattr(ctx.window_manager, "is_interface_locked", False)
+            and not _job_running())
 
 
 def _objects_changed():
@@ -373,6 +381,8 @@ def _picked_changed():
 
 
 def _names_changed():
+    if _job_running():
+        return 0.5
     try:
         for t in sync_names():
             _msg(f"Material renamed {t}")

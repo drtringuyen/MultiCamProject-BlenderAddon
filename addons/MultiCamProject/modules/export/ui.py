@@ -124,6 +124,10 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         if not module_manager.is_loaded("baking"):
             layout.label(text="Needs the Baking module", icon='ERROR')
             return
+        from ..baking import jobs
+        if jobs.busy():                 # the list would show half-done states: progress only
+            jobs.draw(layout)
+            return
         scene = context.scene
         es = scene.multicamproject_export
 
