@@ -52,6 +52,90 @@ def plan(scene):
     return Plan(rename, transforms, make_uv, bake, unused, warnings)
 
 
+# ---------------------------------------------------------------- one object (the list's fix column)
+
+Steps = namedtuple("Steps", "decimate rename transform make_uv bake")
+
+
+def object_steps(obj, issues):
+    """What the row's Fix button does for `obj`, in order. Unlike Export it also applies a
+    live Decimate (03) - the user asked for this object explicitly."""
+    from ..baking import handmade
+    codes = {i.code for i in issues}
+    rename = 'NAME' in codes
+    if handmade.is_handmade(obj):       # names only, never unwrapped or baked
+        return Steps(False, rename, False, False, False)
+    decimate = 'DECIMATE' in codes
+    make_uv = decimate or not common.has_uv_normal(obj)
+    d = common.data(obj)
+    bake = (make_uv or d.alb_image is None or d.nor_image is None or d.material is None
+            or bool(codes & {'FILE', 'TEXTURE', 'NOT_BAKED'}) or fingerprint.is_outdated(obj)
+            or fingerprint.ba_outdated(obj))
+    if bake and not obj.material_slots and common.cp_modifier(obj) is None:
+        bake = False                    # nothing to bake from
+    return Steps(decimate, rename, 'TRANSFORM' in codes, make_uv, bake)
+
+
+STEP_TEXT = {"decimate": "apply the Decimate (03) and unwrap uv_normal again",
+             "rename": "rename (object, MAT_, ALB_/NOR_)", "transform": "apply the transform",
+             "make_uv": "make uv_normal (Smart UV)", "bake": "bake (albedo + normal)"}
+
+
+def describe(steps):
+    return [STEP_TEXT[k] for k in Steps._fields if getattr(steps, k)
+            and not (k == "make_uv" and steps.decimate)]
+
+
+def apply_decimate_unwrap(context, obj):
+    """03 + a new uv_normal: the old one was made on the dense mesh and the Decimate
+    collapses across its seams. Returns (faces before, after)."""
+    from ..remesh import workflow as wf       # export works without remesh: only here
+    before, after = wf.apply_decimate(context, obj)
+    uv = obj.data.uv_layers.get(common.UV_NORMAL)
+    if uv is not None:
+        obj.data.uv_layers.remove(uv)
+    make_uv_normal(context, obj)
+    cache.clear(obj)
+    return before, after
+
+
+def run_object(context, obj, log):
+    """Make `obj` ready: the Steps of object_steps. `log(severity, text)`."""
+    from ..baking import matsync
+    from ..baking import operators as bake_ops
+    scene = context.scene
+    _objs, per, _g = status.scene_status(scene)
+    steps = object_steps(obj, per[obj.name].issues)
+    if steps.decimate:
+        before, after = apply_decimate_unwrap(context, obj)
+        log('INFO', f"{obj.name}: Decimate applied ({before:,} -> {after:,} faces), "
+                    "uv_normal made by Smart UV Project")
+    if steps.rename:
+        sc = naming.scheme(scene)
+        want = fixes.planned_names(common.export_objects(scene), sc).get(obj)
+        for sev, text in fixes.rename_all([obj], sc, plan={obj: want} if want else {}):
+            log(sev, text)
+    for text in matsync.sync(obj, scene):
+        log('INFO', f"{obj.name}: {text}")
+    if steps.transform:
+        why = fixes.fix_transform(obj)
+        cache.clear(obj)
+        log('WARNING' if why else 'INFO',
+            f"{obj.name}: transform {'not fixed, ' + why if why else 'applied'}")
+    if steps.make_uv and not common.has_uv_normal(obj):
+        make_uv_normal(context, obj)
+        log('INFO', f"{obj.name}: uv_normal made by Smart UV Project")
+    if steps.bake:
+        src = _nor_source(obj, scene)
+        done, failed = bake_ops.bake_objects(context, [obj], albedo=True, nor_source=src)
+        for name, err in failed:
+            log('ERROR', f"{name}: bake failed - {err}")
+        if done:
+            log('INFO', f"{obj.name}: baked (normal: {normal.LABELS.get(src, src)})")
+    cache.clear()
+    return steps
+
+
 def make_uv_normal(context, obj):
     """A new uv_normal by Smart UV Project (non-overlapping, 0-1). The active and render
     UV maps stay as they were."""

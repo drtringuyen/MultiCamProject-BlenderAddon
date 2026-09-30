@@ -33,7 +33,8 @@ SUMMARY = {
     'SHARED_MESH': ("{n} mesh(es) shared by several objects", None, "make single user"),
     'MESH': ("{n} mesh warning(s)", None, ""),
     'COLOR': ("{n} without scan color (Color from ALB)", None, ""),
-    'DECIMATE': ("{n} with the Decimate not applied (03)", None, "apply it, then unwrap"),
+    'DECIMATE': ("{n} with the Decimate not applied (03)", "multicamproject.export_apply_decimate",
+                 "Apply + unwrap"),
     'HANDMADE': ("{n} handmade with problems", None, "see the object's notes"),
 }
 

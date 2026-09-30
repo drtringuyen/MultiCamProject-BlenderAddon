@@ -18,6 +18,14 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **07: a Fix column in the EXPORT list.** Every row that is not ready has a wrench button
+  that makes that one object ready: apply a live Decimate (03) and unwrap uv_normal again,
+  rename, apply the transform, make uv_normal, bake - only the steps it needs, in that
+  order. The tooltip lists them, a click asks first. Handmade objects are only renamed;
+  ready rows show a tick.
+- **Apply + unwrap** on the "Decimate not applied (03)" summary row: applies the Decimate
+  of those objects and unwraps uv_normal again (the old one was made on the dense mesh).
+  Fix + Export still leaves live-Decimate objects out.
 - **Fix: projection objects went empty after an add-on update.** When the shared GN groups
   were rebuilt, every other set-up object got Mode / Previous Bake / Occlusion written
   back before its own wrapper was rebuilt - the Mode menu had no items yet, the write

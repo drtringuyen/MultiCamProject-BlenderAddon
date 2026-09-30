@@ -44,7 +44,8 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         if st is None:
             return
         label, icon, _o = status.STAGES[st.stage]
-        split = layout.split(factor=0.58, align=True)
+        outer = layout.row(align=True)
+        split = outer.split(factor=0.58, align=True)
         row = split.row(align=True)
         row.prop(item.multicamproject_bake, "handmade", text="")
         row.label(text="", icon=icon)
@@ -74,6 +75,14 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
             label = ("Decimate not applied (03)" if checks.live_decimate(item)
                      else "no uv_normal")
         sub.label(text=problems[0].text if st.stage == 'ISSUES' and problems else label)
+        # the fix column: one button per object that is not ready
+        fix = outer.row(align=True)
+        fix.ui_units_x = 1.1
+        if st.stage == 'READY':
+            fix.label(text="", icon='CHECKMARK')
+        else:
+            op = fix.operator("multicamproject.export_fix_object", text="", icon='TOOL_SETTINGS')
+            op.object_name = item.name
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)

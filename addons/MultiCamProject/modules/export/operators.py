@@ -388,7 +388,97 @@ class MULTICAMPROJECT_OT_ExportMakeUV(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_classes = (MULTICAMPROJECT_OT_ExportMakeUV, MULTICAMPROJECT_OT_ExportAdd, MULTICAMPROJECT_OT_ExportRemove,
+def _steps_of(context, name):
+    obj = bpy.data.objects.get(name)
+    if obj is None:
+        return None, None
+    _objs, per, _g = status.scene_status(context.scene)
+    st = per.get(obj.name)
+    return obj, (autofix.object_steps(obj, st.issues) if st else None)
+
+
+class MULTICAMPROJECT_OT_ExportFixObject(bpy.types.Operator):
+    """Make this object ready for the export"""
+    bl_idname = "multicamproject.export_fix_object"
+    bl_label = "Fix Object"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    object_name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return _poll(context)
+
+    @classmethod
+    def description(cls, context, props):
+        obj, steps = _steps_of(context, props.object_name)
+        todo = autofix.describe(steps) if steps else []
+        if not todo:
+            return f"{props.object_name}: nothing the add-on can fix - see its notes under the list"
+        return f"{props.object_name}: " + ", then ".join(todo)
+
+    def invoke(self, context, event):
+        obj, steps = _steps_of(context, self.object_name)
+        todo = autofix.describe(steps) if steps else []
+        if not todo:
+            self.report({'INFO'}, f"{self.object_name}: nothing the add-on can fix here")
+            return {'CANCELLED'}
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Fix {self.object_name}",
+            message="; ".join(t.capitalize() for t in todo) + ".", confirm_text="Fix")
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return {'CANCELLED'}
+
+        def log(sev, text):
+            self.report({'ERROR' if sev == 'ERROR' else 'WARNING' if sev == 'WARNING' else 'INFO'}, text)
+        try:
+            autofix.run_object(context, obj, log)
+        except RuntimeError as e:
+            self.report({'ERROR'}, f"{self.object_name}: {e}")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_ExportApplyDecimate(bpy.types.Operator):
+    """Apply the Decimate (03) of the EXPORT objects that still have it live, and unwrap
+    uv_normal again (Smart UV) - the old one was made on the dense mesh. Bake them next.
+    Ctrl+Z brings the dense meshes back"""
+    bl_idname = "multicamproject.export_apply_decimate"
+    bl_label = "Apply Decimate + Unwrap"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll(context)
+
+    def invoke(self, context, event):
+        objs = status.objects_with(context.scene, {'DECIMATE'})
+        if not objs:
+            return {'CANCELLED'}
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Apply the Decimate of {len(objs)} object(s)?",
+            message=", ".join(o.name for o in objs) + " - then unwrap uv_normal again.",
+            confirm_text="Apply")
+
+    def execute(self, context):
+        n = 0
+        for obj in status.objects_with(context.scene, {'DECIMATE'}):
+            try:
+                before, after = autofix.apply_decimate_unwrap(context, obj)
+            except RuntimeError as e:
+                self.report({'ERROR'}, f"{obj.name}: {e}")
+                continue
+            n += 1
+            self.report({'INFO'}, f"{obj.name}: {before:,} -> {after:,} faces, uv_normal unwrapped")
+        cache.clear()
+        return {'FINISHED'} if n else {'CANCELLED'}
+
+
+_classes = (MULTICAMPROJECT_OT_ExportFixObject, MULTICAMPROJECT_OT_ExportApplyDecimate,
+            MULTICAMPROJECT_OT_ExportMakeUV, MULTICAMPROJECT_OT_ExportAdd, MULTICAMPROJECT_OT_ExportRemove,
             MULTICAMPROJECT_OT_ExportRename, MULTICAMPROJECT_OT_ExportFixTransforms,
             MULTICAMPROJECT_OT_ExportUpdateOutdated, MULTICAMPROJECT_OT_ExportBakeMissing,
             MULTICAMPROJECT_OT_ExportDeleteScene, MULTICAMPROJECT_OT_ExportCleanTextures,
