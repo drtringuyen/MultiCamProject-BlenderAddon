@@ -1,6 +1,9 @@
-"""Per-object cache for values the panels draw on every redraw (fingerprints, checks).
-An entry is dropped when its object or mesh changes; a change to anything else the
-results may depend on (materials, cameras, images, node groups) drops everything."""
+"""Per-object cache for values the panels draw on every redraw: mesh checksums, UV stats,
+triangle counts, the pivot, PNG headers. Only values that depend on the object's own
+mesh, its transform or a file (keyed by its path and date) belong here - an entry is
+dropped when that mesh is edited, the object moves or gets another mesh. Materials,
+images, cameras and node groups change all the time (Material Preview, the node editor)
+and never clear it: that used to rebuild everything, ~1 s a redraw with 20 objects."""
 import os
 import stat
 import time
@@ -15,12 +18,13 @@ _cache = {}         # object name -> {key: value}
 FILE_TTL = 2.0
 _files = {}         # path -> (read at, (is file, mtime))
 _dirs = {}          # folder -> (read at, [names])
-_SHARED = (bpy.types.Material, bpy.types.Image, bpy.types.Camera, bpy.types.NodeTree,
-           bpy.types.Collection)
 
 
 def get(obj, key, fn):
-    entry = _cache.setdefault(obj.name, {})
+    data = obj.data.as_pointer() if obj.data is not None else 0
+    entry = _cache.get(obj.name)
+    if entry is None or entry.get("__data") != data:     # new, renamed onto, other mesh
+        entry = _cache[obj.name] = {"__data": data}
     if key not in entry:
         entry[key] = fn(obj)
     return entry[key]
@@ -73,16 +77,12 @@ def _on_depsgraph(scene, depsgraph):
     for u in depsgraph.updates:
         idb = u.id.original if u.id else None
         if isinstance(idb, bpy.types.Object):
-            if u.is_updated_geometry or u.is_updated_transform:
+            # the pivot uses the transform; a modifier re-run (geometry) changes nothing here
+            if u.is_updated_transform:
                 _cache.pop(idb.name, None)
-                if idb.type == 'CAMERA' and u.is_updated_transform:
-                    _cache.clear()
-        elif isinstance(idb, bpy.types.Mesh):
+        elif isinstance(idb, bpy.types.Mesh):       # edit mode, apply, data API
             for name in [n for n in _cache if (o := bpy.data.objects.get(n)) is None or o.data == idb]:
                 _cache.pop(name, None)
-        elif isinstance(idb, _SHARED):
-            _cache.clear()
-            return
 
 
 @persistent

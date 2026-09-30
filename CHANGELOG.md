@@ -18,6 +18,12 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **No more 1 s freezes with the 07 panel open:** any material / image / camera / node
+  group update cleared the whole panel cache, so the next redraw re-ran the UV overlap
+  scan of every EXPORT object (~1 s with 20 objects). Material Preview and the node
+  editor send such updates constantly. The cache only holds mesh / transform / file
+  values, so it is now dropped per object when its mesh is edited, it moves or gets
+  another mesh. After a material update: ~1000 ms -> ~70 ms.
 - **Bake folder default `//01.Baking/`** (was `//Textures/`): ALB_ / NOR_ are working files
   for the export, kept apart from a team's final textures so they are not shipped or
   cleaned up by mistake. Existing files keep their folder setting.

@@ -292,7 +292,7 @@ def check_textures(obj, scene):
         if not exists:
             out.append(Issue(obj.name, 'FILE', f"{label} file missing: {path or img.name}", ERROR))
             continue
-        hdr = cache.get(obj, f"png_{label}_{mtime}", lambda _o: png_header(path))
+        hdr = cache.get(obj, f"png_{label}_{path}_{mtime}", lambda _o: png_header(path))
         if hdr is None:
             out.append(Issue(obj.name, 'TEXTURE', f"{label} is not a PNG", WARNING))
             continue
