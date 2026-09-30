@@ -70,6 +70,9 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
         if st.stage == 'READY' and item.multicamproject_bake.handmade:
             label = "Ready (handmade)"
+        elif st.stage == 'PROJECTION':      # one stage, two causes: name the real one
+            label = ("Decimate not applied (03)" if checks.live_decimate(item)
+                     else "no uv_normal")
         sub.label(text=problems[0].text if st.stage == 'ISSUES' and problems else label)
 
     def filter_items(self, context, data, propname):
