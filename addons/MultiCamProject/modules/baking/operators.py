@@ -88,11 +88,47 @@ def _bake_one(context, obj, albedo, nor_source, res, log):
         yield from normal.generate_steps(context, obj, nor_source)
 
 
-def _report(op, done, failed, what):
-    for name, err in failed:
-        op.report({'ERROR'}, f"{name}: {err}")
-    if done:
-        op.report({'INFO'}, f"{what}: {', '.join(o.name for o in done)}")
+def _finisher(what, n):
+    """jobs.start's finish for a (done, failed) result."""
+    def finish(result, error):
+        if result is None:
+            return []
+        done, failed = result
+        lines = [('ERROR', f"{name}: {err}") for name, err in failed]
+        if len(done) + len(failed) < n:
+            lines.append(('WARNING', f"Stopped after {len(done) + len(failed)} of {n}"))
+        if done:
+            lines.append(('INFO', f"{what}: {', '.join(o.name for o in done)}"))
+        return lines
+    return finish
+
+
+def _start_bake(op, context, title, objs, albedo, nor_source, what):
+    """bake_objects as a job (the progress in the status bar and the panel)."""
+    names = [o.name for o in objs]
+    log = []
+    finish = _finisher(what, len(objs))
+    return jobs.start(op, context, title, names,
+                      bake_objects_steps(context, objs, albedo, nor_source,
+                                         log=lambda t: log.append(t)),
+                      lambda r, e: [('INFO', t) for t in log] + finish(r, e))
+
+
+def _source_steps(context, objs):
+    done, failed = [], []
+    for obj in objs:
+        if jobs.stop_requested():
+            jobs.skip_rest()
+            break
+        jobs.item_start(obj.name)
+        try:
+            yield from engine.bake_from_source_steps(context, obj)
+            done.append(obj)
+            jobs.item_end(obj.name)
+        except Exception as e:
+            failed.append((obj.name, str(e)))
+            jobs.item_end(obj.name, str(e))
+    return done, failed
 
 
 def source_poll_problem(obj):
@@ -158,21 +194,9 @@ class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
 
     def execute(self, context):
         objs = common.selected_meshes(context)
-        wm = context.window_manager
-        wm.progress_begin(0, len(objs))
-        done, failed = [], []
-        try:
-            for i, obj in enumerate(objs):
-                try:
-                    engine.bake_from_source(context, obj)
-                    done.append(obj)
-                except Exception as e:
-                    failed.append((obj.name, str(e)))
-                wm.progress_update(i + 1)
-        finally:
-            wm.progress_end()
-        _report(self, done, failed, "Baked from source")
-        return {'FINISHED'} if done else {'CANCELLED'}
+        return jobs.start(self, context, "Bake from Source", [o.name for o in objs],
+                          _source_steps(context, objs),
+                          _finisher("Baked from source", len(objs)))
 
 
 class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
@@ -233,9 +257,7 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
     def execute(self, context):
         objs = scope_objects(context, self.scope)
         src = common.settings(context.scene).nor_source if self.with_normal else None
-        done, failed = bake_objects(context, objs, albedo=True, nor_source=src)
-        _report(self, done, failed, "Baked")
-        return {'FINISHED'} if done else {'CANCELLED'}
+        return _start_bake(self, context, "Bake Albedo", objs, True, src, "Baked")
 
 
 class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
@@ -265,9 +287,7 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
     def execute(self, context):
         s = common.settings(context.scene)
         objs = scope_objects(context, self.scope)
-        done, failed = bake_objects(context, objs, albedo=False, nor_source=s.nor_source)
-        _report(self, done, failed, "Normal map")
-        return {'FINISHED'} if done else {'CANCELLED'}
+        return _start_bake(self, context, "Make Normal", objs, False, s.nor_source, "Normal map")
 
 
 class MULTICAMPROJECT_OT_BakeNormalMode(bpy.types.Operator):
@@ -395,10 +415,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
         objs = common.selected_meshes(context)
         albedo = s.bake_what in {'ALBEDO', 'BOTH'}
         src = s.nor_source if s.bake_what in {'NORMAL', 'BOTH'} else None
-        done, failed = bake_objects(context, objs, albedo=albedo, nor_source=src,
-                                    log=lambda t: self.report({'INFO'}, t))
-        _report(self, done, failed, "Baked")
-        return {'FINISHED'} if done else {'CANCELLED'}
+        return _start_bake(self, context, "Bake", objs, albedo, src, "Baked")
 
 
 class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):

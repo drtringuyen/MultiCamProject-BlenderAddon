@@ -52,6 +52,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
+        from . import jobs
+        if jobs.busy():
+            jobs.draw(layout)
+            return
         obj = context.active_object
         s = common.settings(context.scene)
         if obj is None or obj.type != 'MESH':

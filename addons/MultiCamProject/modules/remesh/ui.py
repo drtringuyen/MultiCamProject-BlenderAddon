@@ -113,7 +113,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         # 04: BA_ / BN_ from the Bake Source (the baking module's settings)
         if not baking:
             return
-        from ..baking import fingerprint, operators as bake_ops
+        from ..baking import fingerprint, jobs, operators as bake_ops
+        if jobs.busy():
+            jobs.draw(layout)
+            return
         box = layout.box().column(align=True)
         row = box.row(align=True)
         row.scale_y = 1.4
