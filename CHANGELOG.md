@@ -18,6 +18,9 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Bake folder default `//01.Baking/`** (was `//Textures/`): ALB_ / NOR_ are working files
+  for the export, kept apart from a team's final textures so they are not shipped or
+  cleaned up by mistake. Existing files keep their folder setting.
 - **Photo sizes without decoding:** a camera's aspect came from `img.size`, which loads the
   whole 8K photo (~0.3 s and hundreds of MB each). It is now read from the PNG / JPEG
   header (packed images: from the packed bytes), cached per file. Rebuilding 6 projection

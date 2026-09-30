@@ -116,7 +116,7 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
         name="Samples", default=1, min=1, max=64,
         description="Cycles samples per pixel. 1 is enough for the diffuse color")
     output_dir: StringProperty(
-        name="Folder", default="//Textures/", subtype='DIR_PATH',
+        name="Folder", default="//01.Baking/", subtype='DIR_PATH',
         description="Folder for ALB_<name>.png and NOR_<name>.png (same file on every bake)")
 
     bake_what: EnumProperty(
