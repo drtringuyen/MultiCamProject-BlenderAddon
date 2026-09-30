@@ -46,6 +46,7 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         label, icon, _o = status.STAGES[st.stage]
         split = layout.split(factor=0.58, align=True)
         row = split.row(align=True)
+        row.prop(item.multicamproject_bake, "handmade", text="")
         row.label(text="", icon=icon)
         sc = naming.scheme(context.scene)
         p = naming.parse(item.name, sc) if sc else None
@@ -67,6 +68,8 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         tris.label(text=tri_text(checks.mesh_counts(item)[0], unit=False))
         sub = right.row()
         sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
+        if st.stage == 'READY' and item.multicamproject_bake.handmade:
+            label = "Ready (handmade)"
         sub.label(text=problems[0].text if st.stage == 'ISSUES' and problems else label)
 
     def filter_items(self, context, data, propname):

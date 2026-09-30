@@ -157,7 +157,10 @@ def save_png8(img, path):
 
 def link_file(img, path):
     """Point the image at its file (relative when the .blend is saved) and reload."""
-    rel = bpy.path.relpath(path) if bpy.data.filepath else path
+    try:
+        rel = bpy.path.relpath(path) if bpy.data.filepath else path
+    except ValueError:          # another drive than the .blend: no relative path
+        rel = path
     img.source = 'FILE'
     img.filepath = rel
     img.reload()

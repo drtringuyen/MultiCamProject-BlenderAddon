@@ -20,7 +20,14 @@ Status = namedtuple("Status", "stage issues")
 
 
 def stage_of(obj, issues):
+    from ..baking import handmade
     d = common.data(obj)
+    if handmade.is_handmade(obj):
+        if d.material is None:
+            return 'NOT_SET_UP'
+        if not common.has_uv_normal(obj):
+            return 'PROJECTION'
+        return 'ISSUES' if any(i.severity != checks.INFO for i in issues) else 'READY'
     alb = d.alb_image is not None and common.file_ok(d.alb_image)
     nor = d.nor_image is not None and common.file_ok(d.nor_image)
     if common.cp_modifier(obj) is None and not alb and d.bake_source is None:

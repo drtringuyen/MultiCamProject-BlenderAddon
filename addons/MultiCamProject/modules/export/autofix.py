@@ -19,9 +19,14 @@ def plan(scene):
     objs, per, _g = status.scene_status(scene)
     rename = fixes.planned_names(objs, naming.scheme(scene))
     transforms, make_uv, bake, warnings = [], [], [], []
+    from ..baking import handmade
     for o in objs:
         issues = per[o.name].issues
         codes = {i.code for i in issues}
+        if handmade.is_handmade(o):     # names only: never unwrapped, baked or transformed
+            warnings += [f"{o.name}: {i.text}" for i in issues
+                         if i.code in {'HANDMADE', 'FILE'} and i.severity == checks.ERROR]
+            continue
         if 'TRANSFORM' in codes:
             transforms.append(o)
         if 'DECIMATE' in codes:         # no Smart UV or bake on the dense mesh

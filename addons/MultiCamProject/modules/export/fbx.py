@@ -38,6 +38,48 @@ def names_aside(ids):
                 pass
 
 
+def _layer_colls(lc, objs, out):
+    """Layer collections under `lc` holding any of `objs` (their parents too)."""
+    hit = any(o in objs for o in lc.collection.objects)
+    for ch in lc.children:
+        hit = _layer_colls(ch, objs, out) or hit
+    if hit:
+        out.append(lc)
+    return hit
+
+
+@contextmanager
+def evaluated(context, objs):
+    """Only objects the view layer shows are evaluated (modifiers, GN-Final): an excluded
+    or hidden EXPORT would write the raw meshes. Shown while the FBX is made, then put back."""
+    objs = set(objs)
+    lcs = []
+    _layer_colls(context.view_layer.layer_collection, objs, lcs)
+    saved_lc = [(lc, lc.exclude, lc.hide_viewport) for lc in lcs]
+    saved_ob = [(o, o.hide_viewport, o.hide_get()) for o in objs]
+    try:
+        for lc in lcs:
+            if lc.exclude:
+                lc.exclude = False
+            lc.hide_viewport = False
+        for o in objs:
+            o.hide_viewport = False
+            o.hide_set(False)
+        context.view_layer.update()
+        yield
+    finally:
+        for o, vp, hid in saved_ob:
+            try:
+                o.hide_viewport = vp
+                o.hide_set(hid)
+            except (ReferenceError, RuntimeError):
+                pass
+        for lc, exc, hid in reversed(saved_lc):
+            lc.hide_viewport = hid
+            if lc.exclude != exc:
+                lc.exclude = exc
+
+
 def copy_textures(objs, folder):
     """ALB_/NOR_ files into <folder>/Textures/ (skipped when size and time match).
     Returns {image name: copied path}."""
@@ -192,9 +234,9 @@ def export(context, fix_log=()):
         for o in objs:
             if not finals[o]:
                 gn_final.set_final(o, scene, True)
-        context.view_layer.update()
         copies = copy_textures(objs, folder)
-        made = make_copies(context, objs, copies, coll, temps)
+        with evaluated(context, objs):
+            made = make_copies(context, objs, copies, coll, temps)
         context.view_layer.update()
         originals = list(objs) + [o.data for o in objs]
         originals += [common.data(o).material for o in objs if common.data(o).material]

@@ -20,7 +20,7 @@ import bpy
 from bpy.app.handlers import persistent
 
 from ..camera_project import core as cp
-from . import common, fingerprint, gn_final, material, source_mats
+from . import common, fingerprint, gn_final, handmade, material, source_mats
 
 _owner = object()
 _DELAY = 0.3
@@ -105,10 +105,16 @@ def sync(obj, scene, full=False):
             if cp.get_input(mod, "Material") != mat:
                 cp.set_input(mod, "Material", mat)
                 out.append(f"GN-CameraProject material -> {mat.name}")
+    elif handmade.is_handmade(obj):
+        mat = d.material                    # its own nodes: named and placed, never rebuilt
+        if mat is not None:
+            cp.claim_name(mat, common.mat_name(obj), bpy.data.materials)
+            cp.arrange_slots(obj, [mat])
     else:
         mat = material.build(obj, scene, place_slots=False) if full else ensure_mat(obj)
         cp.arrange_slots(obj, [mat])
-    for m in (cp.mcp_pointer(obj) if is_projection(obj) else None, d.material):
+    for m in (cp.mcp_pointer(obj) if is_projection(obj) else None,
+              None if handmade.is_handmade(obj) else d.material):
         if m is not None and not m.library and cp.set_roughness(m):
             out.append(f"{m.name}: Roughness {cp.ROUGHNESS:g}")
     if full:

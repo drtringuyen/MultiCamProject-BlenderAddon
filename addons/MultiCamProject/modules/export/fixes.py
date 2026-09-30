@@ -1,5 +1,6 @@
 """The fixes the export panel offers: rename, transforms, delete a scene, EXPORT links."""
 import os
+import shutil
 
 import bpy
 from mathutils import Matrix, Vector
@@ -47,8 +48,9 @@ def planned_names(objs, sc=None):
     return {o: n for o, n in final.items() if n != o.name}
 
 
-def _rename_file(img, new_name):
-    """Rename the image and its file on disk (same folder), then point it there."""
+def _rename_file(img, new_name, keep_old=False):
+    """Rename the image and its file on disk (same folder), then point it there.
+    `keep_old` (handmade textures, which other files may use): copy, not move."""
     old_path = common.image_file(img)
     if img.name != new_name:
         img.name = new_name
@@ -58,7 +60,10 @@ def _rename_file(img, new_name):
     if os.path.normcase(new_path) == os.path.normcase(old_path):
         return
     if os.path.isfile(old_path):
-        os.replace(old_path, new_path)
+        if keep_old:
+            shutil.copy2(old_path, new_path)
+        else:
+            os.replace(old_path, new_path)
     if os.path.isfile(new_path):
         engine.link_file(img, new_path)
 
@@ -89,10 +94,11 @@ def rename_object(obj, new, fresh=None, mcp=None):
         mcp.name = cp.PREFIX + new
     if d.material is not None and d.material.name != common.mat_name(obj):
         d.material.name = common.mat_name(obj)
+    keep = d.handmade
     if d.alb_image is not None:
-        _rename_file(d.alb_image, common.alb_name(obj))
+        _rename_file(d.alb_image, common.alb_name(obj), keep)
     if d.nor_image is not None:
-        _rename_file(d.nor_image, common.nor_name(obj))
+        _rename_file(d.nor_image, common.nor_name(obj), keep)
     if fresh:       # same bake, new names: still up to date
         d.fingerprint = fingerprint.compute(obj)
     return new

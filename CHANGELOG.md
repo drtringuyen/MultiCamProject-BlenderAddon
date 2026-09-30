@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### 07: Handmade EXPORT objects (2026-09-30)
+- A **tick in front of each EXPORT row**: Handmade = baked by hand. Its own material becomes
+  MAT_, its albedo / normal textures ALB_ / NOR_ (a packed or non-PNG texture is written
+  as a PNG into the bake folder), and the textures' UV map is renamed to uv_normal.
+- Handmade objects are only checked for names (object, MAT_, ALB_/NOR_ and files), the
+  textures being PNG files, and uv_normal. They are never baked, rebuilt, unwrapped or
+  transformed; overlapping / outside-0-1 UVs are notes only (tiling is allowed).
+- They export through GN-Final like the rest - one FBX, one material, one UV, Color.
+- Renaming a handmade texture **copies** its file (other files may use the old one).
+- **Fix:** an excluded or hidden EXPORT collection exported the raw meshes (GN-Final was
+  never evaluated). Export now shows EXPORT while it writes, then puts it back.
+- Fix: a texture on another drive than the .blend could not be linked (no relative path).
+
 ### 05: Clear Alpha next to Erase (2026-09-29)
 - The All Projected / All Baked / Reset Camera Mix icons on the mode line are gone (only
   the VCMix layers, painted, decide the mix).

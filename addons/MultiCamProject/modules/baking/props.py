@@ -10,7 +10,17 @@ def _on_material(data):
     matsync.picked(data.id_data)
 
 
+def _on_handmade(data, context):
+    from . import handmade
+    handmade.on_toggle(data)
+
+
 class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
+    handmade: BoolProperty(
+        name="Handmade", update=_on_handmade,
+        description="Baked by hand: its own material and textures become MAT_ / ALB_ / NOR_. "
+                    "Only the names and uv_normal are checked; it is exported through GN-Final "
+                    "(one material, one UV), never baked by the add-on")
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
     nor_image: PointerProperty(type=bpy.types.Image, name="Normal")
     # baked from the Bake Source (04): packed work textures under the projection, never

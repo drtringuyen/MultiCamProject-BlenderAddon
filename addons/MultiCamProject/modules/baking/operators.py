@@ -3,16 +3,17 @@ import os
 import bpy
 from bpy.props import BoolProperty, EnumProperty
 
-from . import common, engine, gn_final, normal
+from . import common, engine, gn_final, handmade, normal
 
 SCOPES = (('SELECTED', "Selected", "The selected meshes"),
           ('EXPORT', "EXPORT", "Every mesh in the EXPORT collection"))
 
 
-def scope_objects(context, scope):
-    if scope == 'EXPORT':
-        return common.export_objects(context.scene)
-    return common.selected_meshes(context)
+def scope_objects(context, scope, bake=True):
+    """The meshes of `scope`; to bake (`bake`) never handmade ones - baked by hand."""
+    objs = (common.export_objects(context.scene) if scope == 'EXPORT'
+            else common.selected_meshes(context))
+    return [o for o in objs if not (bake and handmade.is_handmade(o))]
 
 
 def _object_mode(context):
@@ -32,6 +33,8 @@ def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
         res = common.settings(context.scene).resolution
         for obj in objs:
             try:
+                if handmade.is_handmade(obj):
+                    raise RuntimeError("handmade - baked by hand, not by the add-on")
                 # one resolution: a normal map alone at a new size remakes the albedo too
                 with_albedo = albedo or (nor_source is not None
                                          and common.data(obj).alb_size not in (0, res))
@@ -412,7 +415,7 @@ class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
     def execute(self, context):
         from . import cache, matsync
         scene = context.scene
-        objs = [o for o in scope_objects(context, self.scope) if matsync.in_scope(o)]
+        objs = [o for o in scope_objects(context, self.scope, bake=False) if matsync.in_scope(o)]
         if self.scope == 'SELECTED' and context.active_object is not None \
                 and context.active_object not in objs and matsync.in_scope(context.active_object):
             objs.append(context.active_object)

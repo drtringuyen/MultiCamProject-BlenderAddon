@@ -34,6 +34,7 @@ SUMMARY = {
     'MESH': ("{n} mesh warning(s)", None, ""),
     'COLOR': ("{n} without scan color (Color from ALB)", None, ""),
     'DECIMATE': ("{n} with the Decimate not applied (03)", None, "apply it, then unwrap"),
+    'HANDMADE': ("{n} handmade with problems", None, "see the object's notes"),
 }
 
 DECIMATE = "Decimate"       # remesh.workflow.DECIMATE (export works without the module)
@@ -314,7 +315,53 @@ def check_state(obj):
     return out
 
 
+def check_handmade(obj):
+    """A handmade object: its MAT_ with ALB_ (and NOR_) as PNG files, and uv_normal.
+    Sizes, bit depths, transforms and bakes are the maker's business."""
+    d = common.data(obj)
+    out = []
+    if d.material is None:
+        return [Issue(obj.name, 'HANDMADE', "no material with an albedo texture - pick one, "
+                      "then tick Handmade again", ERROR)]
+    slots = [s.material for s in obj.material_slots]
+    if slots[:1] != [d.material]:
+        out.append(Issue(obj.name, 'MATERIAL', f"slot 1 should be {d.material.name}", WARNING))
+    for img, label in ((d.alb_image, "ALB"), (d.nor_image, "NOR")):
+        if img is None:
+            if label == "ALB":
+                out.append(Issue(obj.name, 'HANDMADE', "no albedo texture", ERROR))
+            else:
+                out.append(Issue(obj.name, 'HANDMADE', "no normal texture", INFO))
+            continue
+        path = common.image_file(img)
+        if not path or not os.path.isfile(path):
+            out.append(Issue(obj.name, 'FILE', f"{label} file missing: {path or img.name}", ERROR))
+        elif not path.lower().endswith(".png"):
+            out.append(Issue(obj.name, 'HANDMADE', f"{label} is not a PNG file (tick Handmade "
+                             "again to write one)", ERROR))
+    if d.nor_image is not None and d.nor_image.colorspace_settings.name != 'Non-Color':
+        out.append(Issue(obj.name, 'TEXTURE', "NOR is not Non-Color", WARNING))
+    if obj.data.uv_layers.get(common.UV_NORMAL) is None:
+        out.append(Issue(obj.name, 'HANDMADE', "no uv_normal - rename the textures' UV map to "
+                         "uv_normal", ERROR))
+    else:
+        outside, overlap = uv_stats(obj)
+        if outside > 0:     # tiling / mirrored textures are allowed by hand: notes only
+            out.append(Issue(obj.name, 'UV_BAD', f"uv_normal: {outside:.1%} of corners outside "
+                             "0-1", INFO))
+        if overlap > 0.005:
+            out.append(Issue(obj.name, 'UV_BAD', f"uv_normal: {overlap:.1%} overlapping", INFO))
+        extra = [u.name for u in obj.data.uv_layers if u.name != common.UV_NORMAL]
+        if extra:
+            out.append(Issue(obj.name, 'UV_EXTRA', f"extra UV maps {', '.join(extra)} "
+                             "(only uv_normal goes into the FBX)", INFO))
+    return out
+
+
 def object_issues(obj, scene, plan):
+    from ..baking import handmade
+    if handmade.is_handmade(obj):
+        return check_names(obj, plan) + check_handmade(obj) + check_mesh(obj)
     return (check_names(obj, plan) + check_materials(obj) + check_uv(obj) + check_color(obj, scene)
             + check_transform(obj) + check_mesh(obj) + check_textures(obj, scene)
             + check_state(obj))
