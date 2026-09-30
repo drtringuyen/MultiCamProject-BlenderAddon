@@ -1,10 +1,20 @@
 """Per-object cache for values the panels draw on every redraw (fingerprints, checks).
 An entry is dropped when its object or mesh changes; a change to anything else the
 results may depend on (materials, cameras, images, node groups) drops everything."""
+import os
+import stat
+import time
+
 import bpy
 from bpy.app.handlers import persistent
 
 _cache = {}         # object name -> {key: value}
+# files on a network drive (Google Drive: ~1 ms a stat) - panels redraw on every mouse
+# move, so a file's state is read at most every FILE_TTL seconds; bakes and exports
+# clear() it right after writing
+FILE_TTL = 2.0
+_files = {}         # path -> (read at, (is file, mtime))
+_dirs = {}          # folder -> (read at, [names])
 _SHARED = (bpy.types.Material, bpy.types.Image, bpy.types.Camera, bpy.types.NodeTree,
            bpy.types.Collection)
 
@@ -19,8 +29,43 @@ def get(obj, key, fn):
 def clear(obj=None):
     if obj is None:
         _cache.clear()
+        _files.clear()
+        _dirs.clear()
     else:
         _cache.pop(obj.name, None)
+
+
+def file_state(path):
+    """(is a file, mtime) of `path`, read again after FILE_TTL seconds."""
+    now = time.monotonic()
+    hit = _files.get(path)
+    if hit is not None and now - hit[0] < FILE_TTL:
+        return hit[1]
+    try:
+        st = os.stat(path)
+        val = (stat.S_ISREG(st.st_mode), st.st_mtime)
+    except OSError:
+        val = (False, 0.0)
+    _files[path] = (now, val)
+    return val
+
+
+def isfile(path):
+    return bool(path) and file_state(path)[0]
+
+
+def listdir(folder):
+    """The names in `folder` ([] when it cannot be read), read again after FILE_TTL."""
+    now = time.monotonic()
+    hit = _dirs.get(folder)
+    if hit is not None and now - hit[0] < FILE_TTL:
+        return hit[1]
+    try:
+        names = sorted(os.listdir(folder))
+    except OSError:
+        names = []
+    _dirs[folder] = (now, names)
+    return names
 
 
 @persistent
@@ -42,7 +87,7 @@ def _on_depsgraph(scene, depsgraph):
 
 @persistent
 def _on_load(_):
-    _cache.clear()
+    clear()
 
 
 def register():

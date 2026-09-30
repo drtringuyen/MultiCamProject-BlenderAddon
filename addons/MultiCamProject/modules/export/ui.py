@@ -212,7 +212,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         if scene_row:
             _scene_label(layout.row(align=True), scene, es)
         self._draw_scenes(layout, scene, es)
-        unused = checks.unused_textures(scene)
+        unused = checks.unused_textures(scene, fresh=False)
         if unused:
             row = layout.row(align=True)
             sub = row.row()

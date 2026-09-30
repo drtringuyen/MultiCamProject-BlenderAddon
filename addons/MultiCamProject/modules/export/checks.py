@@ -87,9 +87,14 @@ def used_files():
 OWN = ("ALB_", "NOR_")     # the add-on's own textures - the only files a clean-up touches
 
 
-def pngs(folder):
+def pngs(folder, fresh=True):
     """ALB_*.png / NOR_*.png in `folder`. Other files are never listed: the folder may be
-    shared with other assets (e.g. a team's textures folder)."""
+    shared with other assets (e.g. a team's textures folder). `fresh=False` (panel
+    redraws): the folder as read up to cache.FILE_TTL seconds ago."""
+    if not fresh:
+        return [os.path.join(folder, f) for f in cache.listdir(folder)
+                if f.lower().endswith(".png") and f.startswith(OWN)
+                and cache.isfile(os.path.join(folder, f))]
     try:
         return [os.path.join(folder, f) for f in sorted(os.listdir(folder))
                 if f.lower().endswith(".png") and f.startswith(OWN)
@@ -98,10 +103,11 @@ def pngs(folder):
         return []
 
 
-def unused_textures(scene):
-    """ALB_/NOR_ PNGs in the bake folder that no image of this .blend uses."""
+def unused_textures(scene, fresh=True):
+    """ALB_/NOR_ PNGs in the bake folder that no image of this .blend uses. Anything that
+    removes files keeps `fresh`; the panel passes False."""
     used = used_files()
-    return [p for p in pngs(common.output_dir(scene)) if _norm(p) not in used]
+    return [p for p in pngs(common.output_dir(scene), fresh) if _norm(p) not in used]
 
 
 def export_textures_dir(scene):
@@ -282,10 +288,11 @@ def check_textures(obj, scene):
                 out.append(Issue(obj.name, 'NOT_BAKED', "no normal map", WARNING))
             continue
         path = common.image_file(img)
-        if not path or not os.path.isfile(path):
+        exists, mtime = cache.file_state(path) if path else (False, 0.0)
+        if not exists:
             out.append(Issue(obj.name, 'FILE', f"{label} file missing: {path or img.name}", ERROR))
             continue
-        hdr = cache.get(obj, f"png_{label}_{os.path.getmtime(path)}", lambda _o: png_header(path))
+        hdr = cache.get(obj, f"png_{label}_{mtime}", lambda _o: png_header(path))
         if hdr is None:
             out.append(Issue(obj.name, 'TEXTURE', f"{label} is not a PNG", WARNING))
             continue
@@ -334,7 +341,7 @@ def check_handmade(obj):
                 out.append(Issue(obj.name, 'HANDMADE', "no normal texture", INFO))
             continue
         path = common.image_file(img)
-        if not path or not os.path.isfile(path):
+        if not cache.isfile(path):
             out.append(Issue(obj.name, 'FILE', f"{label} file missing: {path or img.name}", ERROR))
         elif not path.lower().endswith(".png"):
             out.append(Issue(obj.name, 'HANDMADE', f"{label} is not a PNG file (tick Handmade "

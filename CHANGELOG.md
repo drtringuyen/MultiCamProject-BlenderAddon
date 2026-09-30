@@ -14,6 +14,10 @@
 - **Fix:** an excluded or hidden EXPORT collection exported the raw meshes (GN-Final was
   never evaluated). Export now shows EXPORT while it writes, then puts it back.
 - Fix: a texture on another drive than the .blend could not be linked (no relative path).
+- **Faster 07 panel on a network drive:** file checks (ALB_/NOR_ exist, their dates, the
+  unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
+  redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
+  ~20 ms. Clean / Export still read the folder fresh.
 
 ### 05: Clear Alpha next to Erase (2026-09-29)
 - The All Projected / All Baked / Reset Camera Mix icons on the mode line are gone (only

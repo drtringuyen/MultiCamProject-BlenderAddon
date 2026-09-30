@@ -83,8 +83,8 @@ def image_file(img):
 
 
 def file_ok(img):
-    path = image_file(img)
-    return bool(path) and os.path.isfile(path)
+    from . import cache
+    return cache.isfile(image_file(img))
 
 
 def selected_meshes(context):
