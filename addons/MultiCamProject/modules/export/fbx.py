@@ -235,6 +235,8 @@ def export(context, fix_log=()):
             if not finals[o]:
                 gn_final.set_final(o, scene, True)
         copies = copy_textures(objs, folder)
+        from ..baking import owned
+        owned.add(scene, list(copies.values()))    # a later export may replace them
         with evaluated(context, objs):
             made = make_copies(context, objs, copies, coll, temps)
         context.view_layer.update()

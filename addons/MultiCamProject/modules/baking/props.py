@@ -152,6 +152,9 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
                ('FROM_ALB', "Sampled from ALB", "Color = the baked albedo at each corner")))
     scan_color_name: StringProperty(name="Scan Attribute", default="Attribute",
                                     description="The scan's color attribute that becomes Color")
+    own_files: StringProperty(
+        options={'HIDDEN'}, description="JSON: the ALB_/NOR_ files this .blend used or wrote "
+                                        "(baking.owned) - the only ones a clean-up may remove")
     png_compression: IntProperty(
         name="PNG Compression", default=1, min=0, max=9,
         description="zlib level of NOR_ (0 = fastest, 9 = smallest). At 8K: 1 = ~6 s / 205 MB, "

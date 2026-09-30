@@ -18,6 +18,13 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Clean only removes this file's own old bakes.** Each .blend keeps a list of the ALB_/
+  NOR_ file names it has used or written (saved with it; recorded at save, after a bake,
+  before a rename, and for an export's texture copies - never on load). Clean and the
+  export's `Textures/` clean-up only touch files on that list that none of its images use
+  any more. A bake folder shared with other .blend files is safe: their bakes are never
+  listed (before, Clean in one file sent 34 bakes of two other files to the Recycle Bin).
+  A file not saved since this update lists nothing to clean.
 - **No more 1 s freezes with the 07 panel open:** any material / image / camera / node
   group update cleared the whole panel cache, so the next redraw re-ran the UV overlap
   scan of every EXPORT object (~1 s with 20 objects). Material Preview and the node

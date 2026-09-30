@@ -194,8 +194,9 @@ class MULTICAMPROJECT_OT_ExportDeleteScene(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_ExportCleanTextures(bpy.types.Operator):
-    """Move the ALB_/NOR_ PNGs of the Textures folder that no image of this .blend uses
-    to the Recycle Bin. Other files in the folder are never touched"""
+    """Move this .blend's old ALB_/NOR_ PNGs in the bake folder (ones it used or baked
+    before, no image uses now) to the Recycle Bin. Another file's bakes in a shared
+    folder, and every other file, are never touched"""
     bl_idname = "multicamproject.export_clean_textures"
     bl_label = "Clean Textures Folder"
     bl_options = {'REGISTER'}
@@ -208,8 +209,9 @@ class MULTICAMPROJECT_OT_ExportCleanTextures(bpy.types.Operator):
         from . import checks
         n = len(checks.unused_textures(context.scene))
         return context.window_manager.invoke_confirm(
-            self, event, title=f"Move {n} unused PNG(s) to the Recycle Bin?",
-            message="No image of this .blend uses them.", confirm_text="Move", icon='WARNING')
+            self, event, title=f"Move {n} old bake(s) of this file to the Recycle Bin?",
+            message="This .blend used or baked them before; none of its images uses them now.",
+            confirm_text="Move", icon='WARNING')
 
     def execute(self, context):
         from . import checks
@@ -304,7 +306,7 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
                 (f"Fix transforms of {len(p.transforms)}", [o.name for o in p.transforms]),
                 (f"Make uv_normal (Smart UV) on {len(p.make_uv)}", [o.name for o in p.make_uv]),
                 (f"Bake {len(p.bake)} (outdated / not baked)", [o.name for o in p.bake]),
-                (f"Move {len(p.unused)} unused ALB_/NOR_ PNG(s) to the Recycle Bin",
+                (f"Move {len(p.unused)} old bake(s) of this file to the Recycle Bin",
                  [os.path.basename(x) for x in p.unused])]
         if not any(names for _t, names in rows):
             col.label(text="Nothing to fix", icon='CHECKMARK')

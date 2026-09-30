@@ -217,7 +217,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
             row = layout.row(align=True)
             sub = row.row()
             sub.alert = True
-            sub.label(text=f"{len(unused)} unused ALB_/NOR_ PNG(s) in the Textures folder", icon='ERROR')
+            sub.label(text=f"{len(unused)} old bake(s) of this file in the bake folder", icon='ERROR')
             row.operator("multicamproject.export_clean_textures", text="Clean", icon='TRASH')
 
     @staticmethod

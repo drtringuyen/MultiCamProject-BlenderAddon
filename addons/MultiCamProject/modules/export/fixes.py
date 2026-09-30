@@ -232,6 +232,8 @@ def rename_all(objs, sc=None, plan=None):
     """Rename objects (naming scheme `sc`, else clean names) and bring every MCP_/MAT_/
     ALB_/NOR_ and texture file in line with its object. `plan`: {object: name} to use
     instead of planned_names. Returns [(severity, text)]."""
+    from ..baking import owned
+    owned.record_used(bpy.context.scene)    # the names before: still this file's own
     mcp_off, shared_log = release_shared(objs)
     plan = planned_names(objs, sc) if plan is None else plan
     state = {o: (o.name, _names(o), mcp_off.get(o, _mcp_material(o)),

@@ -60,6 +60,9 @@ def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
                 failed.append((obj.name, str(e)))
     finally:
         wm.progress_end()
+        if done:
+            from . import owned
+            owned.record_used(context.scene)    # the new ALB_/NOR_ are this file's own
     return done, failed
 
 

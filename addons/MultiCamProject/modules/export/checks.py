@@ -104,10 +104,15 @@ def pngs(folder, fresh=True):
 
 
 def unused_textures(scene, fresh=True):
-    """ALB_/NOR_ PNGs in the bake folder that no image of this .blend uses. Anything that
-    removes files keeps `fresh`; the panel passes False."""
+    """This .blend's old ALB_/NOR_ PNGs in the bake folder: recorded as its own
+    (baking.owned) and no longer used by any of its images. Another file's bakes in a
+    shared folder are never listed. Anything that removes files keeps `fresh`; the
+    panel passes False."""
+    from ..baking import owned
     used = used_files()
-    return [p for p in pngs(common.output_dir(scene), fresh) if _norm(p) not in used]
+    own = owned.names(scene)
+    return [p for p in pngs(common.output_dir(scene), fresh)
+            if owned.is_own(scene, p, own) and _norm(p) not in used]
 
 
 def export_textures_dir(scene):
@@ -115,12 +120,16 @@ def export_textures_dir(scene):
 
 
 def stale_export_textures(scene, keep_names):
-    """ALB_/NOR_ PNGs in <export>/Textures/ that are not `keep_names` (texture names) and
-    that no image of this .blend uses."""
+    """ALB_/NOR_ PNGs in <export>/Textures/ that an earlier export of this .blend wrote
+    (baking.owned), that are not `keep_names` (texture names) and that no image of this
+    .blend uses."""
+    from ..baking import owned
     used = used_files()
+    own = owned.names(scene)
     keep = {n.lower() + ".png" for n in keep_names}
     return [p for p in pngs(export_textures_dir(scene))
-            if os.path.basename(p).lower() not in keep and _norm(p) not in used]
+            if os.path.basename(p).lower() not in keep and _norm(p) not in used
+            and owned.is_own(scene, p, own)]
 
 
 # ---------------------------------------------------------------- UV
