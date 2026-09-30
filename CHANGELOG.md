@@ -18,6 +18,12 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Fix: projection objects went empty after an add-on update.** When the shared GN groups
+  were rebuilt, every other set-up object got Mode / Previous Bake / Occlusion written
+  back before its own wrapper was rebuilt - the Mode menu had no items yet, the write
+  failed silently, and Mode stayed blank. A blank Mode makes GN-CameraProject output no
+  geometry (seen on the merged bedroom file: 5 of 6 objects). The wrappers are now
+  rebuilt and updated first, then the values restored.
 - **Clean only removes this file's own old bakes.** Each .blend keeps a list of the ALB_/
   NOR_ file names it has used or written (saved with it; recorded at save, after a bake,
   before a rename, and for an export's texture copies - never on load). Clean and the

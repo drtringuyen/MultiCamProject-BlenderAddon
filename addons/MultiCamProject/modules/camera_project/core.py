@@ -813,6 +813,13 @@ def ensure_modifier(obj):
         # "Sharp" before that fails silently
         bpy.context.view_layer.update()
     _write_keep(mod, keep)
+    if others:
+        # the others' wrappers still mirror the old groups: their Mode menu has no items,
+        # so writing "Sharp" / "Smooth" there fails silently and apply_slots would then
+        # read the blank value back. Rebuild their wrappers, update once, then restore.
+        for o, _k in others:
+            wrapper.ensure(o, get_modifier(o), gn_builder.ensure_node_groups(slot_count(data(o))))
+        bpy.context.view_layer.update()
     for o, k in others:     # groups are up to date now, so this does not recurse
         _write_keep(get_modifier(o), k)
         apply_slots(o, bpy.context.scene)
