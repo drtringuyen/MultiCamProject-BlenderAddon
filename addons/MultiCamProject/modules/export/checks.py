@@ -13,6 +13,16 @@ from ..baking import cache, common, fingerprint
 Issue = namedtuple("Issue", "obj code text severity")
 
 ERROR, WARNING, INFO = 'ERROR', 'WARNING', 'INFO'
+# warnings that do not stop an object from being ready: orange, never red
+SOFT = {'UV_BAD'}       # uv_normal overlapping / outside 0-1: often fine, the user decides
+
+
+def blocking(issue):
+    return issue.severity != INFO and issue.code not in SOFT
+
+
+def soft(issue):
+    return issue.severity != INFO and issue.code in SOFT
 
 # code -> (summary text with {n}, fix operator or None, fix label)
 SUMMARY = {

@@ -13,7 +13,8 @@ STAGES = OrderedDict((
     ('NOT_SET_UP', ("Not set up", 'STRIP_COLOR_09', 3)),
     ('READY_TO_BAKE', ("Ready to bake", 'STRIP_COLOR_03', 4)),
     ('BAKED', ("Baked (no normal)", 'STRIP_COLOR_05', 5)),
-    ('READY', ("Ready", 'STRIP_COLOR_04', 6)),
+    ('WARN', ("Ready (check UVs)", 'STRIP_COLOR_02', 6)),     # orange: soft warnings only
+    ('READY', ("Ready", 'STRIP_COLOR_04', 7)),
 ))
 
 Status = namedtuple("Status", "stage issues")
@@ -27,7 +28,7 @@ def stage_of(obj, issues):
             return 'NOT_SET_UP'
         if not common.has_uv_normal(obj):
             return 'PROJECTION'
-        return 'ISSUES' if any(i.severity != checks.INFO for i in issues) else 'READY'
+        return _ready_or(issues)
     alb = d.alb_image is not None and common.file_ok(d.alb_image)
     nor = d.nor_image is not None and common.file_ok(d.nor_image)
     if common.cp_modifier(obj) is None and not alb and d.bake_source is None:
@@ -40,8 +41,15 @@ def stage_of(obj, issues):
         return 'OUTDATED'
     if not nor or d.material is None:
         return 'BAKED'
-    if any(i.severity != checks.INFO for i in issues):
+    return _ready_or(issues)
+
+
+def _ready_or(issues):
+    """ISSUES (red) for a real problem, WARN (orange) for soft warnings only, else READY."""
+    if any(checks.blocking(i) for i in issues):
         return 'ISSUES'
+    if any(checks.soft(i) for i in issues):
+        return 'WARN'
     return 'READY'
 
 

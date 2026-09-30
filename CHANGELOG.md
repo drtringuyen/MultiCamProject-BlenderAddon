@@ -18,6 +18,10 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Overlapping / outside-0-1 uv_normal is orange, not red.** A soft warning: the object
+  shows "Ready (check UVs)" (orange strip, the warning in plain text), counts as ready,
+  is not part of "Fix N + Export", and its fix column shows an orange triangle. The
+  summary box lists it with the orange triangle, without the red alert.
 - **Guard: a blank projection Mode.** The Mode menu's stored value can end up matching no
   item; GN-CameraProject then outputs nothing, the console fills with "current value '0'
   matches no enum", and a bake fails with "No UV map found in the evaluated object". Each

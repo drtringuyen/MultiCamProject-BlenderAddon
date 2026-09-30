@@ -11,7 +11,7 @@ _ROW_STATUS = {}    # object name -> Status of the current draw (the list reads 
 
 
 def _severe(per, code):
-    return any(i.severity != checks.INFO for st in per.values() for i in st.issues if i.code == code)
+    return any(checks.blocking(i) for st in per.values() for i in st.issues if i.code == code)
 
 
 def _scene_label(layout, scene, es):
@@ -61,7 +61,8 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
             row.prop(item, "multicamproject_short_name", text="", emboss=False)
         else:
             row.prop(item, "name", text="", emboss=False)
-        problems = [i for i in st.issues if i.severity != checks.INFO]
+        problems = [i for i in st.issues if checks.blocking(i)]
+        warns = [i for i in st.issues if checks.soft(i)]
         right = split.split(factor=0.42, align=True)
         tris = right.row()
         tris.active = False
@@ -74,12 +75,18 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         elif st.stage == 'PROJECTION':      # one stage, two causes: name the real one
             label = ("Decimate not applied (03)" if checks.live_decimate(item)
                      else "no uv_normal")
-        sub.label(text=problems[0].text if st.stage == 'ISSUES' and problems else label)
+        if st.stage == 'ISSUES' and problems:
+            label = problems[0].text
+        elif st.stage == 'WARN' and warns:
+            label = warns[0].text
+        sub.label(text=label)
         # the fix column: one button per object that is not ready
         fix = outer.row(align=True)
         fix.ui_units_x = 1.1
         if st.stage == 'READY':
             fix.label(text="", icon='CHECKMARK')
+        elif st.stage == 'WARN':       # nothing to fix automatically: orange, no button
+            fix.label(text="", icon='ERROR')
         else:
             op = fix.operator("multicamproject.export_fix_object", text="", icon='TOOL_SETTINGS')
             op.object_name = item.name
@@ -164,7 +171,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         lbl.label(text="Folder")
         row.prop(es, "folder", text="")
         draw_final_toggle(layout, es, "view")
-        to_fix = sum(st.stage != 'READY' for st in per.values())
+        to_fix = sum(st.stage not in {'READY', 'WARN'} for st in per.values())
         files = f"{naming.fbx_name(scene)}.fbx" if es.split == 'ONE' else f"{len(objs)} FBX files"
         row = layout.row()
         row.scale_y = 1.5
@@ -207,7 +214,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
     @staticmethod
     def _draw_list_header(layout, scene, es, objs, per, grouped):
         """EXPORT (meshes · ready · tris · warnings) ........ Scene: <name>"""
-        ready = sum(st.stage == 'READY' for st in per.values())
+        ready = sum(st.stage in {'READY', 'WARN'} for st in per.values())
         tris = sum(checks.mesh_counts(o)[0] for o in objs)
         notes = sum(1 for code in grouped if not _severe(per, code))
         # notes (e.g. n-gons) are counted here; their texts show under the list for the
@@ -249,16 +256,19 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
 
     @staticmethod
     def _draw_summary(layout, per, grouped):
-        """Only the problems (warnings / errors); notes are counted in the list header."""
+        """The problems (red) and the soft warnings (orange, e.g. overlapping uv_normal);
+        notes are counted in the list header."""
         codes = [code for code in grouped if _severe(per, code)]
-        if not codes:
+        soft = [code for code in grouped if code not in codes and any(
+            checks.soft(i) for st in per.values() for i in st.issues if i.code == code)]
+        if not codes and not soft:
             return
         col = layout.box().column(align=True)
-        for code in codes:
+        for code in codes + soft:
             names = grouped[code]
             text, op, fix_label = checks.SUMMARY[code]
             r = col.row(align=True)
-            r.alert = True
+            r.alert = code in codes     # a soft warning keeps the orange triangle
             r.label(text=text.format(n=len(names)), icon='ERROR')
             if op:
                 r.operator(op, text=fix_label)
