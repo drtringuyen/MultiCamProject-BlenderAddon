@@ -18,6 +18,10 @@
   unused-PNG scan of the bake folder) are read at most every 2 s instead of on every
   redraw. Google Drive takes ~1 ms per check; 20 objects cost ~100 ms a redraw, now
   ~20 ms. Clean / Export still read the folder fresh.
+- **Photo sizes without decoding:** a camera's aspect came from `img.size`, which loads the
+  whole 8K photo (~0.3 s and hundreds of MB each). It is now read from the PNG / JPEG
+  header (packed images: from the packed bytes), cached per file. Rebuilding 6 projection
+  wrappers (e.g. on the first load after a merge): 7.8 s -> 0.17 s, no photo decoded.
 
 ### 05: Clear Alpha next to Erase (2026-09-29)
 - The All Projected / All Baked / Reset Camera Mix icons on the mode line are gone (only

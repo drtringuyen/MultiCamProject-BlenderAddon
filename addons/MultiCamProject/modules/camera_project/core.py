@@ -4,7 +4,7 @@ import os
 import bpy
 import numpy as np
 
-from . import gn_builder, wrapper
+from . import gn_builder, imgsize, wrapper
 from .gn_builder import B
 
 MOD_NAME = "GN-CameraProject"
@@ -70,12 +70,13 @@ def _render_aspect(scene):
 
 
 def image_aspect(img, scene, load=True):
-    """Width/height of the photo. With load=False, unloaded images fall back to
-    the render aspect instead of being decoded."""
-    if image_ok(img) and (load or img.has_data):
-        w, h = img.size
-        if w and h:
-            return w / h
+    """Width/height of the photo, read from the file header (imgsize) - never decoded
+    for a PNG or JPEG. With load=False, other formats fall back to the render aspect
+    instead of being decoded."""
+    if image_ok(img):
+        dims = imgsize.size(img, load=load)
+        if dims:
+            return dims[0] / dims[1]
     return _render_aspect(scene)
 
 
@@ -964,8 +965,9 @@ def migrate_shifts(obj, scene):
         if it.camera is None:
             continue
         img = cam_image(it.camera)
-        if image_ok(img) and img.size[0] and img.size[1]:
-            w, h = img.size
+        dims = imgsize.size(img, load=True) if image_ok(img) else None
+        if dims:
+            w, h = dims
         else:
             w, h = scene.render.resolution_x, scene.render.resolution_y
         px = it.shift
