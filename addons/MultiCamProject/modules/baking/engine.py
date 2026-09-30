@@ -1,4 +1,9 @@
-"""Cycles bakes: BA_ / BN_ from the Bake Source (04), ALB_ from the Processing material (06).
+"""Bakes: BA_ / BN_ from the Bake Source (04, Cycles), ALB_ and the blend mask from the
+object's own Processing material (06, EEVEE).
+
+Only Bake from Source needs Cycles: it casts rays from the low poly onto the high poly. What
+the object shows on its own uv_normal needs no rays - EEVEE renders a copy of the evaluated
+object laid out in UV space (uv_render), much faster than a Cycles bake.
 
 The render/bake settings save + restore and the image preparation follow BakeLab 2
 (GPL-3, Shahzod Boyxonov) - only this small subset is ported.
@@ -7,6 +12,7 @@ Every object is baked in its own bpy.ops.object.bake call: a shared material can
 point its active image node at one object's image at a time.
 """
 import os
+import tempfile
 import time
 from contextlib import contextmanager
 
@@ -140,10 +146,6 @@ def configure(scene, bake_type):
     b.margin = common.margin_px(s)
     b.margin_type = 'EXTEND'
     b.use_selected_to_active = False
-    if bake_type == 'DIFFUSE':
-        b.use_pass_direct = False
-        b.use_pass_indirect = False
-        b.use_pass_color = True
 
 
 def save_png8(img, path):
@@ -255,6 +257,155 @@ def _pack_as(img, old, name):
     return img
 
 
+# ---------------------------------------------------------------- EEVEE: the object on its uv_normal
+
+UV_TMP = "MCP_UV_RENDER_TMP"
+_OFFS = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))
+
+
+def _flat_group():
+    """GN: every face on its own, each corner at its uv_normal (u, v, 0) - the mesh laid out
+    in UV space, every attribute kept."""
+    ng = bpy.data.node_groups.new(UV_TMP, 'GeometryNodeTree')
+    ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
+    ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
+    nodes, links = ng.nodes, ng.links
+    gi = nodes.new("NodeGroupInput")
+    go = nodes.new("NodeGroupOutput")
+    split = nodes.new("GeometryNodeSplitEdges")         # one corner per vertex
+    uv = nodes.new("GeometryNodeInputNamedAttribute")
+    uv.data_type = 'FLOAT_VECTOR'
+    uv.inputs["Name"].default_value = common.UV_NORMAL
+    pos = nodes.new("GeometryNodeSetPosition")
+    links.new(gi.outputs[0], split.inputs["Mesh"])
+    links.new(split.outputs[0], pos.inputs["Geometry"])
+    links.new(uv.outputs["Attribute"], pos.inputs["Position"])
+    links.new(pos.outputs[0], go.inputs[0])
+    return ng
+
+
+def uv_render(context, obj, size, emit=True):
+    """obj as its materials show it, rendered by EEVEE on uv_normal: (size, size, 4) linear
+    floats, rows bottom-up, alpha > 0 where a face covers the pixel. `emit`: every material
+    shows its color as Emission (the Diffuse Color a Cycles bake would read); else the
+    materials must already show what to read (the blend mask).
+    A copy of the evaluated object (projection, temporary subdivision) renders in a scene of
+    its own: nothing of the user's scene renders along, obj is not touched."""
+    s = common.settings(context.scene)
+    dg = context.evaluated_depsgraph_get()
+    me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg), preserve_all_data_layers=True,
+                                         depsgraph=dg)
+    sc = bpy.data.scenes.new(UV_TMP)
+    flat = bpy.data.objects.new(UV_TMP, me)
+    cam_data = bpy.data.cameras.new(UV_TMP)
+    cam = bpy.data.objects.new(UV_TMP + "_cam", cam_data)
+    ng = _flat_group()
+    fd, path = tempfile.mkstemp(".exr", "mcp_uv_")
+    os.close(fd)
+    mats = list(dict.fromkeys(m for m in me.materials if m is not None))
+    culled = [m for m in mats if m.use_backface_culling]      # mirrored islands face away
+    img = None
+    try:
+        if me.attributes.get(common.UV_NORMAL) is None:
+            raise RuntimeError(f"No '{common.UV_NORMAL}' after the modifiers")
+        for m in culled:
+            m.use_backface_culling = False
+        sc.collection.objects.link(flat)
+        sc.collection.objects.link(cam)
+        flat.modifiers.new("UV", 'NODES').node_group = ng
+        cam_data.type = 'ORTHO'
+        cam_data.ortho_scale = 1.0
+        cam_data.clip_start, cam_data.clip_end = 0.1, 10.0
+        cam.location = (0.5, 0.5, 1.0)          # looks down on UV 0-1
+        sc.camera = cam
+        r = sc.render
+        r.engine = 'BLENDER_EEVEE'
+        r.resolution_x = r.resolution_y = size
+        r.resolution_percentage = 100
+        r.film_transparent = True
+        r.filter_size = 0.0                     # one texel = its own color, like a bake
+        r.use_motion_blur = False
+        r.use_compositing = r.use_sequencer = False
+        r.image_settings.file_format = 'OPEN_EXR'
+        r.image_settings.color_depth = '32'
+        r.filepath = path
+        sc.eevee.taa_render_samples = s.anti_alias
+        v = sc.view_settings
+        v.view_transform, v.look, v.exposure, v.gamma = 'Standard', 'None', 0.0, 1.0
+        if emit:
+            with emission_colors(mats, 'EEVEE'):
+                bpy.ops.render.render(write_still=True, scene=sc.name)
+        else:
+            bpy.ops.render.render(write_still=True, scene=sc.name)
+        img = bpy.data.images.load(path, check_existing=False)
+        px = np.empty(size * size * 4, np.float32)
+        img.pixels.foreach_get(px)
+    finally:
+        for m in culled:
+            m.use_backface_culling = True
+        if img is not None:
+            bpy.data.images.remove(img)
+        bpy.data.objects.remove(flat)
+        bpy.data.objects.remove(cam)
+        bpy.data.meshes.remove(me)
+        bpy.data.cameras.remove(cam_data)
+        bpy.data.node_groups.remove(ng)
+        bpy.data.scenes.remove(sc)
+        try:
+            os.remove(path)
+        except OSError:
+            pass
+    px = px.reshape(size, size, 4)
+    a = px[..., 3]
+    part = (a > 0.0) & (a < 1.0)            # an island's edge: premultiplied -> its own color
+    px[part, :3] /= a[part, None]
+    return px
+
+
+def extend_margin(px, covered, margin):
+    """Cycles' EXTEND margin: `margin` rings of uncovered pixels around the islands take a
+    covered neighbour's value. px (h, w, c) and covered (h, w) change in place. Only the
+    islands' borders are touched: about 1 s at 8K."""
+    h, w = covered.shape
+    flat = px.reshape(h * w, -1)
+    cov = covered.reshape(-1)
+    edge = np.zeros_like(covered)           # covered pixels next to an uncovered one
+    edge[:, :-1] |= ~covered[:, 1:]
+    edge[:, 1:] |= ~covered[:, :-1]
+    edge[:-1] |= ~covered[1:]
+    edge[1:] |= ~covered[:-1]
+    front = np.flatnonzero(edge & covered)
+    del edge
+    for _ in range(margin):
+        if not len(front):
+            break
+        y, x = np.divmod(front, w)
+        dst, src = [], []
+        for dy, dx in _OFFS:
+            yy, xx = y + dy, x + dx
+            ok = (yy >= 0) & (yy < h) & (xx >= 0) & (xx < w)
+            n = yy[ok] * w + xx[ok]
+            free = ~cov[n]
+            dst.append(n[free])
+            src.append(front[ok][free])
+        dst = np.concatenate(dst)
+        src = np.concatenate(src)
+        dst, first = np.unique(dst, return_index=True)
+        flat[dst] = flat[src[first]]
+        cov[dst] = True
+        front = dst
+
+
+def to_srgb(px, rows=1024):
+    """Linear -> sRGB-encoded (0-1, what an 8-bit sRGB image stores) in place, a block of
+    rows at a time (no 8K-sized temporaries)."""
+    for y in range(0, px.shape[0], rows):
+        blk = px[y:y + rows]
+        np.clip(blk, 0.0, 1.0, out=blk)
+        blk[:] = np.where(blk <= 0.0031308, blk * 12.92,
+                          1.055 * np.power(blk, 1.0 / 2.4) - 0.055)
+
+
 # ---------------------------------------------------------------- 04 Bake from Source
 
 SOURCE_EMIT = "MCP_SOURCE_EMIT_TMP"
@@ -285,19 +436,33 @@ def _used_materials(obj):
                               if i < len(slots) and slots[i].material is not None))
 
 
-@contextmanager
+def _output(nt, target):
+    """The Material Output `target` ('CYCLES' / 'EEVEE') renders with: the active one among
+    those for All / target, else the first of those, else any."""
+    outs = [n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL']
+    mine = [n for n in outs if n.target in {'ALL', target}]
+    return (next((n for n in mine if n.is_active_output), None) or (mine[0] if mine else None)
+            or (outs[0] if outs else None))
+
+
 def source_colors(src):
     """Every material the source's faces use shows its color as an Emission for one EMIT
     bake: scans are often unlit (image -> Emission, BSDF unconnected), which a Diffuse
-    Color bake reads as black. The materials are put back after."""
+    Color bake reads as black."""
+    return emission_colors(_used_materials(src), 'CYCLES')
+
+
+@contextmanager
+def emission_colors(mats, target):
+    """Every material of `mats` shows its color (_color_socket) as an Emission to `target`'s
+    output - read unlit by an EMIT bake or an EEVEE render. The materials are put back after."""
     changed = []
     try:
-        for mat in _used_materials(src):
-            if not mat.use_nodes or mat.node_tree is None:
+        for mat in mats:
+            if mat is None or not mat.use_nodes or mat.node_tree is None:
                 continue
             nt = mat.node_tree
-            out = next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL' and n.is_active_output),
-                       None) or next((n for n in nt.nodes if n.type == 'OUTPUT_MATERIAL'), None)
+            out = _output(nt, target)
             if out is None:
                 continue
             surface = out.inputs["Surface"]
@@ -474,7 +639,8 @@ def bake_albedo(context, obj):
 
 def bake_albedo_steps(context, obj):
     """ALB_<name>: the Processing material (MCP_: BA_ and the projection, by the mask)
-    baked onto the object itself, with a temporary subdivision against sliding photos.
+    rendered by EEVEE on uv_normal (uv_render), with a temporary subdivision against
+    sliding photos.
     Without a projection ALB_ is BA_ at the final resolution. Builds MAT_, stores the
     fingerprint; the object ends up in Final. A generator (jobs); returns the seconds."""
     scene = context.scene
@@ -507,16 +673,17 @@ def bake_albedo_steps(context, obj):
                                    "image - it would bake pink (Reload All / pick the photo)")
             gn_final.set_final(obj, scene, False)
             context.view_layer.update()
-            prev = _uv_normal_active(obj)
-            try:
-                with subdivided(context, obj), render_state(scene), \
-                        selection(context, obj, [obj]), target_nodes(obj, tmp):
-                    configure(scene, 'DIFFUSE')
-                    yield jobs.Step("Albedo: Cycles bake")
-                    yield from _bake(context, obj, [obj], 'DIFFUSE', s.resolution, tmp,
-                                     pass_filter={'COLOR'})
-            finally:
-                _uv_restore(obj, prev)
+            yield jobs.Step("Albedo: EEVEE render")
+            with subdivided(context, obj):
+                px = uv_render(context, obj, s.resolution)
+            yield jobs.Step("Albedo: margin")
+            covered = px[..., 3] > 0.0
+            px[..., 3] = 1.0
+            to_srgb(px[..., :3])
+            extend_margin(px, covered, common.margin_px(s))
+            del covered
+            tmp.pixels.foreach_set(px.ravel())
+            del px
         yield jobs.Step(f"Albedo: writing {os.path.basename(path)}")
         _save_albedo(obj, scene, tmp, path)
     finally:
@@ -539,9 +706,10 @@ def bake_mask(context, obj, size):
 
 def bake_mask_steps(context, obj, size):
     """The blend mask (0 = baked, 1 = projected) on uv_normal as (size, size) floats, rows
-    bottom-up - MCP_'s mask sent to an Emission for one EMIT bake. None without a projection.
-    A generator (jobs)."""
+    bottom-up - MCP_'s mask sent to an Emission, rendered by EEVEE on uv_normal (uv_render).
+    None without a projection. A generator (jobs)."""
     scene = context.scene
+    s = common.settings(scene)
     mat = cp.data(obj).material if hasattr(obj, "multicamproject_cam") else None
     nt = mat.node_tree if mat is not None else None
     mix = nt.nodes.get("Blend Mix") if nt is not None else None
@@ -553,28 +721,23 @@ def bake_mask_steps(context, obj, size):
     old = surface.links[0].from_socket if surface.links else None
     emit = nt.nodes.new("ShaderNodeEmission")
     emit.name = MASK_EMIT
-    img = bpy.data.images.new("MCP_MASK_BAKE_TMP", size, size, alpha=False, float_buffer=True)
-    img.colorspace_settings.name = 'Non-Color'
     was_final = gn_final.is_final(obj)
-    prev = _uv_normal_active(obj)
     try:
         nt.links.new(mask_out, emit.inputs["Color"])
         nt.links.new(emit.outputs[0], surface)
         gn_final.set_final(obj, scene, False)
         context.view_layer.update()
-        with subdivided(context, obj), render_state(scene), selection(context, obj, [obj]), \
-                target_nodes(obj, img):
-            configure(scene, 'EMIT')
-            yield jobs.Step("Normal: blend mask bake")
-            yield from _bake(context, obj, [obj], 'EMIT', size, img)
-        buf = np.empty(size * size * 4, dtype=np.float32)
-        img.pixels.foreach_get(buf)
-        return np.clip(buf.reshape(size, size, 4)[:, :, 0], 0.0, 1.0).copy()
+        yield jobs.Step("Normal: blend mask (EEVEE)")
+        with subdivided(context, obj):
+            px = uv_render(context, obj, size, emit=False)
+        mask = np.ascontiguousarray(px[..., :1])
+        covered = px[..., 3] > 0.0
+        del px
+        extend_margin(mask, covered, common.margin_px(s, size))
+        return np.clip(mask[..., 0], 0.0, 1.0)
     finally:
-        _uv_restore(obj, prev)
         nt.nodes.remove(emit)
         if old is not None:
             nt.links.new(old, surface)
-        bpy.data.images.remove(img)
         if gn_final.is_final(obj) != was_final:
             gn_final.set_final(obj, scene, was_final)

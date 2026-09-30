@@ -110,11 +110,13 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
                     "at 8K - scaled with the resolution: 16 at 8K = 8 at 4K = 2 at 1K")
     device: EnumProperty(
         name="Device", default='GPU',
-        items=(('GPU', "GPU", "Bake on the GPU set in Preferences > System (CPU if none)"),
-               ('CPU', "CPU", "Bake on the CPU")))
+        items=(('GPU', "GPU", "Bake from Source (Cycles) on the GPU set in Preferences > "
+                              "System (CPU if none)"),
+               ('CPU', "CPU", "Bake from Source (Cycles) on the CPU")))
     anti_alias: IntProperty(
         name="Samples", default=1, min=1, max=64,
-        description="Cycles samples per pixel. 1 is enough for the diffuse color")
+        description="Samples per pixel - Cycles for Bake from Source, EEVEE for the albedo "
+                    "and the blend mask. 1 is enough for colors")
     output_dir: StringProperty(
         name="Folder", default="//01.Baking/", subtype='DIR_PATH',
         description="Folder for ALB_<name>.png and NOR_<name>.png (same file on every bake)")

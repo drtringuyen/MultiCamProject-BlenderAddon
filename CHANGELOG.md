@@ -2,6 +2,19 @@
 
 ## Unreleased
 
+### 06: Albedo and the blend mask render with EEVEE (2026-09-30)
+- Only **04 Bake from Source** (BA_ / BN_) still bakes with Cycles: it needs rays from the
+  low poly to the high poly. ALB_ and the Normal's blend mask read the object's own
+  material on its own uv_normal, so EEVEE renders them instead: a copy of the evaluated
+  object laid flat in UV space, in a temporary scene of its own, with the margin added
+  afterwards (same Margin setting).
+- About **15-50x faster**: Desk_Box took 48.6 s in Cycles at 4K and 2.9 s in EEVEE. The
+  mask at 1K went from 40 s to 0.5 s. The result matches Cycles (mean difference 0.3/255
+  at 4K); at 1K EEVEE's mipmapped photos come out slightly softer.
+- Samples now sets EEVEE's samples for these renders; Device applies to Bake from Source only.
+- Bake from Source reroutes the Material Output that Cycles renders with, instead of
+  whichever output is active.
+
 ### 07: Handmade EXPORT objects (2026-09-30)
 - A **tick in front of each EXPORT row**: Handmade = baked by hand. Its own material becomes
   MAT_, its albedo / normal textures ALB_ / NOR_ (a packed or non-PNG texture is written
