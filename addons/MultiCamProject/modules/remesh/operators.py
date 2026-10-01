@@ -570,11 +570,50 @@ class MULTICAMPROJECT_OT_RemeshSnap(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_ResetObject(bpy.types.Operator):
+    """Start over: remove everything the add-on put on the active mesh - projection and
+    Final modifiers, Decimate / Snap, MCP_ / MAT_ slots, cameras, Bake Source and texture
+    links, uv_normal, UV_camN, VCMix, face sets and Remesh marks. The scan's own materials,
+    UVs, colors and normals stay. Then 0A / 0B / 0C run as on a fresh scan"""
+    bl_idname = "multicamproject.reset_object"
+    bl_label = "Reset Add-on Data"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        why = wf.reset_problem(context.active_object)
+        if why:
+            cls.poll_message_set(why)
+        return not why
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Reset '{context.active_object.name}'?",
+            message="Removes the add-on's modifiers, slots, cameras, bake links, uv_normal and "
+                    "marks. The scan's own data stays. Ctrl+Z undoes it.",
+            confirm_text="Reset", icon='WARNING')
+
+    def execute(self, context):
+        obj = context.active_object
+        done = wf.reset_object(obj)
+        try:
+            from ..baking import cache
+            cache.clear()
+        except ImportError:
+            pass
+        for line in done:
+            print(f"[MultiCamProject] reset {obj.name}: {line}")
+        self.report({'INFO'}, f"'{obj.name}' reset: {len(done)} item(s) removed (list in the "
+                              "console)" if done else f"'{obj.name}' had no add-on data")
+        return {'FINISHED'}
+
+
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
             MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
-            MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap)
+            MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap,
+            MULTICAMPROJECT_OT_ResetObject)
 
 
 def _face_menu(self, context):

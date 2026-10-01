@@ -271,6 +271,90 @@ def repair_originals():
             release_materials(obj)
 
 
+# ---------------------------------------------------------------- Reset (start over)
+
+_OUR_MODS = {DECIMATE, SNAP, OLD_GN_REMESH, "_MCP_PolyCut", "MCP_BAKE_SUBDIV", *OLD_DECIMATES}
+_OUR_GROUPS = ("GN-CameraProject", "GN-CamProject", "GN-Final", "MCP", "GN-Remesh")
+# mesh layers the add-on writes (UV_cam1..6 by prefix); the scan's own UVs, colors and
+# custom normals stay
+_OUR_ATTRS = ("uv_normal", "VCMix", "VCMix2", "uv_index", "face_set", "remesh_inside",
+              "remesh_cutter", "_remesh_seam", ".sculpt_face_set")
+_OUR_KEYS = (APPLIED_KEY, "multicamproject_version", "multicamproject_remesh_version",
+             "multicamproject_final_version")
+
+
+def reset_problem(obj):
+    """Why `obj` cannot be reset ('' = it can)."""
+    if obj is None or obj.type != 'MESH' or obj.library:
+        return "Select a mesh"
+    if obj.mode != 'OBJECT':
+        return "Object Mode only"
+    if obj.data.users > 1:
+        return "The mesh is shared by several objects"
+    return ""
+
+
+def reset_object(obj):
+    """Everything the add-on put on `obj` goes, so 0A/0B/0C start over without errors:
+    its modifiers (projection, Final, Decimate, Snap) and their drivers, the MCP_/MAT_ slots
+    (faces go back to their scan material), its projection and bake data (cameras, BA_/BN_/
+    ALB_/NOR_ links, Bake Source), uv_normal, UV_camN, VCMix, face sets and the Remesh marks.
+    The scan's own materials, UVs, colors and normals stay; the materials and images
+    themselves are not deleted (another object may use them). Other objects that bake from
+    `obj` let go of it. Returns what was removed, as text lines."""
+    out = []
+    me = obj.data
+    # modifiers first: projection faces need the slots as they are
+    for mod in list(obj.modifiers):
+        group = mod.node_group.name if mod.type == 'NODES' and mod.node_group else ""
+        if mod.name in _OUR_MODS or any(group.startswith(g) for g in _OUR_GROUPS):
+            cp.remove_drivers(obj, mod)
+            out.append(f"modifier {mod.name}")
+            obj.modifiers.remove(mod)
+    _restore_uvs(obj)
+    n = _free_projection_faces(obj)
+    if n:
+        out.append(f"{n:,} faces back on their scan material")
+    # every add-on material leaves the slots (keeps_scan is True once bake_source is gone)
+    size = obj.multicamproject_bake.tex_size
+    obj.property_unset("multicamproject_bake")
+    obj.multicamproject_bake.tex_size = size
+    if hasattr(obj, "multicamproject_cam"):
+        obj.property_unset("multicamproject_cam")
+    before = [s.material.name for s in obj.material_slots if s.material]
+    cp.arrange_slots(obj, [])
+    after = {s.material.name for s in obj.material_slots if s.material}
+    out += [f"slot {m}" for m in before if m not in after]
+    for uv in [u for u in me.uv_layers if u.name == cp.UV_NORMAL or u.name.startswith("UV_cam")]:
+        out.append(f"UV {uv.name}")
+        me.uv_layers.remove(uv)
+    for name in _OUR_ATTRS:
+        attr = me.attributes.get(name)
+        if attr is not None:
+            out.append(f"attribute {name}")
+            me.attributes.remove(attr)
+    for name in (VG_PROTECT, VG_SNAP):
+        vg = obj.vertex_groups.get(name)
+        if vg is not None:
+            out.append(f"vertex group {name}")
+            obj.vertex_groups.remove(vg)
+    for k in _OUR_KEYS:
+        for holder in (obj, me):
+            if k in holder:
+                del holder[k]
+    for o in bpy.data.objects:          # nothing bakes from / is a copy of it any more
+        d = getattr(o, "multicamproject_bake", None)
+        if o != obj and d is not None:
+            if d.bake_source == obj:
+                d.bake_source = None
+                out.append(f"{o.name}: Bake Source cleared")
+            if d.source == obj:
+                d.source = None
+                out.append(f"{o.name}: no longer its Remesh copy")
+    me.update()
+    return out
+
+
 def _export_collection(scene):
     try:
         from ..export import fixes
@@ -285,7 +369,10 @@ def make_copy(context, obj):
     warnings = []
     name, mesh_name = obj.name, obj.data.name
     was_setup = hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup
-    collections = list(obj.users_collection)
+    orig_coll = _original_collection(scene)
+    # a mesh already in "Original Mesh" (e.g. a duplicated original) stays there; the copy
+    # goes only where the object was otherwise
+    collections = [c for c in obj.users_collection if c != orig_coll]
 
     copy = obj.copy()                   # a full copy: a cut must never touch the original
     copy.data = obj.data.copy()
@@ -301,8 +388,8 @@ def make_copy(context, obj):
     export = _export_collection(scene)
     if export is not None and export not in copy.users_collection:
         export.objects.link(copy)
-    orig_coll = _original_collection(scene)
-    orig_coll.objects.link(obj)
+    if orig_coll not in obj.users_collection:
+        orig_coll.objects.link(obj)
     for coll in collections:
         coll.objects.unlink(obj)
 

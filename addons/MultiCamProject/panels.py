@@ -118,6 +118,7 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.operator("multicamproject.remesh", text="0C. Remesh",
                          icon='CHECKMARK' if low else 'MOD_REMESH')
             row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
+            row.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
 
         if not mesh:
             return
