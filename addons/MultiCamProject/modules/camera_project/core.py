@@ -1055,9 +1055,14 @@ def migrate_all():
             keep_mode(obj, remember=False)      # loading must not mark the file changed
 
 
+MASK2_LEFTOVER = 0.02   # share of VCMix2 corners an old marker may have left non-zero
+
+
 def migrate_mask2(obj):
     """Before the blend mask was VCMix alpha x VCMix2 alpha, VCMix2 alpha was paint_sync's
-    marker, kept at 0: a painted VCMix2 with no alpha anywhere takes VCMix's alpha."""
+    marker, kept at 0: a VCMix2 with (almost) no alpha takes VCMix's alpha. Almost: the last
+    camera 4-6 stroke of the old design could leave a few marker corners non-zero, and an
+    exact-zero test skipped such meshes, leaving them grey (No Bake) everywhere."""
     ca = obj.data.color_attributes
     l1, l2 = (ca.get(n) for n in gn_builder.LAYERS)
     if (l1 is None or l2 is None or l1.domain != l2.domain
@@ -1067,7 +1072,9 @@ def migrate_mask2(obj):
     l1.data.foreach_get("color", a1)
     a2 = np.empty(len(l2.data) * 4, dtype=np.float32)
     l2.data.foreach_get("color", a2)
-    if a2[3::4].max(initial=0.0) > 1e-4 or a1[3::4].max(initial=0.0) <= 1e-4:
+    if a1[3::4].max(initial=0.0) <= 1e-4:
+        return False
+    if np.count_nonzero(a2[3::4] > 1e-4) > MASK2_LEFTOVER * len(l2.data):
         return False
     a2[3::4] = a1[3::4]
     l2.data.foreach_set("color", a2)

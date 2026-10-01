@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Fix: grey model after the Workflow v4 blend mask (2026-10-01)
+- Setups from before the VCMix alpha x VCMix2 alpha blend mask showed the No Bake grey
+  everywhere when the last camera 4-6 stroke of the old design had left a few VCMix2 marker
+  corners non-zero: the migration only ran on an exactly-zero VCMix2 alpha. It now runs when at
+  most 2 % of the corners are non-zero.
+
 ### Image Editor module: Liquify (2026-10-01)
 Plan: `docs/PLAN_image_editor_liquify.md`. Panel and tool live in the Image Editor only
 (sidebar tab MultiCamProject).
