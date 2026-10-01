@@ -2,6 +2,42 @@
 
 ## Unreleased
 
+### Liquify in camera view (2026-10-01)
+- **Liquify button** on every camera row (Camera Project panel, next to the paint tools): solos
+  that camera and starts Liquify on its photo in the 3D Viewport - the brush paints on the
+  camera background where you see it, the projected mesh follows live. Same brushes and keys
+  (W R S P B, F / [ ], Alt, Ctrl+Z). **Enter** bakes, **Esc** cancels; leaving solo for any
+  reason (another camera, leaving camera or local view, the area closing) cancels too. Plain
+  middle mouse is blocked while it runs (orbiting would leave the camera; Shift+MMB pans).
+- The mouse -> photo mapping follows the background's Fit / Crop / Stretch, scale, offset,
+  rotation and flips, checked against Blender's drawing to < 0.5 px (offset Y is in frame
+  width / photo aspect, rotation is clockwise).
+- **Image Editor:** Enter bakes and Esc cancels a running Liquify session, with any tool.
+
+### Fix: grey model after the Workflow v4 blend mask (2026-10-01)
+- Setups from before the VCMix alpha x VCMix2 alpha blend mask showed the No Bake grey
+  everywhere when the last camera 4-6 stroke of the old design had left a few VCMix2 marker
+  corners non-zero: the migration only ran on an exactly-zero VCMix2 alpha. It now runs when at
+  most 2 % of the corners are non-zero.
+
+### Image Editor module: Liquify (2026-10-01)
+Plan: `docs/PLAN_image_editor_liquify.md`. Panel and tool live in the Image Editor only
+(sidebar tab MultiCamProject).
+- **Liquify tool** (Image Editor toolbar, View and UV modes): Forward Warp, Reconstruct,
+  Smooth, Pucker, Bloat. LMB paints (Alt flips Pucker/Bloat), F drags the size, [ ] scale it,
+  W R S P B pick the brush, tablet pressure scales the strength. Pucker, Bloat, Reconstruct
+  and Smooth keep working while the pen rests.
+- **Live preview:** Start Liquify (or the first click with the tool) swaps the photo for a 1K
+  preview in every camera background, projection material and Image Editor, so the 3D Viewport
+  shows the warp on the camera background and on the mesh while you paint.
+- **Undo:** Ctrl+Z / Ctrl+Shift+Z in the Image Editor step through the session's strokes
+  (50 steps); Esc or right click drops the stroke being painted. Reset removes the whole warp.
+- **Bake** writes the original-size result as `<photo>_lq.png` next to the photo (the original
+  file is never touched) and uses it everywhere; the warp is kept in `<photo>_lq.npz`. Start
+  Liquify on a `_lq` image re-edits the warp of the original. **Cancel** puts the photo back.
+- Previews never reach .blend files (swapped out around every save) and are put back after a
+  file load, an undo past Start, or the module being turned off.
+
 ### 06: Albedo and the blend mask render with EEVEE (2026-09-30)
 - Only **04 Bake from Source** (BA_ / BN_) still bakes with Cycles: it needs rays from the
   low poly to the high poly. ALB_ and the Normal's blend mask read the object's own

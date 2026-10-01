@@ -5,6 +5,17 @@ from . import core
 from .operators import CAM_BRUSHES, flood_ready, is_solo
 
 
+def _draw_liquify(layout, cam):
+    """Liquify this camera's photo in solo view (image_editor module; hidden when it is off)."""
+    from ... import module_manager
+    if not module_manager.is_loaded("image_editor"):
+        return
+    from ..image_editor import camera_op
+    op = layout.operator("multicamproject.liquify_camera", text="", icon='MOD_WARP',
+                         depress=camera_op.running == cam.name)
+    op.camera = cam.name
+
+
 def _icon(icon):
     """Keyword for layout.operator: a UI icon name, or "tool:<handle>" for a toolbar icon."""
     if icon.startswith("tool:"):
@@ -245,6 +256,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             sub.enabled = mode != 'FLOOD' or flood
             op = sub.operator("multicamproject.cam_paint", text="", **_icon(icon))
             op.camera, op.mode = cam.name, mode
+        _draw_liquify(tools, cam)
         # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
         tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
         row = split.row(align=True)
