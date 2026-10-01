@@ -48,6 +48,15 @@ def is_original(obj):
     return obj is not None and any(source_of(o) == obj for o in bpy.data.objects)
 
 
+HANDMADE_TEXT = ("Handmade - change its UVs with Edit UV / Rebake under the EXPORT list "
+                 "(Remesh would leave nothing to bake from)")
+
+
+def is_handmade(obj):
+    d = getattr(obj, "multicamproject_bake", None)
+    return bool(d is not None and d.handmade)
+
+
 def is_low_poly(obj):
     """A Remesh copy or a mesh with a picked Bake Source: Cutting & Modelling applies."""
     return bake_source_of(obj) is not None or is_copy(obj)
@@ -365,6 +374,8 @@ def _export_collection(scene):
 
 def make_copy(context, obj):
     """The Remesh button. Returns (copy, warnings). Object Mode only."""
+    if is_handmade(obj):
+        raise RuntimeError(HANDMADE_TEXT)
     scene = context.scene
     warnings = []
     name, mesh_name = obj.name, obj.data.name

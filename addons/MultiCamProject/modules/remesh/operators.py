@@ -215,6 +215,9 @@ class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
         if obj.name.endswith(wf.ORIGINAL_SUFFIX) or wf.is_original(obj):
             cls.poll_message_set("This is a Remesh original")
             return False
+        if wf.is_handmade(obj):
+            cls.poll_message_set(wf.HANDMADE_TEXT)
+            return False
         return True
 
     def execute(self, context):
