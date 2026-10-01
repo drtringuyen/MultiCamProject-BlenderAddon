@@ -440,6 +440,114 @@ class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _handmade_selected(context, need_old=False):
+    objs = [o for o in common.selected_meshes(context) if handmade.is_handmade(o)]
+    obj = context.active_object
+    if obj is not None and obj not in objs and obj.type == 'MESH' and handmade.is_handmade(obj):
+        objs.append(obj)
+    return [o for o in objs if handmade.has_uv_old(o)] if need_old else objs
+
+
+class MULTICAMPROJECT_OT_HandmadeEditUV(bpy.types.Operator):
+    """Handmade: keep the UV layout the textures were painted on as uv_old, then edit
+    uv_normal in Edit Mode (unwrap, pack...). Rebake carries the textures over"""
+    bl_idname = "multicamproject.handmade_edit_uv"
+    bl_label = "Edit UV"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not _object_mode(context):
+            cls.poll_message_set("Object Mode only")
+            return False
+        if not _handmade_selected(context):
+            cls.poll_message_set("Select a handmade mesh")
+            return False
+        return True
+
+    def execute(self, context):
+        objs = _handmade_selected(context)
+        for o in objs:
+            try:
+                made = handmade.start_uv_edit(o, context.scene)
+            except RuntimeError as e:
+                self.report({'ERROR'}, f"{o.name}: {e}")
+                return {'CANCELLED'}
+            if not made:
+                self.report({'INFO'}, f"{o.name}: uv_old kept (the layout the textures are on)")
+        for o in context.selected_objects:
+            o.select_set(o in objs)
+        if context.view_layer.objects.active not in objs:
+            context.view_layer.objects.active = objs[0]
+        bpy.ops.object.mode_set(mode='EDIT')
+        self.report({'INFO'}, "Edit uv_normal, then Rebake (Object Mode)")
+        return {'FINISHED'}
+
+
+def _rebake_steps(context, objs):
+    done, failed = [], []
+    for obj in objs:
+        if jobs.stop_requested():
+            jobs.skip_rest()
+            break
+        jobs.item_start(obj.name)
+        try:
+            yield from handmade.rebake_steps(context, obj)
+            done.append(obj)
+            jobs.item_end(obj.name)
+        except Exception as e:
+            failed.append((obj.name, str(e)))
+            jobs.item_end(obj.name, str(e))
+    return done, failed
+
+
+class MULTICAMPROJECT_OT_HandmadeRebake(bpy.types.Operator):
+    """Handmade: carry ALB_ and NOR_ over from uv_old onto the new uv_normal, at the
+    object's texture size, into the same files. The old files go to <bake folder>/_previous
+    on the first Rebake and stay the source, so Rebake can run again after more UV changes"""
+    bl_idname = "multicamproject.handmade_rebake"
+    bl_label = "Rebake from uv_old"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not _object_mode(context):
+            cls.poll_message_set("Object Mode only")
+            return False
+        objs = _handmade_selected(context, need_old=True)
+        if not objs:
+            cls.poll_message_set("Select a handmade mesh with uv_old (Edit UV first)")
+            return False
+        for o in objs:
+            why = handmade.rebake_problem(o)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
+        return True
+
+    def execute(self, context):
+        objs = _handmade_selected(context, need_old=True)
+        return jobs.start(self, context, "Rebake", [o.name for o in objs],
+                          _rebake_steps(context, objs), _finisher("Rebaked", len(objs)))
+
+
+class MULTICAMPROJECT_OT_HandmadeFinishUV(bpy.types.Operator):
+    """Handmade: done with the new UVs - uv_old goes; the old textures stay in _previous.
+    The next Edit UV starts from the textures as they are now"""
+    bl_idname = "multicamproject.handmade_finish_uv"
+    bl_label = "Finish"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _object_mode(context) and bool(_handmade_selected(context, need_old=True))
+
+    def execute(self, context):
+        for o in _handmade_selected(context, need_old=True):
+            handmade.finish_uv_edit(o, context.scene)
+        return {'FINISHED'}
+
+
 last_refresh = {}       # object name -> what the last Refresh fixed (shown in the panel)
 
 
@@ -488,7 +596,8 @@ _classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAM
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
-            MULTICAMPROJECT_OT_MaterialRefresh)
+            MULTICAMPROJECT_OT_MaterialRefresh, MULTICAMPROJECT_OT_HandmadeEditUV,
+            MULTICAMPROJECT_OT_HandmadeRebake, MULTICAMPROJECT_OT_HandmadeFinishUV)
 
 
 def register():

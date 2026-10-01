@@ -321,6 +321,13 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
             r = col.row()
             r.alert = i.severity == checks.ERROR
             r.label(text=i.text, icon='ERROR' if i.severity != checks.INFO else 'INFO')
+        if obj.multicamproject_bake.handmade:      # new UVs: rebake on itself
+            from ..baking import handmade
+            r = layout.row(align=True)
+            r.operator("multicamproject.handmade_edit_uv", icon='UV')
+            if handmade.has_uv_old(obj):
+                r.operator("multicamproject.handmade_rebake", icon='FILE_REFRESH')
+                r.operator("multicamproject.handmade_finish_uv", text="", icon='CHECKMARK')
 
 
 _classes = (MULTICAMPROJECT_UL_export, MULTICAMPROJECT_PT_Export)
