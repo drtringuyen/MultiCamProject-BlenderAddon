@@ -27,6 +27,47 @@ def _on_prefix(self, context):
     live.schedule()
 
 
+def auto_names(scene=None):
+    """Auto Names on: names are checked, kept in line live and the list is sorted by ##."""
+    return (scene or bpy.context.scene).multicamproject_export.auto_names
+
+
+_typed = {}        # Auto Names off: object session_uid -> when its ## was typed
+
+
+def _on_auto_names(self, context):
+    """Back on: number 00 -> n in the order of the ## typed meanwhile and bring MCP_/MAT_/
+    ALB_/NOR_ and the files along. Two objects on one ##: the one typed last goes first
+    (it was put there), the other moves down."""
+    from ..baking import cache, common, naming
+    from . import fixes
+    if self.auto_names:
+        objs = common.export_objects(self.id_data)
+        sc = naming.scheme(self.id_data)
+        if objs and sc is None:
+            log = fixes.rename_all(objs, sc)
+        elif objs:
+            def key(o):
+                p = naming.parse(o.name, sc)
+                return (p[0] if p else 10 ** 6, -_typed.get(o.session_uid, -1), o.name)
+            log = fixes.renumber(objs, sc, sorted(objs, key=key))
+        else:
+            log = []
+        for sev, text in log:
+            if sev != 'INFO':
+                print(f"[MultiCamProject] {text}")
+    _typed.clear()
+    cache.clear()
+
+
+def _quick_rename(obj, new, typed=False):
+    """Auto Names off: the object only - MCP_/MAT_/textures follow when it is on again."""
+    if typed:
+        _typed[obj.session_uid] = len(_typed)
+    if new != obj.name:
+        obj.name = new
+
+
 def _get_short(self):
     from ..baking import naming
     sc = naming.scheme()
@@ -41,6 +82,9 @@ def _set_short(self, value):
     sc = naming.scheme()
     p = naming.parse(self.name, sc) if sc else None
     new = naming.full_name(sc, p[0], value) if p else naming.clean_name(value)
+    if not auto_names():
+        _quick_rename(self, new)
+        return
     if new != self.name:
         fixes.rename_object(self, new)
     live.schedule()
@@ -74,7 +118,15 @@ def _set_index(self, value):
     scene = bpy.context.scene
     sc = naming.scheme(scene)
     objs = common.export_objects(scene)
-    if sc is None or self not in objs or value == _get_index(self):
+    if sc is None or self not in objs:
+        return
+    if not auto_names(scene):           # only this object's ##: no one moves
+        p = naming.parse(self.name, sc)
+        _quick_rename(self, naming.full_name(sc, value, p[1] if p else naming.short_name(self.name)),
+                      typed=True)       # the same ## again still counts: it goes first there
+        cache.clear()
+        return
+    if value == _get_index(self):
         return
     for sev, text in fixes.move_to(objs, sc, self, value):
         if sev != 'INFO':
@@ -89,6 +141,12 @@ class MULTICAMPROJECT_ExportSettings(bpy.types.PropertyGroup):
                     "MAT_00_30stBR.<##>_<name>, textures ALB_/NOR_00_30stBR.<##>_<name>, the FBX "
                     "ENV_00_30stBR.fbx. You name only <name>; ## is numbered for you. Saved in the "
                     ".blend. Empty = clean names only")
+    auto_names: BoolProperty(
+        name="Auto Names", default=True, update=_on_auto_names,
+        description="On: names are checked and kept in line live, typing a ## moves the others "
+                    "down, the list is sorted by ##. Off: type ## and names freely (only the "
+                    "object is renamed, nothing moves). Turning it on again numbers 00 -> n in "
+                    "the typed order and renames MCP_/MAT_/ALB_/NOR_ and their files")
     folder: StringProperty(name="Folder", default="//Export/", subtype='DIR_PATH',
                            description="Folder for the FBX, Textures/, Editor/ and the report")
     split: EnumProperty(

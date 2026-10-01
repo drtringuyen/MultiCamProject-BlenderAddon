@@ -409,9 +409,10 @@ def check_handmade(obj):
 
 def object_issues(obj, scene, plan):
     from ..baking import handmade
+    names = check_names(obj, plan) if scene.multicamproject_export.auto_names else []
     if handmade.is_handmade(obj):
-        return check_names(obj, plan) + check_handmade(obj) + check_mesh(obj)
-    return (check_names(obj, plan) + check_materials(obj) + check_uv(obj) + check_color(obj, scene)
+        return names + check_handmade(obj) + check_mesh(obj)
+    return (names + check_materials(obj) + check_uv(obj) + check_color(obj, scene)
             + check_transform(obj) + check_mesh(obj) + check_textures(obj, scene)
             + check_state(obj))
 

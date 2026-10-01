@@ -62,7 +62,8 @@ def scene_status(scene):
     """{object name: Status} for the EXPORT meshes, and the issues grouped by code."""
     from . import fixes
     objs = common.export_objects(scene)
-    plan = fixes.planned_names(objs, naming.scheme(scene))
+    plan = (fixes.planned_names(objs, naming.scheme(scene))
+            if scene.multicamproject_export.auto_names else {})
     per = {o.name: object_status(o, scene, plan) for o in objs}
     grouped = OrderedDict()
     for code in checks.SUMMARY:

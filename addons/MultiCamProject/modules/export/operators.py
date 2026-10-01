@@ -351,6 +351,15 @@ class MULTICAMPROJECT_OT_ExportRenumber(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _auto_names_on(context):
+    """Export with Auto Names off: on first (numbers 00 -> n, names in line). True if it was off."""
+    es = context.scene.multicamproject_export
+    if es.auto_names:
+        return False
+    es.auto_names = True
+    return True
+
+
 class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
     """Fix what can be fixed automatically (names, transforms, a Smart UV uv_normal where
     there is none, rebake outdated / not baked), then export the EXPORT meshes as FBX for
@@ -364,6 +373,7 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
         return _poll(context) and bool(common.export_objects(context.scene))
 
     def invoke(self, context, event):
+        _auto_names_on(context)
         self._plan = autofix.plan(context.scene)
         return context.window_manager.invoke_props_dialog(
             self, width=460, title="Fix and Export", confirm_text="Fix + Export")
@@ -400,6 +410,8 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
                 col.label(text=f"      ... and {len(p.warnings) - 10} more (see the report)")
 
     def execute(self, context):
+        if _auto_names_on(context):
+            self._plan = None           # the names changed: plan again
         p = getattr(self, "_plan", None) or autofix.plan(context.scene)
         names = [o.name for o in p.bake] + [FBX_ITEM]
         return jobs.start(self, context, "Fix + Export", names, _export_steps(context, p),

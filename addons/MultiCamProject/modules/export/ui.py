@@ -111,6 +111,8 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
         flags = [self.bitflag_filter_item if it.name in _ROW_STATUS else 0 for it in items]
+        if not context.scene.multicamproject_export.auto_names:
+            return flags, []        # rows stay where they are while ## are typed by hand
         sc = naming.scheme(context.scene)
 
         def key(it):
@@ -176,6 +178,8 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         op.step = 1
         side.separator()
         side.operator("multicamproject.export_renumber", text="", icon='SORTSIZE')
+        side.separator()
+        side.prop(es, "auto_names", text="", icon='AUTO', toggle=True)
         # scene details, textures folder, problems with a fix: under the list
         self._draw_info(layout, scene, es, scene_row=False)
         self._draw_summary(layout, per, grouped)
