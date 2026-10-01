@@ -4,14 +4,17 @@
 
 ### Handmade: new UVs, rebaked on itself (2026-10-01)
 - **Edit UV / Rebake from uv_old / Finish** under the EXPORT list for a handmade object (no
-  Remesh copy). Edit UV keeps the painted layout as `uv_old` and opens Edit Mode on
-  `uv_normal`. Rebake carries ALB_ (EEVEE) and NOR_ (Cycles Normal bake, re-expressed in the
-  new tangents) over to `uv_normal` at the object's size, into the same files. Edit UV
-  copies the old ones to `<bake folder>/_previous/<name>_<date>.png` and Rebake always reads
-  from them, so it can run again after more UV changes (and an Undo cannot pair uv_old with
-  an already rebaked file). Refused while MAT_'s image node shows another file than ALB_ /
-  NOR_ (e.g. the export's copy picked by hand); every image on a rewritten file reloads. Finish removes `uv_old` (Final and the
-  export drop it anyway).
+  Remesh copy; 0C Remesh is blocked on handmade objects). Edit UV keeps the painted layout as
+  `uv_old`, copies ALB_/NOR_ to `<bake folder>/_previous/<name>_<date>.png` and opens Edit Mode
+  on `uv_normal`. Rebake reads only from those copies (so it can run again; an Undo cannot
+  pair uv_old with a rebaked file) and carries ALB_ (EEVEE) and NOR_ (Cycles Normal bake,
+  re-expressed in the new tangents) over to `uv_normal` at the object's size. The new files
+  go into the bake folder next to every other ALB_/NOR_ (a file the object used elsewhere,
+  e.g. `textures/`, stays there) and are copied into `<export>/Textures/` right away, so it
+  always holds the latest. MAT_ showing an identical copy (e.g. the export's) is pointed back
+  at ALB_/NOR_; a different picture is refused. Finish removes `uv_old`.
+- Tested on every handmade object of the Bedroom file (copy): ALB_ identical, NOR_ within
+  0.2 deg (median) at the map's own size.
 
 ### 07: Clean the export's Textures folder (2026-10-01)
 - **Trash button at the end of the Export row.** It checks `<export>/Textures/` for ALB_/NOR_

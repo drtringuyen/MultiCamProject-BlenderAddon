@@ -199,17 +199,48 @@ def _same_file(a, b):
         os.path.abspath(pb))
 
 
-def shown_mismatch(obj):
-    """'' or why MAT_ does not show ALB_ / NOR_ (an image node picked by hand, e.g. the
-    export's copy): Rebake writes ALB_ / NOR_, the viewport and the export would not change."""
+def _same_content(a, b):
+    """Two files with the same size and time: a copy (Export copies with copy2)."""
+    pa, pb = common.image_file(a), common.image_file(b)
+    try:
+        sa, sb = os.stat(pa), os.stat(pb)
+    except (OSError, TypeError):
+        return False
+    return sa.st_size == sb.st_size and int(sa.st_mtime) == int(sb.st_mtime)
+
+
+def _shown_pairs(obj):
+    """[(kind, the image MAT_ shows, ALB_ / NOR_)] where they are different images."""
     d = common.data(obj)
     alb, nor, _uv = _images(d.material)
-    for kind, shown, ours in (("ALB", alb, d.alb_image), ("NOR", nor, d.nor_image)):
-        if shown is not None and ours is not None and shown != ours and not _same_file(shown, ours):
+    return [(kind, shown, ours) for kind, shown, ours in
+            (("ALB", alb, d.alb_image), ("NOR", nor, d.nor_image))
+            if shown is not None and ours is not None and shown != ours]
+
+
+def shown_mismatch(obj):
+    """'' or why MAT_ does not show ALB_ / NOR_ (an image node picked by hand, e.g. an
+    older export copy): Rebake writes ALB_ / NOR_, the viewport would not change. An
+    identical copy (same size and time) is fine - show_ours puts ALB_ / NOR_ in."""
+    for kind, shown, ours in _shown_pairs(obj):
+        if not _same_file(shown, ours) and not _same_content(shown, ours):
             return (f"MAT_ shows {common.image_file(shown) or shown.name}, but {kind}_ is "
-                    f"{common.image_file(ours) or ours.name} - put {ours.name} into MAT_'s "
-                    f"image node (or untick + tick Handmade)")
+                    f"{common.image_file(ours) or ours.name} (another picture) - put "
+                    f"{ours.name} into MAT_'s image node (or untick + tick Handmade)")
     return ""
+
+
+def show_ours(obj):
+    """MAT_'s image nodes on an identical copy of ALB_ / NOR_ get ALB_ / NOR_ themselves."""
+    d = common.data(obj)
+    nt = d.material.node_tree if d.material is not None else None
+    if nt is None:
+        return
+    for _kind, shown, ours in _shown_pairs(obj):
+        if _same_file(shown, ours) or _same_content(shown, ours):
+            for n in nt.nodes:
+                if n.type == 'TEX_IMAGE' and n.image == shown:
+                    n.image = ours
 
 
 def start_uv_edit(obj, scene):
@@ -225,6 +256,7 @@ def start_uv_edit(obj, scene):
     why = shown_mismatch(obj)
     if why:
         raise RuntimeError(why)
+    show_ours(obj)
     d = common.data(obj)
     if d.alb_image is None or not os.path.isfile(common.image_file(d.alb_image)):
         raise RuntimeError("ALB_ has no file - tick Handmade again")
@@ -273,6 +305,38 @@ def rebake_problem(obj):
     if d.prev_alb is None or not os.path.isfile(common.image_file(d.prev_alb)):
         return "The old textures are gone from _previous - Finish, then Edit UV again"
     return shown_mismatch(obj) or common.uv_collapsed_text(obj)
+
+
+def _target(img, name, scene):
+    """Where a rebaked texture goes: <bake folder>/<name>.png, next to every other ALB_ /
+    NOR_ (one folder to zip). A file already there that the image does not use yet is
+    copied to _previous first; the image's old file (e.g. textures/) stays where it is -
+    another .blend may use it."""
+    import shutil
+    path = common.texture_path(scene, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    cur = common.image_file(img)
+    if os.path.isfile(path) and not (cur and os.path.normcase(os.path.abspath(cur))
+                                     == os.path.normcase(os.path.abspath(path))):
+        folder = os.path.join(os.path.dirname(path), PREVIOUS_DIR)
+        os.makedirs(folder, exist_ok=True)
+        dst = os.path.join(folder, f"{name}_replaced.png")
+        n = 2
+        while os.path.exists(dst):
+            dst = os.path.join(folder, f"{name}_replaced_{n}.png")
+            n += 1
+        shutil.copy2(path, dst)
+    return path
+
+
+def _point_at(img, path, name):
+    """img on its (new) file and named after it; every image on that file reloads."""
+    cur = common.image_file(img)
+    if not cur or os.path.normcase(os.path.abspath(cur)) != os.path.normcase(os.path.abspath(path)):
+        engine.link_file(img, path)
+    if img.name != name and bpy.data.images.get(name) is None:
+        img.name = name
+    _reload_file(path)
 
 
 def _reload_file(path):
@@ -371,8 +435,8 @@ class _Swapped:
 
 
 def rebake_steps(context, obj):
-    """ALB_ / NOR_ from uv_old onto uv_normal at the object's size, written over the same
-    files (the old ones kept in _previous). A generator (jobs); returns the seconds."""
+    """ALB_ / NOR_ from uv_old onto uv_normal at the object's size, written into the bake
+    folder (the old ones kept in _previous). A generator (jobs); returns the seconds."""
     import time
 
     import numpy as np
@@ -382,6 +446,7 @@ def rebake_steps(context, obj):
     why = rebake_problem(obj)
     if why:
         raise RuntimeError(why)
+    show_ours(obj)
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
@@ -421,8 +486,8 @@ def rebake_steps(context, obj):
                                                 normal_space='TANGENT')
                 finally:
                     engine._uv_restore(obj, prev_uv)
-        # all baked: now the files are overwritten
-        alb_path = common.image_file(d.alb_image)
+        # all baked: now the files are written - into the bake folder with every other ALB_/NOR_
+        alb_path = _target(d.alb_image, common.alb_name(obj), scene)
         yield jobs.Step(f"Rebake: writing {os.path.basename(alb_path)}")
         tmp = bpy.data.images.new(engine.TMP_IMAGE, size, size, alpha=False, float_buffer=False)
         try:
@@ -434,17 +499,18 @@ def rebake_steps(context, obj):
             tmp.save(filepath=alb_path)
         finally:
             bpy.data.images.remove(tmp)
-        _reload_file(alb_path)
+        _point_at(d.alb_image, alb_path, common.alb_name(obj))
         d.alb_size = size
         if bn is not None:
-            nor_path = common.image_file(d.nor_image)
+            nor_path = _target(d.nor_image, common.nor_name(obj), scene)
             yield jobs.Step(f"Rebake: writing {os.path.basename(nor_path)} (16-bit)")
             buf = np.empty(size * size * 4, np.float32)
             bn.pixels.foreach_get(buf)
             pngio.write_rgb16(nor_path, buf.reshape(size, size, 4)[..., :3],
                               s.png_compression)
             del buf
-            _reload_file(nor_path)
+            d.nor_image.colorspace_settings.name = 'Non-Color'
+            _point_at(d.nor_image, nor_path, common.nor_name(obj))
             d.nor_size = size
     finally:
         if bn is not None:
@@ -453,6 +519,25 @@ def rebake_steps(context, obj):
         if gn_final.get_modifier(obj) is not None and gn_final.is_final(obj) != was_final:
             gn_final.set_final(obj, scene, was_final)
     owned.record_used(scene)
+    copied = _to_export_textures(obj, scene)
+    if copied:
+        yield jobs.Step(f"Rebake: {len(copied)} texture(s) copied to Export Textures/")
     cache.clear(obj)
     d.last_bake_seconds = time.perf_counter() - t0
     return d.last_bake_seconds
+
+
+def _to_export_textures(obj, scene):
+    """The rebaked ALB_ / NOR_ into <export folder>/Textures/ right away (as Export copies
+    them), so that folder always holds the latest. [] without an export folder."""
+    from . import owned
+    es = getattr(scene, "multicamproject_export", None)
+    if es is None or not es.folder:
+        return []
+    try:
+        from ..export import fbx
+    except ImportError:
+        return []
+    copies = list(fbx.copy_textures([obj], bpy.path.abspath(es.folder)).values())
+    owned.add(scene, copies)
+    return copies
