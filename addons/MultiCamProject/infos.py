@@ -161,6 +161,17 @@ class MULTICAMPROJECT_OT_ToggleRemesh(bpy.types.Operator):
         module_manager.toggle("remesh")
         return {'FINISHED'}
 
+
+class MULTICAMPROJECT_OT_ToggleImageEditor(bpy.types.Operator):
+    """Toggle ImageEditor module on/off"""
+    bl_idname = "multicamproject.toggle_image_editor"
+    bl_label = "ImageEditor"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("image_editor")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
@@ -172,9 +183,11 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleBaking)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleExport)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleRemesh)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleImageEditor)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleImageEditor)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleRemesh)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleExport)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleBaking)

@@ -11,6 +11,7 @@ ALL_MODULES = [    {"name": "camera_project", "op": "multicamproject.toggle_came
     {"name": "baking", "op": "multicamproject.toggle_baking", "icon": "RENDER_STILL"},
     {"name": "export", "op": "multicamproject.toggle_export", "icon": "EXPORT"},
     {"name": "remesh", "op": "multicamproject.toggle_remesh", "icon": "MOD_REMESH"},
+    {"name": "image_editor", "op": "multicamproject.toggle_image_editor", "icon": "MOD_WARP"},
 ]
 
 

@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### Image Editor module: Liquify (2026-10-01)
+Plan: `docs/PLAN_image_editor_liquify.md`. Panel and tool live in the Image Editor only
+(sidebar tab MultiCamProject).
+- **Liquify tool** (Image Editor toolbar, View and UV modes): Forward Warp, Reconstruct,
+  Smooth, Pucker, Bloat. LMB paints (Alt flips Pucker/Bloat), F drags the size, [ ] scale it,
+  W R S P B pick the brush, tablet pressure scales the strength. Pucker, Bloat, Reconstruct
+  and Smooth keep working while the pen rests.
+- **Live preview:** Start Liquify (or the first click with the tool) swaps the photo for a 1K
+  preview in every camera background, projection material and Image Editor, so the 3D Viewport
+  shows the warp on the camera background and on the mesh while you paint.
+- **Undo:** Ctrl+Z / Ctrl+Shift+Z in the Image Editor step through the session's strokes
+  (50 steps); Esc or right click drops the stroke being painted. Reset removes the whole warp.
+- **Bake** writes the original-size result as `<photo>_lq.png` next to the photo (the original
+  file is never touched) and uses it everywhere; the warp is kept in `<photo>_lq.npz`. Start
+  Liquify on a `_lq` image re-edits the warp of the original. **Cancel** puts the photo back.
+- Previews never reach .blend files (swapped out around every save) and are put back after a
+  file load, an undo past Start, or the module being turned off.
+
 ### 07: Handmade EXPORT objects (2026-09-30)
 - A **tick in front of each EXPORT row**: Handmade = baked by hand. Its own material becomes
   MAT_, its albedo / normal textures ALB_ / NOR_ (a packed or non-PNG texture is written
