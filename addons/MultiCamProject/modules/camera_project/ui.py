@@ -172,13 +172,11 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             # up / down / resort next to it, the search under it (as in EXPORT)
             row = body.row()
             lst = row.column(align=True)
-            if rest:
+            if rest or d.cam_search:        # kept while searching: the search is in its bar
                 lst.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
                                   rows=12)
             else:
-                lst.label(text="No camera matches the search" if d.cam_search
-                          else "No camera passes the coverage filter", icon='INFO')
-            lst.prop(d, "cam_search", text="", icon='VIEWZOOM', placeholder="Search cameras")
+                lst.label(text="No camera passes the coverage filter", icon='INFO')
             side = row.column(align=True)
             side.operator("multicamproject.cam_step", text="", icon='TRIA_UP').step = -1
             side.operator("multicamproject.cam_step", text="", icon='TRIA_DOWN').step = 1
@@ -281,12 +279,19 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         op.camera = cam.name
 
 
+_filter_opened = set()      # list ids whose filter bar was opened once this session
+
+
 class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
     """Other Cameras: the cameras not in a slot that pass the coverage filter and the search,
     most coverage first. Its active row is the soloed camera; clicking a name solos that camera."""
 
     def draw_filter(self, context, layout):
-        pass        # the search field is drawn under the list, always open
+        """The list's own filter bar (as in EXPORT), holding the camera search - stored on
+        the object, so the up / down buttons and arrow keys step through what it shows."""
+        obj = context.active_object
+        if obj is not None:
+            layout.row().prop(core.data(obj), "cam_search", text="", icon='VIEWZOOM')
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if item.camera is None:
@@ -303,6 +308,9 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
         slots = core.get_slots(data)
+        if self.list_id not in _filter_opened:      # the search bar starts open
+            _filter_opened.add(self.list_id)
+            self.use_filter_show = True
         pattern = self.filter_name.lower()
         flags = [self.bitflag_filter_item
                  if it.camera and it.camera not in slots and core.passes(data, it)
