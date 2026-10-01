@@ -180,8 +180,8 @@ def on_toggle(data):
 # uv_normal anew. Rebake carries ALB_ / NOR_ over from uv_old to uv_normal on the object
 # itself (no Remesh copy): ALB_ by an EEVEE render (engine.uv_render), NOR_ by a Cycles
 # Normal bake - it re-expresses the normals in the new tangents (rotated / mirrored islands).
-# The first Rebake keeps the old files in <bake folder>/_previous/<name>_<date>.png and
-# reads from them, so Rebake can run again on a changed uv_normal. Finish drops uv_old.
+# Edit UV copies the textures to <bake folder>/_previous/<name>_<date>.png; Rebake always
+# reads from those, so it can run again on a changed uv_normal. Finish drops uv_old.
 # GN-Final removes uv_old from the Final result, the exporter keeps uv_normal only.
 
 UV_OLD = "uv_old"
@@ -193,14 +193,45 @@ def has_uv_old(obj):
     return obj.type == 'MESH' and obj.data.uv_layers.get(UV_OLD) is not None
 
 
+def _same_file(a, b):
+    pa, pb = common.image_file(a), common.image_file(b)
+    return bool(pa and pb) and os.path.normcase(os.path.abspath(pa)) == os.path.normcase(
+        os.path.abspath(pb))
+
+
+def shown_mismatch(obj):
+    """'' or why MAT_ does not show ALB_ / NOR_ (an image node picked by hand, e.g. the
+    export's copy): Rebake writes ALB_ / NOR_, the viewport and the export would not change."""
+    d = common.data(obj)
+    alb, nor, _uv = _images(d.material)
+    for kind, shown, ours in (("ALB", alb, d.alb_image), ("NOR", nor, d.nor_image)):
+        if shown is not None and ours is not None and shown != ours and not _same_file(shown, ours):
+            return (f"MAT_ shows {common.image_file(shown) or shown.name}, but {kind}_ is "
+                    f"{common.image_file(ours) or ours.name} - put {ours.name} into MAT_'s "
+                    f"image node (or untick + tick Handmade)")
+    return ""
+
+
 def start_uv_edit(obj, scene):
     """uv_old = a copy of uv_normal (only when there is none yet: it is what the textures
-    were painted on). Returns True when it was made now."""
+    were painted on). The textures as they are now go to _previous right away and stay the
+    Rebake source - an Undo can then never pair uv_old with an already rebaked file.
+    Returns True when it was made now."""
     uvs = obj.data.uv_layers
     if uvs.get(common.UV_NORMAL) is None:
         raise RuntimeError("No uv_normal")
     if uvs.get(UV_OLD) is not None:
         return False
+    why = shown_mismatch(obj)
+    if why:
+        raise RuntimeError(why)
+    d = common.data(obj)
+    if d.alb_image is None or not os.path.isfile(common.image_file(d.alb_image)):
+        raise RuntimeError("ALB_ has no file - tick Handmade again")
+    d.prev_alb = _keep_previous(d.alb_image, scene, "ALB")
+    d.prev_nor = (_keep_previous(d.nor_image, scene, "NOR")
+                  if d.nor_image is not None and os.path.isfile(common.image_file(d.nor_image))
+                  else None)
     active = uvs.active
     uvs.active = uvs[common.UV_NORMAL]
     new = uvs.new(name=UV_OLD, do_init=True)        # copies the active UV map
@@ -239,7 +270,17 @@ def rebake_problem(obj):
         return "ALB_ has no file - tick Handmade again"
     if d.nor_image is not None and not os.path.isfile(common.image_file(d.nor_image)):
         return "NOR_ has no file - tick Handmade again"
-    return common.uv_collapsed_text(obj)
+    if d.prev_alb is None or not os.path.isfile(common.image_file(d.prev_alb)):
+        return "The old textures are gone from _previous - Finish, then Edit UV again"
+    return shown_mismatch(obj) or common.uv_collapsed_text(obj)
+
+
+def _reload_file(path):
+    """Every image on `path` shows the new pixels (not only ALB_ / NOR_ themselves)."""
+    for img in bpy.data.images:
+        p = common.image_file(img)
+        if p and os.path.normcase(os.path.abspath(p)) == os.path.normcase(os.path.abspath(path)):
+            img.reload()
 
 
 def _keep_previous(img, scene, kind):
@@ -346,10 +387,6 @@ def rebake_steps(context, obj):
     d = common.data(obj)
     size = common.resolution(obj, scene)
     t0 = time.perf_counter()
-    if d.prev_alb is None:
-        d.prev_alb = _keep_previous(d.alb_image, scene, "ALB")
-    if d.nor_image is not None and d.prev_nor is None:
-        d.prev_nor = _keep_previous(d.nor_image, scene, "NOR")
     nor_src = d.prev_nor if d.nor_image is not None else None
     mat = _transfer_material(d.prev_alb, nor_src)
     was_final = gn_final.is_final(obj)
@@ -397,7 +434,7 @@ def rebake_steps(context, obj):
             tmp.save(filepath=alb_path)
         finally:
             bpy.data.images.remove(tmp)
-        d.alb_image.reload()
+        _reload_file(alb_path)
         d.alb_size = size
         if bn is not None:
             nor_path = common.image_file(d.nor_image)
@@ -407,7 +444,7 @@ def rebake_steps(context, obj):
             pngio.write_rgb16(nor_path, buf.reshape(size, size, 4)[..., :3],
                               s.png_compression)
             del buf
-            d.nor_image.reload()
+            _reload_file(nor_path)
             d.nor_size = size
     finally:
         if bn is not None:

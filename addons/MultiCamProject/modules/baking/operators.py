@@ -449,8 +449,9 @@ def _handmade_selected(context, need_old=False):
 
 
 class MULTICAMPROJECT_OT_HandmadeEditUV(bpy.types.Operator):
-    """Handmade: keep the UV layout the textures were painted on as uv_old, then edit
-    uv_normal in Edit Mode (unwrap, pack...). Rebake carries the textures over"""
+    """Handmade: keep the UV layout the textures were painted on as uv_old (and the
+    textures in <bake folder>/_previous), then edit uv_normal in Edit Mode. Rebake carries
+    the textures over"""
     bl_idname = "multicamproject.handmade_edit_uv"
     bl_label = "Edit UV"
     bl_options = {'REGISTER', 'UNDO'}
@@ -503,8 +504,8 @@ def _rebake_steps(context, objs):
 
 class MULTICAMPROJECT_OT_HandmadeRebake(bpy.types.Operator):
     """Handmade: carry ALB_ and NOR_ over from uv_old onto the new uv_normal, at the
-    object's texture size, into the same files. The old files go to <bake folder>/_previous
-    on the first Rebake and stay the source, so Rebake can run again after more UV changes"""
+    object's texture size, into the same files. It reads the copies Edit UV put into
+    <bake folder>/_previous, so Rebake can run again after more UV changes"""
     bl_idname = "multicamproject.handmade_rebake"
     bl_label = "Rebake from uv_old"
     bl_options = {'REGISTER', 'UNDO'}

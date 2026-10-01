@@ -6,9 +6,11 @@
 - **Edit UV / Rebake from uv_old / Finish** under the EXPORT list for a handmade object (no
   Remesh copy). Edit UV keeps the painted layout as `uv_old` and opens Edit Mode on
   `uv_normal`. Rebake carries ALB_ (EEVEE) and NOR_ (Cycles Normal bake, re-expressed in the
-  new tangents) over to `uv_normal` at the object's size, into the same files; the first
-  Rebake copies the old ones to `<bake folder>/_previous/<name>_<date>.png` and reads from
-  them, so it can run again after more UV changes. Finish removes `uv_old` (Final and the
+  new tangents) over to `uv_normal` at the object's size, into the same files. Edit UV
+  copies the old ones to `<bake folder>/_previous/<name>_<date>.png` and Rebake always reads
+  from them, so it can run again after more UV changes (and an Undo cannot pair uv_old with
+  an already rebaked file). Refused while MAT_'s image node shows another file than ALB_ /
+  NOR_ (e.g. the export's copy picked by hand); every image on a rewritten file reloads. Finish removes `uv_old` (Final and the
   export drop it anyway).
 
 ### 07: Clean the export's Textures folder (2026-10-01)
