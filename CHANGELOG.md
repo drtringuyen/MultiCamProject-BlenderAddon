@@ -2,6 +2,13 @@
 
 ## Unreleased
 
+### 07: Clean the export's Textures folder (2026-10-01)
+- **Trash button at the end of the Export row.** It checks `<export>/Textures/` for ALB_/NOR_
+  PNGs that the export of EXPORT does not write (old names, removed objects, another .blend's
+  exports). With none it reports the folder as clean; otherwise a dialog lists them, marks
+  the ones another .blend wrote, and Move sends them to the Recycle Bin. An export itself
+  still only removes this file's own old textures.
+
 ### Liquify in camera view (2026-10-01)
 - **Liquify button** on every camera row (Camera Project panel, next to the paint tools): solos
   that camera and starts Liquify on its photo in the 3D Viewport - the brush paints on the
