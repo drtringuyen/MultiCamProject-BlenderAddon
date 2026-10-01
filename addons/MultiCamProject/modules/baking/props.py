@@ -83,7 +83,8 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                     "from - Bake from Source, Selected to Active. Empty = projection only")
 
 
-VIEW_ITEMS = (('PROJECTION', "Projection", "The camera projection setup, editable", 'CAMERA_DATA', 0),
+VIEW_ITEMS = (('PROJECTION', "Processing", "The Processing material (MCP_): the camera "
+                                          "projection setup, editable", 'CAMERA_DATA', 0),
               ('FINAL', "Final", "The baked result: MAT_, Color and uv_normal only - the projection "
                                  "is switched off", 'SHADING_TEXTURE', 1))
 

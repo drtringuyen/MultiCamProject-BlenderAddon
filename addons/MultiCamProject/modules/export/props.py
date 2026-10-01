@@ -89,11 +89,12 @@ class MULTICAMPROJECT_ExportSettings(bpy.types.PropertyGroup):
     active_index: IntProperty(default=-1, update=_on_row)
     view: EnumProperty(
         name="View", get=_get_export_view, set=_set_export_view, options={'SKIP_SAVE'},
-        items=(('PROJECTION', "Projection", "Every EXPORT object shows its camera projection setup",
+        items=(('PROJECTION', "Processing", "Every EXPORT object shows its Processing material "
+                                            "(MCP_): the camera projection setup",
                 'CAMERA_DATA', 0),
                ('FINAL', "Final", "Every EXPORT object shows the baked result (what the FBX gets). "
                                   "Export switches to Final by itself", 'SHADING_TEXTURE', 1)),
-        description="Projection setup or Final baked result for every EXPORT object")
+        description="Processing material or Final baked result for every EXPORT object")
     show_scenes: BoolProperty(name="Details", default=False)
 
 
