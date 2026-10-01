@@ -133,6 +133,12 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                     and hasattr(bpy.types, "MULTICAMPROJECT_OT_export_make_uv")):
                 box.operator("multicamproject.export_make_uv", text="Make uv_normal (Smart UV)",
                              icon='UV').scope = 'SELECTED'
+        else:
+            collapsed = common.uv_collapsed_text(obj)       # baking would give a black BA_
+            if collapsed:
+                sub = box.row()
+                sub.alert = True
+                sub.label(text=collapsed, icon='ERROR')
         if d.ba_image is not None:
             info = box.row()
             info.active = False

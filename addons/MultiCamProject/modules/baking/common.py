@@ -63,6 +63,43 @@ def has_uv_normal(obj):
     return obj.type == 'MESH' and obj.data.uv_layers.get(UV_NORMAL) is not None
 
 
+COLLAPSED = 0.25        # share of faces without UV area: uv_normal is broken
+MIN_UV_AREA = 0.01      # the islands together cover less of 0-1 than this: broken too
+
+
+def uv_coverage(obj):
+    """(share of uv_normal's triangles with (almost) no UV area, the islands' total area in
+    0-1 units). A scan's uv_normal after Decimate collapses into points: the bake writes next
+    to no pixels (black BA_ / ALB_)."""
+    import numpy as np
+    me = obj.data
+    uv = me.uv_layers.get(UV_NORMAL)
+    if uv is None:
+        return 0.0, 1.0
+    me.calc_loop_triangles()
+    nt = len(me.loop_triangles)
+    if not nt:
+        return 0.0, 1.0
+    co = np.empty(len(me.loops) * 2, np.float32)
+    uv.data.foreach_get("uv", co)
+    loops = np.empty(nt * 3, np.int32)
+    me.loop_triangles.foreach_get("loops", loops)
+    t = co.reshape(-1, 2)[loops].reshape(nt, 3, 2).astype(np.float64)
+    a = 0.5 * np.abs((t[:, 1, 0] - t[:, 0, 0]) * (t[:, 2, 1] - t[:, 0, 1])
+                     - (t[:, 2, 0] - t[:, 0, 0]) * (t[:, 1, 1] - t[:, 0, 1]))
+    return float((a < 5e-11).mean()), float(a.sum())
+
+
+def uv_collapsed_text(obj):
+    """'' or why uv_normal cannot be baked into."""
+    dead, area = uv_coverage(obj)
+    if dead > COLLAPSED:
+        return f"{UV_NORMAL} collapsed ({dead:.0%} of faces) - unwrap it again (U)"
+    if area < MIN_UV_AREA:
+        return f"{UV_NORMAL} covers {area:.1%} of the texture - unwrap it again (U)"
+    return ""
+
+
 def cp_modifier(obj):
     """The camera projection modifier, or None (baking works on any mesh)."""
     from ..camera_project import gn_builder

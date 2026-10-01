@@ -220,6 +220,9 @@ def check_uv(obj):
     if me.uv_layers.get(common.UV_NORMAL) is None:
         return [Issue(obj.name, 'UV_MISSING', "no uv_normal (Smart UV on export, or unwrap "
                       "it yourself)", ERROR)]
+    why = common.uv_collapsed_text(obj)
+    if why:
+        return [Issue(obj.name, 'UV_BAD', why, ERROR)]
     out = []
     outside, overlap = uv_stats(obj)
     if outside > 0:

@@ -67,6 +67,9 @@ def _bake_one(context, obj, albedo, nor_source, res, log):
     if with_albedo:
         if not common.has_uv_normal(obj):
             raise RuntimeError(f"no {common.UV_NORMAL}")
+        why = common.uv_collapsed_text(obj)
+        if why:
+            raise RuntimeError(why)
         if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
             from ..camera_project import core as cp
             if cp.get_modifier(obj) is not None and not cp.keep_mode(obj):

@@ -513,7 +513,7 @@ def bake_from_source_steps(context, obj):
     packed in the .blend and are overwritten on the next bake; MCP_ shows them under the
     projection. The low poly and its source are shown for the whole time (a Remesh original
     usually sits in an excluded collection). A generator (jobs); returns the seconds."""
-    why = source_problem(obj, context)
+    why = source_problem(obj, context) or common.uv_collapsed_text(obj)
     if why:
         raise RuntimeError(why)
     with common.shown(context, [obj, common.data(obj).bake_source]):
