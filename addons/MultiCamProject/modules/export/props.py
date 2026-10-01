@@ -46,6 +46,28 @@ def _set_short(self, value):
     live.schedule()
 
 
+def _get_index(self):
+    from ..baking import naming
+    sc = naming.scheme()
+    p = naming.parse(self.name, sc) if sc else None
+    return p[0] if p else 0
+
+
+def _set_index(self, value):
+    """Typing a ## moves the object there; the ones from there on move one down."""
+    from ..baking import cache, common, naming
+    from . import fixes
+    scene = bpy.context.scene
+    sc = naming.scheme(scene)
+    objs = common.export_objects(scene)
+    if sc is None or self not in objs or value == _get_index(self):
+        return
+    for sev, text in fixes.move_to(objs, sc, self, value):
+        if sev != 'INFO':
+            print(f"[MultiCamProject] {text}")
+    cache.clear()
+
+
 class MULTICAMPROJECT_ExportSettings(bpy.types.PropertyGroup):
     name_prefix: StringProperty(
         name="Name Prefix", default="", update=_on_prefix,
@@ -81,9 +103,14 @@ def register():
     bpy.types.Object.multicamproject_short_name = StringProperty(
         name="Name", get=_get_short, set=_set_short, options={'SKIP_SAVE'},
         description="The object's own name - the add-on keeps the <scene>.<##>_ in front")
+    bpy.types.Object.multicamproject_export_index = IntProperty(
+        name="Order", min=0, max=99, get=_get_index, set=_set_index, options={'SKIP_SAVE'},
+        description="The object's ## in the EXPORT order. Type a number to move it there - "
+                    "the objects from there on move one down, then all are numbered 00 -> n")
 
 
 def unregister():
+    del bpy.types.Object.multicamproject_export_index
     del bpy.types.Object.multicamproject_short_name
     del bpy.types.Scene.multicamproject_export
     bpy.utils.unregister_class(MULTICAMPROJECT_ExportSettings)

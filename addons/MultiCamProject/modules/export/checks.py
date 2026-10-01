@@ -143,6 +143,27 @@ def stale_export_textures(scene, keep_names):
             and owned.is_own(scene, p, own)]
 
 
+def export_texture_names(scene):
+    """The ALB_/NOR_ names an export of EXPORT writes into <export>/Textures/."""
+    names = []
+    for o in common.export_objects(scene):
+        d = common.data(o)
+        names += [img.name for img in (d.alb_image, d.nor_image) if img is not None]
+    return names
+
+
+def unused_export_textures(scene):
+    """[(path, this file's own)] - ALB_/NOR_ PNGs in <export>/Textures/ that the export of
+    EXPORT does not write and no image of this .blend uses, whoever wrote them (the Export
+    button's clean-up asks first; an export itself only removes this file's own)."""
+    from ..baking import owned
+    used = used_files()
+    own = owned.names(scene)
+    keep = {n.lower() + ".png" for n in export_texture_names(scene)}
+    return [(p, owned.is_own(scene, p, own)) for p in pngs(export_textures_dir(scene))
+            if os.path.basename(p).lower() not in keep and _norm(p) not in used]
+
+
 # ---------------------------------------------------------------- UV
 
 def _uv_stats(obj):
@@ -317,8 +338,9 @@ def check_textures(obj, scene):
             out.append(Issue(obj.name, 'TEXTURE', f"{label} is not a PNG", WARNING))
             continue
         w, h, dep, _ct = hdr
-        if (w, h) != (s.resolution, s.resolution):
-            out.append(Issue(obj.name, 'TEXTURE', f"{label} is {w}x{h}, not {s.resolution}", WARNING))
+        res = common.resolution(obj, scene)
+        if (w, h) != (res, res):
+            out.append(Issue(obj.name, 'TEXTURE', f"{label} is {w}x{h}, not {res}", WARNING))
         if dep != depth:
             out.append(Issue(obj.name, 'TEXTURE', f"{label} is {dep}-bit, not {depth}-bit", WARNING))
     if d.nor_image is not None and d.nor_image.colorspace_settings.name != 'Non-Color':

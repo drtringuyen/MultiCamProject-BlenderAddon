@@ -1128,14 +1128,20 @@ def passes(d, item):
     return item.coverage >= min_coverage(d)
 
 
+def searched(d, item):
+    """The camera list's search: its name contains the typed text (any case)."""
+    return d.cam_search.lower() in item.camera.name.lower()
+
+
 def display_order(obj):
     """Camera list items for the UI: the slots first, then the cameras that pass the
-    coverage filter, most coverage first."""
+    coverage filter and the search, most coverage first."""
     d = data(obj)
     slots = get_slots(d)
     items = [it for it in d.cameras if it.camera]
     top = sorted((it for it in items if it.camera in slots), key=lambda it: slots.index(it.camera))
-    rest = sorted((it for it in items if it.camera not in slots and passes(d, it)),
+    rest = sorted((it for it in items if it.camera not in slots and passes(d, it)
+                   and searched(d, it)),
                   key=lambda it: (-it.coverage, it.camera.name.lower()))
     return top, rest
 

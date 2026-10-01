@@ -7,6 +7,13 @@ def _res(n):
     return f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
 
 
+def draw_resolution(layout, s):
+    """[1K v]: the resolution of every object set to A (Auto), a dropdown."""
+    sizes = layout.row(align=True)
+    sizes.ui_units_x = 3
+    sizes.prop(s, "resolution_menu", text="")
+
+
 def draw_final_toggle(layout, data, prop):
     """Projection | Final as a two-state toggle: the current state stays highlighted."""
     layout.row(align=True).prop(data, prop, expand=True)
@@ -108,8 +115,12 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                        icon='NORMALS_FACE')
             if d.alb_size and d.nor_size != d.alb_size:
                 info.label(text="ALB and NOR sizes differ - bake again", icon='INFO')
-        if d.alb_size and d.alb_size != s.resolution:
-            info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(s.resolution)}",
+        res = common.resolution(obj, context.scene)
+        if d.tex_size != 'AUTO':        # set in the EXPORT list: the dropdown does not apply
+            info.label(text=f"Own size {_res(res)} (EXPORT list) - not the dropdown",
+                       icon='TEXTURE')
+        if d.alb_size and d.alb_size != res:
+            info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(res)}",
                        icon='INFO')
         # earlier normal map runs (other methods / sizes) to compare the times with
         current = (normal.LABELS.get(d.nor_source_used, d.nor_source_used), d.nor_size)
@@ -161,18 +172,14 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
     @staticmethod
     def _draw_bake_button(layout, s):
-        """[1K][2K][4K][8K] (the whole scene), one Bake for everything the options say, the
+        """[1K v] (every object set to A), one Bake for everything the options say, the
         bake settings' gear at its end."""
         parts = {'ALBEDO': "Albedo", 'NORMAL': "Normal", 'BOTH': "Albedo + Normal"}[s.bake_what]
         if s.bake_what != 'ALBEDO':
             parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)})"
         row = layout.row(align=True)
         row.scale_y = 1.5
-        sizes = row.row(align=True)
-        sizes.ui_units_x = 6
-        for n in common.RESOLUTIONS:
-            sizes.operator("multicamproject.bake_resolution", text=_res(n),
-                           depress=s.resolution == n).size = n
+        draw_resolution(row, s)
         row.separator(factor=0.5)
         row.operator("multicamproject.bake", text=f"Bake {parts}", icon='RENDER_STILL')
         row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')

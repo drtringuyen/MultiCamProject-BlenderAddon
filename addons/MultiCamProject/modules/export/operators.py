@@ -239,6 +239,56 @@ class MULTICAMPROJECT_OT_ExportCleanTextures(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_ExportCleanExportTextures(bpy.types.Operator):
+    """Check the export's Textures folder: every ALB_/NOR_ PNG the export of EXPORT does not
+    write (old names, removed objects, another .blend's exports) is listed and, after you
+    confirm, moved to the Recycle Bin"""
+    bl_idname = "multicamproject.export_clean_export_textures"
+    bl_label = "Clean Export Textures"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll(context)
+
+    def invoke(self, context, event):
+        from . import checks
+        self._unused = checks.unused_export_textures(context.scene)
+        if not self._unused:
+            n = len(checks.pngs(checks.export_textures_dir(context.scene)))
+            self.report({'INFO'}, f"Export Textures/ is clean: {n} texture(s), all from this export")
+            return {'FINISHED'}
+        return context.window_manager.invoke_props_dialog(
+            self, width=420, title=f"Move {len(self._unused)} unused texture(s) to the Recycle Bin?",
+            confirm_text="Move")
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.label(text="Not written by this export, not used by this .blend:")
+        others = sum(not own for _p, own in self._unused)
+        shown = self._unused[:20]
+        for p, own in shown:
+            col.label(text=os.path.basename(p) + ("" if own else "   (another .blend)"),
+                      icon='FILE_IMAGE')
+        if len(self._unused) > len(shown):
+            col.label(text=f"... and {len(self._unused) - len(shown)} more")
+        if others:
+            col.separator()
+            col.label(text=f"{others} came from another .blend - it may still use them",
+                      icon='ERROR')
+
+    def execute(self, context):
+        from . import checks
+        unused = getattr(self, "_unused", None)
+        if unused is None:
+            unused = checks.unused_export_textures(context.scene)
+        gone = fixes.to_recycle_bin([p for p, _own in unused])
+        cache.clear()
+        self.report({'INFO'}, f"Moved {len(gone)} unused texture(s) from Export Textures/ "
+                              "to the Recycle Bin")
+        return {'FINISHED'}
+
+
 def _numbering_poll(cls, context):
     from ..baking import naming
     if not _poll(context):
@@ -486,6 +536,92 @@ class MULTICAMPROJECT_OT_ExportFixObject(bpy.types.Operator):
         return jobs.start(self, context, f"Fix {name}", [name], steps(), finish)
 
 
+# wm[_SOLO_KEY][<space pointer>] = {"obj": soloed object, "hidden": objects solo unhid}
+_SOLO_KEY = "multicamproject_export_solo"
+
+
+def solo_original(obj):
+    """The original `obj` was made from: its Bake Source, else its Remesh source."""
+    d = common.data(obj)
+    o = d.bake_source or d.source
+    return o if o is not None and o != obj else None
+
+
+def _solo_states(context):
+    wm = context.window_manager
+    if _SOLO_KEY not in wm:
+        wm[_SOLO_KEY] = {}
+    return wm[_SOLO_KEY]
+
+
+def is_soloed(context, obj):
+    """True while `obj` is soloed (local view) from its EXPORT row in this 3D view."""
+    space = context.space_data
+    if space is None or space.type != 'VIEW_3D' or space.local_view is None:
+        return False
+    st = context.window_manager.get(_SOLO_KEY, {}).get(str(space.as_pointer()))
+    return st is not None and st.get("obj") == obj.name
+
+
+class MULTICAMPROJECT_OT_ExportSolo(bpy.types.Operator):
+    """Solo this object and its original (Bake Source / Remesh source) in local view.
+    Click again to leave solo"""
+    bl_idname = "multicamproject.export_solo"
+    bl_label = "Solo Object + Original"
+
+    object_name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return _poll(context) and context.area is not None and context.area.type == 'VIEW_3D'
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return {'CANCELLED'}
+        space = context.space_data
+        states = _solo_states(context)
+        key = str(space.as_pointer())
+        again = is_soloed(context, obj)
+        if space.local_view is not None:        # leave the current solo first
+            bpy.ops.view3d.localview(frame_selected=False)
+            st = states.get(key)
+            for name in (st.to_dict().get("hidden", []) if st else []):
+                o = bpy.data.objects.get(name)
+                if o is not None and context.view_layer.objects.get(name) == o:
+                    o.hide_set(True)
+            if key in states:
+                del states[key]
+            if again:
+                return {'FINISHED'}
+        vl = context.view_layer
+        orig = solo_original(obj)
+        keep, hidden = [], []
+        for o in (obj, orig):
+            if o is None:
+                continue
+            if vl.objects.get(o.name) != o:
+                self.report({'WARNING'}, f"'{o.name}' is in an excluded collection - not soloed")
+                continue
+            if o.hide_get():
+                o.hide_set(False)
+                hidden.append(o.name)
+            if not o.visible_get():
+                self.report({'WARNING'}, f"'{o.name}' is in a hidden collection - not soloed")
+                continue
+            keep.append(o)
+        if obj not in keep:
+            return {'CANCELLED'}
+        for o in context.selected_objects:
+            o.select_set(False)
+        for o in keep:
+            o.select_set(True)
+        vl.objects.active = obj
+        bpy.ops.view3d.localview(frame_selected=True)
+        states[key] = {"obj": obj.name, "hidden": hidden}
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_ExportApplyDecimate(bpy.types.Operator):
     """Apply the Decimate (03) of the EXPORT objects that still have it live, and unwrap
     uv_normal again (Smart UV) - the old one was made on the dense mesh. Bake them next.
@@ -526,8 +662,8 @@ _classes = (MULTICAMPROJECT_OT_ExportFixObject, MULTICAMPROJECT_OT_ExportApplyDe
             MULTICAMPROJECT_OT_ExportRename, MULTICAMPROJECT_OT_ExportFixTransforms,
             MULTICAMPROJECT_OT_ExportUpdateOutdated, MULTICAMPROJECT_OT_ExportBakeMissing,
             MULTICAMPROJECT_OT_ExportDeleteScene, MULTICAMPROJECT_OT_ExportCleanTextures,
-            MULTICAMPROJECT_OT_ExportMove, MULTICAMPROJECT_OT_ExportRenumber,
-            MULTICAMPROJECT_OT_ExportFBX)
+            MULTICAMPROJECT_OT_ExportCleanExportTextures, MULTICAMPROJECT_OT_ExportMove, MULTICAMPROJECT_OT_ExportRenumber,
+            MULTICAMPROJECT_OT_ExportFBX, MULTICAMPROJECT_OT_ExportSolo)
 
 
 def register():

@@ -15,12 +15,26 @@ def _on_handmade(data, context):
     handmade.on_toggle(data)
 
 
+def _on_tex_size(data, context):
+    from . import cache
+    cache.clear()
+
+
 class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     handmade: BoolProperty(
         name="Handmade", update=_on_handmade,
         description="Baked by hand: its own material and textures become MAT_ / ALB_ / NOR_. "
                     "Only the names and uv_normal are checked; it is exported through GN-Final "
                     "(one material, one UV), never baked by the add-on")
+    tex_size: EnumProperty(
+        name="Texture Size", default='AUTO', update=_on_tex_size,
+        items=(('AUTO', "A", "Auto: the resolution set next to Bake / Export (the whole scene)", 0),
+               ('1024', "1K", "ALB_, NOR_, BA_ and BN_ of this object at 1024 x 1024", 1),
+               ('2048', "2K", "ALB_, NOR_, BA_ and BN_ of this object at 2048 x 2048", 2),
+               ('4096', "4K", "ALB_, NOR_, BA_ and BN_ of this object at 4096 x 4096", 3),
+               ('8192', "8K", "ALB_, NOR_, BA_ and BN_ of this object at 8192 x 8192", 4)),
+        description="This object's texture size. A = the scene's resolution. Textures baked at "
+                    "another size are listed to bake again")
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
     nor_image: PointerProperty(type=bpy.types.Image, name="Normal")
     # baked from the Bake Source (04): packed work textures under the projection, never
@@ -99,11 +113,28 @@ def _nor_sources(self, context):
     return _nor_items
 
 
+RES_ITEMS = tuple((str(n), f"{n // 1024}K", f"Bake at {n} x {n} px (every object set to A)", i)
+                  for i, n in enumerate((1024, 2048, 4096, 8192)))
+
+
+def _get_res_menu(self):
+    keys = [int(k) for k, *_r in RES_ITEMS]
+    return keys.index(self.resolution) if self.resolution in keys else 0
+
+
+def _set_res_menu(self, value):
+    self.resolution = int(RES_ITEMS[value][0])
+
+
 class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
     resolution: IntProperty(
         name="Resolution", default=1024, min=1024, max=16384,
         description="Width and height of every baked texture - ALB_, NOR_, BA_ and BN_ - in "
-                    "pixels. The one control: the 1K-8K toggles next to Bake (the whole scene)")
+                    "pixels, for every object set to A (Auto) - the 1K-8K dropdown next to Bake / Export")
+    resolution_menu: EnumProperty(
+        name="Resolution", items=RES_ITEMS, get=_get_res_menu, set=_set_res_menu,
+        description="Width and height of the baked textures of every object whose own size is "
+                    "A (Auto). Textures baked at another size count as outdated")
     margin: IntProperty(
         name="Margin at 8K", default=16, min=0, max=256, subtype='PIXEL',
         description="Pixels the bake extends past the UV islands (against seams in mip maps), "

@@ -100,6 +100,10 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
         description="Show and auto-pick only cameras that see at least this much of the object")
     cam_index: IntProperty(default=-1, update=_on_cam_index,
                            description="Active row of the camera list (the soloed camera)")
+    cam_search: StringProperty(
+        name="Search", options={'TEXTEDIT_UPDATE', 'SKIP_SAVE'},
+        description="Show only the cameras whose name contains this text (the up / down "
+                    "buttons and arrow keys step through those)")
     shifts: CollectionProperty(type=MULTICAMPROJECT_CamShift)
     shift_version: IntProperty(default=0, description="0 = shifts stored in pixels (old), 1 = UV range")
     slot_1: PointerProperty(type=bpy.types.Object, poll=_is_camera, name="Camera 1")

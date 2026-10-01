@@ -2,7 +2,7 @@ import bpy
 from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
 from . import core
-from .operators import CAM_BRUSHES, flood_ready, is_solo
+from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
 
 
 def _draw_liquify(layout, cam):
@@ -150,13 +150,16 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # the cameras not in a slot; "shown/total" only while the coverage filter hides some
         count = str(total) if len(rest) == total else f"{len(rest)}/{total}"
         header.label(text=f"Other Cameras ({count}{removed})", icon='VIEW_CAMERA_UNSELECTED')
-        # coverage filter (how much of the object a camera must see) + measure again
+        # camera collection eye, coverage filter (how much of the object a camera must see),
+        # restore removed
         flt = header.row(align=True)
+        hidden = cameras_hidden(context, obj)
+        flt.operator("multicamproject.toggle_camera_folder", text="", depress=not hidden,
+                     icon='HIDE_ON' if hidden else 'HIDE_OFF')
         drop = flt.row(align=True)
         drop.ui_units_x = 3.2
         drop.prop(d, "coverage_filter", text="")
         flt.operator("multicamproject.restore_cameras", text="", icon='LOOP_BACK')
-        flt.operator("multicamproject.measure_coverage", text="", icon='FILE_REFRESH')
         if body and not core.measured(d):
             r = body.row()
             r.alert = True
@@ -164,12 +167,23 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         elif body and not total:
             body.label(text="No other camera - every camera seeing the object is in a slot",
                        icon='INFO')
-        elif body and not rest:
-            body.label(text="No camera passes the coverage filter", icon='INFO')
         elif body:
-            # a list widget: it scrolls itself to its active row = the soloed camera
-            body.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
-                               rows=12)
+            # a list widget: it scrolls itself to its active row = the soloed camera;
+            # up / down / resort next to it, the search under it (as in EXPORT)
+            row = body.row()
+            lst = row.column(align=True)
+            if rest:
+                lst.template_list("MULTICAMPROJECT_UL_cameras", "", d, "cameras", d, "cam_index",
+                                  rows=12)
+            else:
+                lst.label(text="No camera matches the search" if d.cam_search
+                          else "No camera passes the coverage filter", icon='INFO')
+            lst.prop(d, "cam_search", text="", icon='VIEWZOOM', placeholder="Search cameras")
+            side = row.column(align=True)
+            side.operator("multicamproject.cam_step", text="", icon='TRIA_UP').step = -1
+            side.operator("multicamproject.cam_step", text="", icon='TRIA_DOWN').step = 1
+            side.separator()
+            side.operator("multicamproject.measure_coverage", text="", icon='SORTSIZE')
 
     @staticmethod
     def _metrics(context, debug, n, margin=2.8, extra=0):
@@ -268,8 +282,11 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
 
 class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
-    """Other Cameras: the cameras not in a slot that pass the coverage filter, most coverage
-    first. Its active row is the soloed camera; clicking a name solos that camera."""
+    """Other Cameras: the cameras not in a slot that pass the coverage filter and the search,
+    most coverage first. Its active row is the soloed camera; clicking a name solos that camera."""
+
+    def draw_filter(self, context, layout):
+        pass        # the search field is drawn under the list, always open
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         if item.camera is None:
@@ -280,8 +297,8 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
         col = layout.column()
         col.active = solo or not is_solo(context, context.scene.camera)
         panel._draw_row(col, context.active_object, item, debug,
-                        panel._metrics(context, debug, core.slot_count(data), margin=4.2, extra=1),
-                        solo, removable=True)   # margin: + list frame, scrollbar
+                        panel._metrics(context, debug, core.slot_count(data), margin=6.0, extra=1),
+                        solo, removable=True)   # margin: + list frame, scrollbar, side buttons
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
@@ -289,7 +306,7 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
         pattern = self.filter_name.lower()
         flags = [self.bitflag_filter_item
                  if it.camera and it.camera not in slots and core.passes(data, it)
-                 and pattern in it.camera.name.lower() else 0
+                 and core.searched(data, it) and pattern in it.camera.name.lower() else 0
                  for it in items]
         # most coverage first (the same order as the arrow keys step through)
         order = bpy.types.UI_UL_list.sort_items_helper(

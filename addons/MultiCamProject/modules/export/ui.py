@@ -4,7 +4,7 @@ import bpy
 
 from ... import module_manager
 from ..baking import common, naming
-from ..baking.ui import draw_final_toggle
+from ..baking.ui import draw_final_toggle, draw_resolution
 from . import checks, status
 
 _ROW_STATUS = {}    # object name -> Status of the current draw (the list reads it)
@@ -36,59 +36,76 @@ def tri_text(n, unit=True):
     return f"{n}{u}"
 
 
+def stage_text(obj, st):
+    """The status line of an EXPORT object: its stage, or its first problem / warning."""
+    label = status.STAGES[st.stage][0]
+    problems = [i for i in st.issues if checks.blocking(i)]
+    warns = [i for i in st.issues if checks.soft(i)]
+    if st.stage == 'READY' and obj.multicamproject_bake.handmade:
+        label = "Ready (handmade)"
+    elif st.stage == 'PROJECTION':      # one stage, two causes: name the real one
+        label = "Decimate not applied (03)" if checks.live_decimate(obj) else "no uv_normal"
+    if st.stage == 'ISSUES' and problems:
+        label = problems[0].text
+    elif st.stage == 'WARN' and warns:
+        label = warns[0].text
+    return label
+
+
 class MULTICAMPROJECT_UL_export(bpy.types.UIList):
-    """EXPORT meshes, problems first. Clicking a row selects and frames the object."""
+    """EXPORT meshes in ## order. Clicking a row selects and frames the object.
+    [solo] [status] ENV_<prefix>. [##] <name> [hand] tris [size] [fix]"""
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname, index):
         st = _ROW_STATUS.get(item.name)
         if st is None:
             return
-        label, icon, _o = status.STAGES[st.stage]
-        outer = layout.row(align=True)
-        split = outer.split(factor=0.58, align=True)
-        row = split.row(align=True)
-        row.prop(item.multicamproject_bake, "handmade", text="")
-        row.label(text="", icon=icon)
+        from .operators import is_soloed
+        bake = item.multicamproject_bake
+        row = layout.row(align=True)
+        solo = is_soloed(context, item)
+        op = row.operator("multicamproject.export_solo", text="", depress=solo,
+                          icon='HIDE_OFF' if solo else 'HIDE_ON')
+        op.object_name = item.name
+        row.label(text="", icon=status.STAGES[st.stage][1])
         sc = naming.scheme(context.scene)
         p = naming.parse(item.name, sc) if sc else None
         if p:
-            # the part the add-on fills in, greyed; only <name> is typed (double-click)
-            fixed = naming.fixed_part(sc, p[0])
+            # the part the add-on fills in, greyed; ## and <name> are typed (double-click)
+            fixed = f"{naming.ENV}_{sc.core}."
             pre = row.row(align=True)
             pre.active = False
-            pre.ui_units_x = 0.45 * len(fixed) + 0.3
+            pre.ui_units_x = min(3.0, 0.45 * len(fixed) + 0.3)
             pre.label(text=fixed)
+            num = row.row(align=True)
+            num.ui_units_x = 2.0
+            num.prop(item, "multicamproject_export_index", text="")
             row.prop(item, "multicamproject_short_name", text="", emboss=False)
         else:
             row.prop(item, "name", text="", emboss=False)
-        problems = [i for i in st.issues if checks.blocking(i)]
-        warns = [i for i in st.issues if checks.soft(i)]
-        right = split.split(factor=0.42, align=True)
+        right = layout.row(align=True)
+        hand = right.row(align=True)
+        hand.ui_units_x = 1.1
+        hand.prop(bake, "handmade", text="", icon='VIEW_PAN', toggle=True)
         tris = right.row()
+        tris.ui_units_x = 2.2
         tris.active = False
         tris.alignment = 'RIGHT'
         tris.label(text=tri_text(checks.mesh_counts(item)[0], unit=False))
-        sub = right.row()
-        sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
-        if st.stage == 'READY' and item.multicamproject_bake.handmade:
-            label = "Ready (handmade)"
-        elif st.stage == 'PROJECTION':      # one stage, two causes: name the real one
-            label = ("Decimate not applied (03)" if checks.live_decimate(item)
-                     else "no uv_normal")
-        if st.stage == 'ISSUES' and problems:
-            label = problems[0].text
-        elif st.stage == 'WARN' and warns:
-            label = warns[0].text
-        sub.label(text=label)
+        size = right.row(align=True)
+        size.ui_units_x = 2.2
+        size.prop(bake, "tex_size", text="")
         # the fix column: one button per object that is not ready
-        fix = outer.row(align=True)
+        fix = right.row(align=True)
         fix.ui_units_x = 1.1
         if st.stage == 'READY':
             fix.label(text="", icon='CHECKMARK')
         elif st.stage == 'WARN':       # nothing to fix automatically: orange, no button
             fix.label(text="", icon='ERROR')
         else:
-            op = fix.operator("multicamproject.export_fix_object", text="", icon='TOOL_SETTINGS')
+            sub = fix.row(align=True)
+            sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
+            op = sub.operator("multicamproject.export_fix_object", text="", icon='FILE_REFRESH')
             op.object_name = item.name
 
     def filter_items(self, context, data, propname):
@@ -177,10 +194,13 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         draw_final_toggle(layout, es, "view")
         to_fix = sum(st.stage not in {'READY', 'WARN'} for st in per.values())
         files = f"{naming.fbx_name(scene)}.fbx" if es.split == 'ONE' else f"{len(objs)} FBX files"
-        row = layout.row()
+        row = layout.row(align=True)
         row.scale_y = 1.5
+        draw_resolution(row, common.settings(scene))
+        row.separator(factor=0.5)
         row.operator("multicamproject.export_fbx", icon='EXPORT',
                      text=(f"Fix {to_fix} + Export" if to_fix else "Export") + f"  ({files})")
+        row.operator("multicamproject.export_clean_export_textures", text="", icon='TRASH')
 
         header, body = layout.panel("multicamproject_export_advanced", default_closed=True)
         header.label(text="Advanced")
@@ -289,6 +309,10 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         col = layout.column(align=True)
         tris, _ng = checks.mesh_counts(obj)
         col.label(text=f"{obj.name}  ·  {tris:,} triangles", icon='MESH_DATA')
+        if st.stage not in {'ISSUES', 'WARN'}:      # those name their issue: listed below
+            r = col.row()
+            r.alert = st.stage in {'OUTDATED', 'PROJECTION'}
+            r.label(text=stage_text(obj, st), icon=status.STAGES[st.stage][1])
         for i in st.issues:
             r = col.row()
             r.alert = i.severity == checks.ERROR

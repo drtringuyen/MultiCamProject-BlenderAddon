@@ -113,7 +113,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         # 04: BA_ / BN_ from the Bake Source (the baking module's settings)
         if not baking:
             return
-        from ..baking import fingerprint, jobs, operators as bake_ops
+        from ..baking import common, fingerprint, jobs, operators as bake_ops
         if jobs.busy():
             jobs.draw(layout)
             return
@@ -121,9 +121,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         row = box.row(align=True)
         row.scale_y = 1.4
         why = bake_ops.source_poll_problem(obj)
-        # the size comes from the 1K-8K toggles in 06 (one resolution for every texture)
+        # the object's size: its own pick in the EXPORT list, or the 1K-8K dropdown in 06
         row.operator("multicamproject.bake_from_source",
-                     text=f"04. Bake from Source ({_res(s.resolution)})", icon='RENDER_STILL')
+                     text=f"04. Bake from Source ({_res(common.resolution(obj, context.scene))})",
+                     icon='RENDER_STILL')
         if why:
             sub = box.row()
             sub.alert = True

@@ -19,6 +19,15 @@ def settings(scene):
     return scene.multicamproject_bake_settings
 
 
+def resolution(obj, scene=None):
+    """The texture size `obj` bakes at: its own 1K-8K pick in the EXPORT list, or the
+    scene's resolution (A = Auto)."""
+    size = obj.multicamproject_bake.tex_size
+    if size != 'AUTO':
+        return int(size)
+    return settings(scene or bpy.context.scene).resolution
+
+
 def margin_px(s, size=None):
     """The bake margin at `size` (default: the scene's resolution); Margin is set at 8K."""
     size = size or s.resolution

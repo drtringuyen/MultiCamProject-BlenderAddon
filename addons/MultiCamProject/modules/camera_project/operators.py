@@ -859,6 +859,65 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
         return bpy.ops.multicamproject.solo_camera(camera=cams[i].name)
 
 
+class MULTICAMPROJECT_OT_CamStep(bpy.types.Operator):
+    """Solo the camera above/below the soloed one in the camera list (the first one when
+    no camera is soloed)"""
+    bl_idname = "multicamproject.cam_step"
+    bl_label = "Step Camera"
+
+    step: IntProperty(default=1, options={'HIDDEN'})
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context) and MULTICAMPROJECT_OT_SoloCamera.poll(context)
+
+    execute = MULTICAMPROJECT_OT_SoloStep.execute       # the arrow keys' step, as a button
+
+
+def camera_layers(context, obj):
+    """The layer collections (Outliner rows) holding the cameras of `obj`'s list - not the
+    scene's root."""
+    out = []
+    root = context.view_layer.layer_collection
+    colls = {c for it in core.data(obj).cameras if it.camera for c in it.camera.users_collection}
+    for c in colls:
+        path = _layer_path(root, c)
+        if path and path[-1] not in out:
+            out.append(path[-1])
+    return out
+
+
+def cameras_hidden(context, obj):
+    layers = camera_layers(context, obj)
+    return bool(layers) and all(lc.hide_viewport for lc in layers)
+
+
+class MULTICAMPROJECT_OT_ToggleCameraFolder(bpy.types.Operator):
+    """Hide / show the collection(s) holding the cameras, like the eye in the Outliner.
+    Soloing a camera still shows it"""
+    bl_idname = "multicamproject.toggle_camera_folder"
+    bl_label = "Hide / Show Camera Collection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        layers = camera_layers(context, obj)
+        if not layers:
+            self.report({'WARNING'}, "The cameras are in the scene's root collection - "
+                                     "put them in a collection to hide them at once")
+            return {'CANCELLED'}
+        hide = not cameras_hidden(context, obj)
+        for lc in layers:
+            lc.hide_viewport = hide
+        names = ", ".join(lc.name for lc in layers)
+        self.report({'INFO'}, f"{'Hidden' if hide else 'Shown'}: {names}")
+        return {'FINISHED'}
+
+
 _classes = (
     MULTICAMPROJECT_OT_Setup,
     MULTICAMPROJECT_OT_MaskFill,
@@ -873,6 +932,8 @@ _classes = (
     MULTICAMPROJECT_OT_AssignSlot,
     MULTICAMPROJECT_OT_SoloCamera,
     MULTICAMPROJECT_OT_SoloStep,
+    MULTICAMPROJECT_OT_CamStep,
+    MULTICAMPROJECT_OT_ToggleCameraFolder,
     MULTICAMPROJECT_OT_SoloAssign,
     MULTICAMPROJECT_OT_SoloFrame,
     MULTICAMPROJECT_OT_SoloRemove,

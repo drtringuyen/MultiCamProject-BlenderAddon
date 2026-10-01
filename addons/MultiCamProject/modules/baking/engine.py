@@ -530,7 +530,7 @@ def _bake_from_source(context, obj):
         raise RuntimeError(why)
     t0 = time.perf_counter()
     src = d.bake_source
-    size = s.resolution         # the one resolution: BA_ / BN_ match ALB_ / NOR_
+    size = common.resolution(obj, scene)    # one resolution: BA_ / BN_ match ALB_ / NOR_
     try:
         from ..remesh import workflow
         workflow.clear_custom_normals(obj)      # they would aim the rays anywhere
@@ -646,12 +646,13 @@ def bake_albedo_steps(context, obj):
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
+    size = common.resolution(obj, scene)
     t0 = time.perf_counter()
     name = common.alb_name(obj)
     path = common.texture_path(scene, name)
     # bake into a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
     # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves as 16-bit
-    tmp = bpy.data.images.new(TMP_IMAGE, s.resolution, s.resolution, alpha=False,
+    tmp = bpy.data.images.new(TMP_IMAGE, size, size, alpha=False,
                               float_buffer=False)
     tmp.colorspace_settings.name = 'sRGB'
     try:
@@ -660,8 +661,8 @@ def bake_albedo_steps(context, obj):
                 raise RuntimeError("Nothing to bake: no projection and no Bake from Source")
             src = d.ba_image.copy()
             try:
-                src.scale(s.resolution, s.resolution)
-                buf = np.empty(s.resolution * s.resolution * 4, dtype=np.float32)
+                src.scale(size, size)
+                buf = np.empty(size * size * 4, dtype=np.float32)
                 src.pixels.foreach_get(buf)
                 tmp.pixels.foreach_set(buf)
             finally:
@@ -675,12 +676,12 @@ def bake_albedo_steps(context, obj):
             context.view_layer.update()
             yield jobs.Step("Albedo: EEVEE render")
             with subdivided(context, obj):
-                px = uv_render(context, obj, s.resolution)
+                px = uv_render(context, obj, size)
             yield jobs.Step("Albedo: margin")
             covered = px[..., 3] > 0.0
             px[..., 3] = 1.0
             to_srgb(px[..., :3])
-            extend_margin(px, covered, common.margin_px(s))
+            extend_margin(px, covered, common.margin_px(s, size))
             del covered
             tmp.pixels.foreach_set(px.ravel())
             del px
@@ -688,7 +689,7 @@ def bake_albedo_steps(context, obj):
         _save_albedo(obj, scene, tmp, path)
     finally:
         bpy.data.images.remove(tmp)
-    d.alb_size = s.resolution
+    d.alb_size = size
     material.build(obj, scene)
     d.fingerprint = fingerprint.compute(obj)
     d.last_bake_seconds = time.perf_counter() - t0

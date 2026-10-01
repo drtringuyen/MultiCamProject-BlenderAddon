@@ -228,6 +228,14 @@ def move(objs, sc, obj, step):
     return renumber(objs, sc, ordered)
 
 
+def move_to(objs, sc, obj, index):
+    """Put `obj` at ## `index` (the ones from there on move one down), then number 00 -> n."""
+    ordered = numbered(objs, sc)
+    ordered.remove(obj)
+    ordered.insert(max(0, min(len(ordered), index)), obj)
+    return renumber(objs, sc, ordered)
+
+
 def rename_all(objs, sc=None, plan=None):
     """Rename objects (naming scheme `sc`, else clean names) and bring every MCP_/MAT_/
     ALB_/NOR_ and texture file in line with its object. `plan`: {object: name} to use

@@ -142,6 +142,7 @@ def make_uv_normal(context, obj):
     """A new uv_normal by Smart UV Project (non-overlapping, 0-1). The active and render
     UV maps stay as they were."""
     s = common.settings(context.scene)
+    res = common.resolution(obj, context.scene)
     me = obj.data
     uvs = me.uv_layers
     prev_active = uvs.active.name if uvs.active else ""
@@ -158,7 +159,7 @@ def make_uv_normal(context, obj):
                 bpy.ops.mesh.select_all(action='SELECT')
                 # margin: twice the bake margin, in UV units
                 bpy.ops.uv.smart_project(angle_limit=SMART_UV_ANGLE,
-                                         island_margin=2.0 * common.margin_px(s) / s.resolution,
+                                         island_margin=2.0 * common.margin_px(s, res) / res,
                                          area_weight=0.0, correct_aspect=True,
                                          scale_to_bounds=False)
             finally:

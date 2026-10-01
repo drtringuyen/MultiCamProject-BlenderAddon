@@ -33,7 +33,6 @@ def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
     (done, [(object name, error)])."""
     done, failed = [], []
     try:
-        res = common.settings(context.scene).resolution
         for obj in objs:
             if jobs.stop_requested():
                 jobs.skip_rest()
@@ -45,7 +44,8 @@ def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
                     raise RuntimeError("handmade - baked by hand, not by the add-on")
                 # an excluded / hidden collection bakes nothing: shown for the bake
                 with common.shown(context, [obj]):
-                    yield from _bake_one(context, obj, albedo, nor_source, res, log)
+                    yield from _bake_one(context, obj, albedo, nor_source,
+                                         common.resolution(obj, context.scene), log)
                 done.append(obj)
                 jobs.item_end(name)
             except Exception as e:      # one object failing must not stop the others
@@ -419,7 +419,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
-    """The one resolution of every baked texture (ALB_, NOR_, BA_, BN_), the whole scene"""
+    """The resolution of every baked texture (ALB_, NOR_, BA_, BN_) of the objects set to A"""
     bl_idname = "multicamproject.bake_resolution"
     bl_label = "Bake Resolution"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}

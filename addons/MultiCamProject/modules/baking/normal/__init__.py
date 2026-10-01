@@ -111,14 +111,14 @@ def generate(context, obj, source):
 
 
 def generate_steps(context, obj, source):
-    """Make NOR_<name> (detail from `source`) at the scene's resolution, save it, put it
+    """Make NOR_<name> (detail from `source`) at the object's resolution, save it, put it
     into MAT_. A generator (jobs); returns the seconds."""
     source = usable(source)
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
     was_final = final.is_final(obj)
-    size = s.resolution
+    size = common.resolution(obj, scene)
     t0 = time.perf_counter()
     try:
         yield jobs.Step(f"Normal: {LABELS[source]} from the albedo")
