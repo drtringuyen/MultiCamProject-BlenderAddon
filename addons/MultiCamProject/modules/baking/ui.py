@@ -8,10 +8,19 @@ def _res(n):
 
 
 def draw_resolution(layout, s):
-    """[1K v]: the resolution of every object set to A (Auto), a dropdown."""
+    """[1K v]: the scene's resolution - every object set to A (Auto). Only in front of
+    Export; 06 shows the object's own size (draw_object_size)."""
     sizes = layout.row(align=True)
     sizes.ui_units_x = 3
     sizes.prop(s, "resolution_menu", text="")
+
+
+def draw_object_size(layout, obj):
+    """[A v]: the object's own texture size - the same field as in the EXPORT list
+    (A = the scene's resolution, set in front of Export)."""
+    sizes = layout.row(align=True)
+    sizes.ui_units_x = 3
+    sizes.prop(common.data(obj), "tex_size", text="")
 
 
 def draw_final_toggle(layout, data, prop):
@@ -116,8 +125,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             if d.alb_size and d.nor_size != d.alb_size:
                 info.label(text="ALB and NOR sizes differ - bake again", icon='INFO')
         res = common.resolution(obj, context.scene)
-        if d.tex_size != 'AUTO':        # set in the EXPORT list: the dropdown does not apply
-            info.label(text=f"Own size {_res(res)} (EXPORT list) - not the dropdown",
+        if d.tex_size == 'AUTO':
+            info.label(text=f"Size A = {_res(res)} (the scene's, set in front of Export)",
                        icon='TEXTURE')
         if d.alb_size and d.alb_size != res:
             info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(res)}",
@@ -131,7 +140,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             for label, size, sec in others:
                 t.label(text=f"NOR {_res(size)}  ·  {label}  ·  {sec:.1f} s", icon='TIME')
 
-        self._draw_bake_button(layout, s)
+        self._draw_bake_button(layout, s, obj)
         why = normal.problem(obj, context.scene, s.nor_source)
         if (why and s.bake_what != 'ALBEDO'
                 and not (s.bake_what == 'BOTH' and why == "Bake the albedo first")):
@@ -171,15 +180,15 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                 col.label(text=t, icon='CHECKMARK')
 
     @staticmethod
-    def _draw_bake_button(layout, s):
-        """[1K v] (every object set to A), one Bake for everything the options say, the
-        bake settings' gear at its end."""
+    def _draw_bake_button(layout, s, obj):
+        """[A v] (the active object's own size), one Bake for everything the options
+        say, the bake settings' gear at its end."""
         parts = {'ALBEDO': "Albedo", 'NORMAL': "Normal", 'BOTH': "Albedo + Normal"}[s.bake_what]
         if s.bake_what != 'ALBEDO':
             parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)})"
         row = layout.row(align=True)
         row.scale_y = 1.5
-        draw_resolution(row, s)
+        draw_object_size(row, obj)
         row.separator(factor=0.5)
         row.operator("multicamproject.bake", text=f"Bake {parts}", icon='RENDER_STILL')
         row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')

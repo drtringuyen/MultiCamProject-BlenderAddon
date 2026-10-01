@@ -121,7 +121,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         row = box.row(align=True)
         row.scale_y = 1.4
         why = bake_ops.source_poll_problem(obj)
-        # the object's size: its own pick in the EXPORT list, or the 1K-8K dropdown in 06
+        # the object's size: its own pick (06 / the EXPORT list), or the scene's in front of Export
         row.operator("multicamproject.bake_from_source",
                      text=f"04. Bake from Source ({_res(common.resolution(obj, context.scene))})",
                      icon='RENDER_STILL')

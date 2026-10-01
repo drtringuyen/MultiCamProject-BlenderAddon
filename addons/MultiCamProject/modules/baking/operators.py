@@ -383,7 +383,8 @@ class MULTICAMPROJECT_OT_BakeSetupAI(bpy.types.Operator):
 
 class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
     """Bake the selected meshes with the options above: Albedo, Normal or Both, the normal
-    map with the chosen method, at the resolution of the 1K-8K toggles. Each object ends in Final"""
+    map with the chosen method, each at its own texture size (A = the scene's resolution, set in
+    front of Export). Each object ends in Final"""
     bl_idname = "multicamproject.bake"
     bl_label = "Bake"
     bl_options = {'REGISTER', 'UNDO'}

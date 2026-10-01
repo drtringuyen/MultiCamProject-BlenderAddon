@@ -20,7 +20,7 @@ def settings(scene):
 
 
 def resolution(obj, scene=None):
-    """The texture size `obj` bakes at: its own 1K-8K pick in the EXPORT list, or the
+    """The texture size `obj` bakes at: its own 1K-8K pick (06 / the EXPORT list), or the
     scene's resolution (A = Auto)."""
     size = obj.multicamproject_bake.tex_size
     if size != 'AUTO':
