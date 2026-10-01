@@ -235,23 +235,10 @@ class MULTICAMPROJECT_OT_LiquifyResize(bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
-class MULTICAMPROJECT_OT_LiquifyStroke(bpy.types.Operator):
-    """Paint with the Liquify brush (starts Liquify on the shown photo if needed)"""
-    bl_idname = "multicamproject.liquify_stroke"
-    bl_label = "Liquify Stroke"
-    bl_options = {'INTERNAL'}
-
-    invert: BoolProperty(name="Invert", description="Pucker <-> Bloat", options={'SKIP_SAVE'})
-
-    @classmethod
-    def poll(cls, context):
-        return _in_image_editor(context)
-
-    # ------------------------------------------------ helpers
-
-    def _px(self, s, event):
-        u, v = self.region.view2d.region_to_view(event.mouse_region_x, event.mouse_region_y)
-        return s.lq.uv_to_px(u, v)
+class StrokeMixin:
+    """Brush dabs shared by the Image Editor stroke and the camera-view Liquify.
+    Needs self.invert (Alt: Pucker <-> Bloat) and self.travel (distance since the last dab
+    of a brush without direction)."""
 
     def _strength(self, st, event):
         p = event.pressure if st.use_pressure and event.pressure > 0 else 1.0
@@ -294,6 +281,23 @@ class MULTICAMPROJECT_OT_LiquifyStroke(bpy.types.Operator):
             return False
         self.travel = 0.0
         return self._dab(s, st, b, strength) is not None
+
+
+class MULTICAMPROJECT_OT_LiquifyStroke(StrokeMixin, bpy.types.Operator):
+    """Paint with the Liquify brush (starts Liquify on the shown photo if needed)"""
+    bl_idname = "multicamproject.liquify_stroke"
+    bl_label = "Liquify Stroke"
+    bl_options = {'INTERNAL'}
+
+    invert: BoolProperty(name="Invert", description="Pucker <-> Bloat", options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return _in_image_editor(context)
+
+    def _px(self, s, event):
+        u, v = self.region.view2d.region_to_view(event.mouse_region_x, event.mouse_region_y)
+        return s.lq.uv_to_px(u, v)
 
     def _finish(self, context):
         if self._timer is not None:
@@ -376,11 +380,28 @@ _classes = (
 )
 
 
+_keymaps = []
+
+
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
+    # Enter bakes, Esc cancels - in any Image Editor, with any tool, while a session runs
+    # (their polls fail otherwise, so the keys keep their usual job)
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc is not None:
+        km = kc.keymaps.new(name="Image", space_type='IMAGE_EDITOR')
+        for key in ('RET', 'NUMPAD_ENTER'):
+            _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_bake", key, 'PRESS')))
+        _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_cancel", 'ESC', 'PRESS')))
 
 
 def unregister():
+    for km, kmi in _keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except (ReferenceError, RuntimeError):
+            pass
+    _keymaps.clear()
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

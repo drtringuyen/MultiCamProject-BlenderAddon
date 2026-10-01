@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Liquify in camera view (2026-10-01)
+- **Liquify button** on every camera row (Camera Project panel, next to the paint tools): solos
+  that camera and starts Liquify on its photo in the 3D Viewport - the brush paints on the
+  camera background where you see it, the projected mesh follows live. Same brushes and keys
+  (W R S P B, F / [ ], Alt, Ctrl+Z). **Enter** bakes, **Esc** cancels; leaving solo for any
+  reason (another camera, leaving camera or local view, the area closing) cancels too. Plain
+  middle mouse is blocked while it runs (orbiting would leave the camera; Shift+MMB pans).
+- The mouse -> photo mapping follows the background's Fit / Crop / Stretch, scale, offset,
+  rotation and flips, checked against Blender's drawing to < 0.5 px (offset Y is in frame
+  width / photo aspect, rotation is clockwise).
+- **Image Editor:** Enter bakes and Esc cancels a running Liquify session, with any tool.
+
 ### Fix: grey model after the Workflow v4 blend mask (2026-10-01)
 - Setups from before the VCMix alpha x VCMix2 alpha blend mask showed the No Bake grey
   everywhere when the last camera 4-6 stroke of the old design had left a few VCMix2 marker

@@ -118,6 +118,16 @@ UI/tools only register for `IMAGE_EDITOR`, so nothing shows up in the 3D Viewpor
    no session), module toggled off mid-session (cancels), editor showing another image (stroke
    refuses with a message), session ended under a running stroke (stroke stops).
 
+## Camera view (added 2026-10-01)
+Liquify button on each camera row → solo that camera → modal `multicamproject.liquify_camera`
+(`camera_op.py`) paints in the 3D Viewport. `camview.py` maps region pixels to photo UV: the
+camera frame from `view_frame` projected into the region; the photo rect from frame method and
+scale; offset X × frame width, offset Y × frame width / photo aspect; rotation clockwise.
+Validated by reading the viewport framebuffer in a POST_PIXEL handler with marker photos
+(7 configurations, < 0.5 px). Enter bakes, Esc cancels; losing solo for any reason (camera,
+camera view, local view, area, image) cancels. Testing note: the computer-use helper keeps
+Esc presses from Blender (only the release arrives), so Esc has to be checked by hand.
+
 ## Risks / notes
 - Preview aspect rounding (1024 × round(1024/aspect)) is ≤ 0.1 % → ≤ 1 px at 1K; bake uses exact size.
 - `bpy` image pixels are in the image's stored colour space; bilinear in that space matches
