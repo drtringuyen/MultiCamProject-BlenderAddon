@@ -74,7 +74,7 @@ def uv_coverage(obj):
     import numpy as np
     me = obj.data
     uv = me.uv_layers.get(UV_NORMAL)
-    if uv is None:
+    if uv is None or obj.mode == 'EDIT':     # Edit Mode: the mesh has no UV data until left
         return 0.0, 1.0
     me.calc_loop_triangles()
     nt = len(me.loop_triangles)
@@ -126,7 +126,8 @@ def image_file(img):
     """Absolute path of an image's file ('' when it has none). Never loads pixels."""
     if img is None or img.source != 'FILE' or not img.filepath:
         return ""
-    return bpy.path.abspath(img.filepath, library=img.library)
+    # normalized: a '//..\..' path can pass Windows' 260 characters while the file's own does not
+    return os.path.normpath(bpy.path.abspath(img.filepath, library=img.library))
 
 
 def file_ok(img):

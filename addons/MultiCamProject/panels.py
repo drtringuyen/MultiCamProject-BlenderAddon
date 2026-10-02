@@ -72,8 +72,8 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
 
 
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
-    """Setup: 0A / 0B / 0C in any order - each adds its part to the same object:
-    MCP_ + MAT_, the camera lists, the Bake Source, EXPORT"""
+    """Setup: 0A / 0B / 0C (or 0D) in any order - each adds its part to the same object:
+    MCP_ + MAT_, the camera lists, the Bake Source, EXPORT. 0E: new UVs for a handmade one"""
     bl_label = "Setup"
     bl_idname = "MULTICAMPROJECT_PT_setup"
     bl_space_type = 'VIEW_3D'
@@ -119,6 +119,25 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
                          icon='CHECKMARK' if low else 'MOD_REMESH')
             row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
             row.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
+            retopo = low and wf.is_retopo(obj)
+            row = col.row(align=True)
+            row.operator("multicamproject.retopo_empty", text="0D. Retopo Empty",
+                         icon='CHECKMARK' if retopo else 'MESH_PLANE')
+            row.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
+
+        hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade
+        if hand:
+            from .modules.baking import handmade
+            row = col.row(align=True)
+            if not handmade.has_uv_old(obj):
+                row.operator("multicamproject.handmade_edit_uv", text="0E. Rebake: Edit UV",
+                             icon='UV')
+            else:
+                row.operator("multicamproject.handmade_rebake", text="0E. Rebake from uv_old",
+                             icon='FILE_REFRESH')
+                row.operator("multicamproject.handmade_edit_uv", text="", icon='UV')
+                row.operator("multicamproject.handmade_finish_uv", text="", icon='CHECKMARK')
+                row.operator("multicamproject.handmade_cancel_uv", text="", icon='X')
 
         if not mesh:
             return
@@ -127,10 +146,23 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
         info.active = False
         if not cams:
             info.label(text="No camera in the scene: start with 0A", icon='INFO')
+        if hand and handmade.has_uv_old(obj):
+            warn = layout.row()
+            if obj.mode == 'EDIT':          # the mesh holds the UVs only after Edit Mode
+                warn.active = False
+                warn.label(text="Editing uv_normal - then 0E Rebake", icon='UV')
+            elif handmade.needs_rebake(obj):
+                warn.alert = True
+                warn.label(text="uv_normal changed - Rebake (or Cancel X)", icon='ERROR')
+            else:
+                warn.active = False
+                warn.label(text="Textures match uv_normal - Finish, or edit more", icon='CHECKMARK')
         parts = []
         if setup:
             parts.append(f"{len(obj.multicamproject_cam.cameras)} cameras")
         if low:
+            if wf.is_retopo(obj):
+                parts.append("retopo")
             src = obj.multicamproject_bake.bake_source
             parts.append(f"source: {src.name}" if src else "no Bake Source")
         if hasattr(obj, "multicamproject_bake"):

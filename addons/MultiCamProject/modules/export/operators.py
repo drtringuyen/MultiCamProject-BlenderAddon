@@ -575,6 +575,54 @@ def is_soloed(context, obj):
     return st is not None and st.get("obj") == obj.name
 
 
+def solo(context, obj, report=None):
+    """Solo obj and its original in local view (the original selected, obj active), or leave
+    the solo when obj is soloed already. Returns 'ON' (soloed now), 'OFF' (left) or None
+    (obj cannot be shown). A 3D view's context."""
+    report = report or (lambda *_a: None)
+    space = context.space_data
+    states = _solo_states(context)
+    key = str(space.as_pointer())
+    again = is_soloed(context, obj)
+    if space.local_view is not None:        # leave the current solo first
+        bpy.ops.view3d.localview(frame_selected=False)
+        st = states.get(key)
+        for name in (st.to_dict().get("hidden", []) if st else []):
+            o = bpy.data.objects.get(name)
+            if o is not None and context.view_layer.objects.get(name) == o:
+                o.hide_set(True)
+        if key in states:
+            del states[key]
+        if again:
+            return 'OFF'
+    vl = context.view_layer
+    orig = solo_original(obj)
+    keep, hidden = [], []
+    for o in (obj, orig):
+        if o is None:
+            continue
+        if vl.objects.get(o.name) != o:
+            report({'WARNING'}, f"'{o.name}' is in an excluded collection - not soloed")
+            continue
+        if o.hide_get():
+            o.hide_set(False)
+            hidden.append(o.name)
+        if not o.visible_get():
+            report({'WARNING'}, f"'{o.name}' is in a hidden collection - not soloed")
+            continue
+        keep.append(o)
+    if obj not in keep:
+        return None
+    for o in context.selected_objects:
+        o.select_set(False)
+    for o in keep:
+        o.select_set(True)
+    vl.objects.active = obj
+    bpy.ops.view3d.localview(frame_selected=True)
+    states[key] = {"obj": obj.name, "hidden": hidden}
+    return 'ON'
+
+
 class MULTICAMPROJECT_OT_ExportSolo(bpy.types.Operator):
     """Solo this object and its original (Bake Source / Remesh source) in local view.
     Click again to leave solo"""
@@ -591,47 +639,7 @@ class MULTICAMPROJECT_OT_ExportSolo(bpy.types.Operator):
         obj = bpy.data.objects.get(self.object_name)
         if obj is None:
             return {'CANCELLED'}
-        space = context.space_data
-        states = _solo_states(context)
-        key = str(space.as_pointer())
-        again = is_soloed(context, obj)
-        if space.local_view is not None:        # leave the current solo first
-            bpy.ops.view3d.localview(frame_selected=False)
-            st = states.get(key)
-            for name in (st.to_dict().get("hidden", []) if st else []):
-                o = bpy.data.objects.get(name)
-                if o is not None and context.view_layer.objects.get(name) == o:
-                    o.hide_set(True)
-            if key in states:
-                del states[key]
-            if again:
-                return {'FINISHED'}
-        vl = context.view_layer
-        orig = solo_original(obj)
-        keep, hidden = [], []
-        for o in (obj, orig):
-            if o is None:
-                continue
-            if vl.objects.get(o.name) != o:
-                self.report({'WARNING'}, f"'{o.name}' is in an excluded collection - not soloed")
-                continue
-            if o.hide_get():
-                o.hide_set(False)
-                hidden.append(o.name)
-            if not o.visible_get():
-                self.report({'WARNING'}, f"'{o.name}' is in a hidden collection - not soloed")
-                continue
-            keep.append(o)
-        if obj not in keep:
-            return {'CANCELLED'}
-        for o in context.selected_objects:
-            o.select_set(False)
-        for o in keep:
-            o.select_set(True)
-        vl.objects.active = obj
-        bpy.ops.view3d.localview(frame_selected=True)
-        states[key] = {"obj": obj.name, "hidden": hidden}
-        return {'FINISHED'}
+        return {'FINISHED'} if solo(context, obj, self.report) else {'CANCELLED'}
 
 
 class MULTICAMPROJECT_OT_ExportApplyDecimate(bpy.types.Operator):

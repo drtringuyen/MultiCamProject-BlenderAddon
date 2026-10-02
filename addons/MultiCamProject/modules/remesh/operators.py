@@ -6,6 +6,7 @@ from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
 
+from ... import module_manager
 from . import core, cutter, marks, tool, workflow as wf
 
 _SAMPLES = 12           # interior rays per axis for the cut depth
@@ -206,19 +207,7 @@ class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        if obj is None or obj.type != 'MESH' or obj.library:
-            return False
-        if wf.is_copy(obj):
-            cls.poll_message_set("Already a Remesh copy")
-            return False
-        if obj.name.endswith(wf.ORIGINAL_SUFFIX) or wf.is_original(obj):
-            cls.poll_message_set("This is a Remesh original")
-            return False
-        if wf.is_handmade(obj):
-            cls.poll_message_set(wf.HANDMADE_TEXT)
-            return False
-        return True
+        return _remesh_poll(cls, context)
 
     def execute(self, context):
         obj = context.active_object
@@ -229,6 +218,126 @@ class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
             self.report({'WARNING'}, w)
         _enter_tool(context, copy)
         self.report({'INFO'}, f"'{copy.name}' is the Remesh copy, '{obj.name}' the high poly")
+        return {'FINISHED'}
+
+
+def _remesh_poll(cls, context):
+    """0C / 0D: a mesh that is not a Remesh copy, an original or handmade."""
+    obj = context.active_object
+    if obj is None or obj.type != 'MESH' or obj.library:
+        return False
+    if wf.is_copy(obj):
+        cls.poll_message_set("Already a Remesh copy")
+        return False
+    if obj.name.endswith(wf.ORIGINAL_SUFFIX) or wf.is_original(obj):
+        cls.poll_message_set("This is a Remesh original")
+        return False
+    if wf.is_handmade(obj):
+        cls.poll_message_set(wf.HANDMADE_TEXT)
+        return False
+    return True
+
+
+def _retopo_snapping(context):
+    """Snap moved vertices onto the original's surface (Face Project, not onto itself) and
+    the Retopology overlay (the new mesh drawn in front of the scan)."""
+    ts = context.scene.tool_settings
+    ts.use_snap = True
+    ts.snap_elements = {'FACE', 'FACE_PROJECT'}  # (base / individual set apart clear each other)
+    ts.use_snap_self = False
+    ts.use_snap_nonedit = True
+    ts.snap_target = 'CLOSEST'
+    space = context.space_data
+    if space is not None and space.type == 'VIEW_3D':
+        space.overlay.show_retopology = True
+
+
+def _bring_in(context, obj):
+    """obj in the view layer when its collection is excluded (e.g. "Original Mesh" kept out
+    of the way): the collections are included again, everything else that comes in with
+    them is hidden. Returns True when something changed."""
+    vl = context.view_layer
+    if vl.objects.get(obj.name) == obj or not module_manager.is_loaded("baking"):
+        return False
+    from ..baking import common
+    before = set(vl.objects)
+    colls = common._colls_holding(vl, {obj})
+    for c in reversed(colls):                   # parents first
+        lc = common._layer_coll(vl, c)
+        if lc.exclude:
+            lc.exclude = False
+    for c in colls:
+        common._layer_coll(vl, c).hide_viewport = False
+    vl.update()
+    for o in vl.objects:
+        if o not in before:
+            o.hide_set(True)        # obj too: the solo shows it and hides it again when left
+    return True
+
+
+def focus_retopo(context, obj, report=None):
+    """Local view on obj + its original (the original selected, obj active), then Edit Mode on
+    obj alone - the scan never enters Edit Mode. Snapping per the 0D option."""
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    orig = wf.bake_source_of(obj)
+    if orig is not None and _bring_in(context, orig) and report:
+        report({'INFO'}, f"'{orig.name}': its collection is included again (the rest of it "
+                         "hidden)")
+    in_view = context.area is not None and context.area.type == 'VIEW_3D'
+    if in_view and module_manager.is_loaded("export"):
+        from ..export import operators as export_ops
+        if not export_ops.is_soloed(context, obj):
+            export_ops.solo(context, obj, report)
+    if context.scene.multicamproject_retopo_snap:
+        _retopo_snapping(context)
+    for o in context.selected_objects:
+        o.select_set(False)
+    context.view_layer.objects.active = obj
+    obj.select_set(True)
+    bpy.ops.object.mode_set(mode='EDIT')        # only the selected meshes enter Edit Mode
+    if orig is not None and orig.visible_get():
+        orig.select_set(True)                   # selected (outlined), not in Edit Mode
+
+
+class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
+    """0D Retopo Empty: as 0C Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
+    but the new object starts as one plane (uv_normal 0-1) to model by hand on the original.
+    Then both in local view and Edit Mode on the new object"""
+    bl_idname = "multicamproject.retopo_empty"
+    bl_label = "Retopo Empty"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _remesh_poll(cls, context)
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        new, warnings = wf.make_copy(context, obj, retopo=True)
+        for w in warnings:
+            self.report({'WARNING'}, w)
+        focus_retopo(context, new, self.report)
+        self.report({'INFO'}, f"'{new.name}' is the retopo, '{obj.name}' the high poly")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_RetopoFocus(bpy.types.Operator):
+    """Retopo again: the retopo and its original in local view, Edit Mode on the retopo"""
+    bl_idname = "multicamproject.retopo_focus"
+    bl_label = "Retopo"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH' and not obj.library
+                and wf.bake_source_of(obj) is not None)
+
+    def execute(self, context):
+        focus_retopo(context, context.active_object, self.report)
         return {'FINISHED'}
 
 
@@ -616,7 +725,8 @@ _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
             MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap,
-            MULTICAMPROJECT_OT_ResetObject)
+            MULTICAMPROJECT_OT_ResetObject, MULTICAMPROJECT_OT_RetopoEmpty,
+            MULTICAMPROJECT_OT_RetopoFocus)
 
 
 def _face_menu(self, context):
@@ -627,12 +737,17 @@ def _face_menu(self, context):
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
+        name="Retopo Snapping", default=True,
+        description="0D: snap to the original's surface (Face Project) and the Retopology "
+                    "overlay - changes the scene's snapping settings")
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(_face_menu)
     bpy.types.VIEW3D_MT_edit_mesh_faces.append(_face_menu)
     core.register()
 
 
 def unregister():
+    del bpy.types.Scene.multicamproject_retopo_snap
     core.unregister()
     bpy.types.VIEW3D_MT_edit_mesh_faces.remove(_face_menu)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_face_menu)

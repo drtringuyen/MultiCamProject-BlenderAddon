@@ -41,54 +41,65 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             cage.ui_units_x = 4.5
             cage.prop(s, "cage_extrusion", text="Cage")
 
-        # 01 / 02: the PolyCut tool and Set Faces
-        col = layout.column(align=True)
-        col.scale_y = 1.25
-        in_mesh_mode = context.mode in {'SCULPT', 'EDIT_MESH'}
-        # PolyCut is a Sculpt Mode tool; Edit Mode keeps Blender's own L (Select Linked)
-        active = (context.workspace.tools.from_space_view3d_mode('SCULPT', create=False)
-                  if context.mode == 'SCULPT' else None)
-        on_tool = active is not None and active.idname == tool.tool_id()
-        row = col.row(align=True)
-        if not on_tool:
-            row.operator("multicamproject.remesh_enter_tool",
-                         text="01. Poly Cut & Seams (Sculpt: Ctrl+Click, L)", icon='SCULPTMODE_HLT')
+        retopo = wf.is_retopo(obj)
+        if retopo:
+            # 0D: modelled by hand on the original - no PolyCut / Decimate
+            col = layout.column(align=True)
+            col.scale_y = 1.25
+            col.operator("multicamproject.retopo_focus", text="Retopo (local view + Edit Mode)",
+                         icon='EDITMODE_HLT')
         else:
-            row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
-        # the decimate brush: Blender's Density brush, which only works with Dyntopo
-        # [Dyntopo detail] [Decimate Brush] [Dyntopo toggle]: the detail field follows the
-        # Detailing method (Relative: pixels, Constant / Manual: resolution, Brush: percent)
-        row = col.row(align=True)
-        ts = context.tool_settings.sculpt
-        brush = ts.brush if context.mode == 'SCULPT' else None
-        on_density = brush is not None and getattr(brush, "sculpt_brush_type", "") == 'SIMPLIFY'
-        dyn = obj.use_dynamic_topology_sculpting
-        det = row.row(align=True)
-        det.ui_units_x = 4.5
-        prop = {'CONSTANT': "constant_detail_resolution", 'MANUAL': "constant_detail_resolution",
-                'BRUSH': "detail_percent"}.get(ts.detail_type_method, "detail_size")
-        det.prop(ts, prop, text="")
-        row.operator("multicamproject.remesh_density_brush",
-                     text="Decimate Brush" + ("  ·  active" if on_density and dyn else ""),
-                     icon='MOD_DECIM', depress=on_density and dyn)
-        if context.mode == 'SCULPT':
-            tog = row.row(align=True)
-            tog.alert = on_density and not dyn          # the brush does nothing without it
-            tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
-                         depress=dyn)
-        row = col.row(align=True)
-        sub = row.row(align=True)
-        sub.enabled = in_mesh_mode
-        sub.operator("multicamproject.remesh_set_faces",
-                     text="02. Select & Set (L)" if context.mode != 'EDIT_MESH'
-                     else "02. Set Selected Faces", icon='FACESEL')
-        row.operator("multicamproject.remesh_set_faces", text="",
-                     icon='FACE_MAPS').action = 'CLEAR_FACE_SETS'
+            # 01 / 02: the PolyCut tool and Set Faces
+            col = layout.column(align=True)
+            col.scale_y = 1.25
+            in_mesh_mode = context.mode in {'SCULPT', 'EDIT_MESH'}
+            # PolyCut is a Sculpt Mode tool; Edit Mode keeps Blender's own L (Select Linked)
+            active = (context.workspace.tools.from_space_view3d_mode('SCULPT', create=False)
+                      if context.mode == 'SCULPT' else None)
+            on_tool = active is not None and active.idname == tool.tool_id()
+            row = col.row(align=True)
+            if not on_tool:
+                row.operator("multicamproject.remesh_enter_tool",
+                             text="01. Poly Cut & Seams (Sculpt: Ctrl+Click, L)", icon='SCULPTMODE_HLT')
+            else:
+                row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
+            # the decimate brush: Blender's Density brush, which only works with Dyntopo
+            # [Dyntopo detail] [Decimate Brush] [Dyntopo toggle]: the detail field follows the
+            # Detailing method (Relative: pixels, Constant / Manual: resolution, Brush: percent)
+            row = col.row(align=True)
+            ts = context.tool_settings.sculpt
+            brush = ts.brush if context.mode == 'SCULPT' else None
+            on_density = brush is not None and getattr(brush, "sculpt_brush_type", "") == 'SIMPLIFY'
+            dyn = obj.use_dynamic_topology_sculpting
+            det = row.row(align=True)
+            det.ui_units_x = 4.5
+            prop = {'CONSTANT': "constant_detail_resolution", 'MANUAL': "constant_detail_resolution",
+                    'BRUSH': "detail_percent"}.get(ts.detail_type_method, "detail_size")
+            det.prop(ts, prop, text="")
+            row.operator("multicamproject.remesh_density_brush",
+                         text="Decimate Brush" + ("  ·  active" if on_density and dyn else ""),
+                         icon='MOD_DECIM', depress=on_density and dyn)
+            if context.mode == 'SCULPT':
+                tog = row.row(align=True)
+                tog.alert = on_density and not dyn          # the brush does nothing without it
+                tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
+                             depress=dyn)
+            row = col.row(align=True)
+            sub = row.row(align=True)
+            sub.enabled = in_mesh_mode
+            sub.operator("multicamproject.remesh_set_faces",
+                         text="02. Select & Set (L)" if context.mode != 'EDIT_MESH'
+                         else "02. Set Selected Faces", icon='FACESEL')
+            row.operator("multicamproject.remesh_set_faces", text="",
+                         icon='FACE_MAPS').action = 'CLEAR_FACE_SETS'
 
         # 03: one Decimate (vg_Protect keeps parts), applied before the unwrap
         box = layout.box().column(align=True)
         dec = wf.decimate_modifier(obj)
-        if dec is not None:
+        if retopo and dec is None:
+            box.label(text=f"03. Retopo: {len(obj.data.polygons):,} faces (no Decimate)",
+                      icon='MESH_PLANE')
+        elif dec is not None:
             row = box.row(align=True)
             row.prop(dec, "show_viewport", text="", emboss=False)
             row.prop(dec, "ratio", text="03. Decimate amount")

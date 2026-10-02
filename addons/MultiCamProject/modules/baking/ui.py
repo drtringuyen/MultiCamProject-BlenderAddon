@@ -82,6 +82,9 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
         draw_final_toggle(top, obj, "multicamproject_view")
         self._draw_materials(top, obj)
+        if d.handmade:
+            self._draw_handmade(context, layout, top, obj)
+            return
         if not common.has_uv_normal(obj):
             box = top.box()
             box.alert = True
@@ -178,6 +181,34 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             col.active = False
             for t in done[:4]:
                 col.label(text=t, icon='CHECKMARK')
+
+    @staticmethod
+    def _draw_handmade(context, layout, top, obj):
+        """Handmade: nothing is baked from the projection; after 0E Edit UV, Bake carries
+        ALB_ + NOR_ over from uv_old (always both: they share one layout)."""
+        from . import handmade
+        box = top.box().column(align=True)
+        if not handmade.has_uv_old(obj):
+            box.label(text="Handmade - baked by hand", icon='INFO')
+            box.label(text="New UVs: 0E Rebake: Edit UV (Setup)")
+            return
+        if obj.mode == 'EDIT':
+            box.label(text="Editing uv_normal - Bake rebakes from uv_old", icon='UV')
+        elif handmade.needs_rebake(obj):
+            box.alert = True
+            box.label(text="uv_normal changed - rebake ALB_ + NOR_", icon='ERROR')
+        else:
+            box.label(text="ALB_ + NOR_ match uv_normal - Finish in Setup (0E)",
+                      icon='CHECKMARK')
+        row = layout.row(align=True)
+        row.scale_y = 1.5
+        draw_object_size(row, obj)
+        row.separator(factor=0.5)
+        row.operator("multicamproject.bake", text="Rebake from uv_old (Albedo + Normal)",
+                     icon='FILE_REFRESH')
+        why = handmade.rebake_problem(obj)
+        if why and obj.mode != 'EDIT':
+            layout.label(text=why, icon='ERROR')
 
     @staticmethod
     def _draw_bake_button(layout, s, obj):

@@ -40,6 +40,12 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     # handmade Rebake: the textures as painted on uv_old (files in <bake folder>/_previous)
     prev_alb: PointerProperty(type=bpy.types.Image, name="Previous Albedo")
     prev_nor: PointerProperty(type=bpy.types.Image, name="Previous Normal")
+    uv_rebaked: StringProperty(description="uv_normal when ALB_ / NOR_ last matched it (Edit UV "
+                                           "or a Rebake): another one means Rebake first")
+    rebaked: BoolProperty(description="A Rebake wrote ALB_ / NOR_ since Edit UV (Cancel puts "
+                                      "the _previous files back)")
+    retopo: BoolProperty(description="Made by 0D Retopo Empty: modelled by hand on top of the "
+                                     "original, no Decimate")
     # baked from the Bake Source (04): packed work textures under the projection, never
     # exported - BA_<name> (albedo) and BN_<name> (normal), overwritten on every bake
     ba_image: PointerProperty(type=bpy.types.Image, name="Baked Albedo",

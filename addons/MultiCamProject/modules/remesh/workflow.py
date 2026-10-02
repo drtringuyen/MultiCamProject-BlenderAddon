@@ -48,8 +48,8 @@ def is_original(obj):
     return obj is not None and any(source_of(o) == obj for o in bpy.data.objects)
 
 
-HANDMADE_TEXT = ("Handmade - change its UVs with Edit UV / Rebake under the EXPORT list "
-                 "(Remesh would leave nothing to bake from)")
+HANDMADE_TEXT = ("Handmade - change its UVs with 0E Rebake (Remesh / Retopo would leave "
+                 "nothing to bake from)")
 
 
 def is_handmade(obj):
@@ -372,8 +372,43 @@ def _export_collection(scene):
     return fixes.ensure_export_collection(scene)
 
 
-def make_copy(context, obj):
-    """The Remesh button. Returns (copy, warnings). Object Mode only."""
+def retopo_plane(obj, name):
+    """0D's start: one quad over obj's bounds (local X/Y) at their bottom (where the export
+    wants the origin), its uv_normal filling 0-1, every material slot of obj."""
+    me = obj.data
+    n = len(me.vertices)
+    if n:
+        co = np.empty(n * 3, np.float32)
+        me.vertices.foreach_get("co", co)
+        co = co.reshape(n, 3)
+        lo, hi = co.min(0), co.max(0)
+    else:
+        lo, hi = np.array((-1.0, -1.0, 0.0)), np.array((1.0, 1.0, 0.0))
+    c = (lo + hi) / 2
+    c[2] = lo[2]
+    hx, hy = max((hi[0] - lo[0]) / 2, 0.01), max((hi[1] - lo[1]) / 2, 0.01)
+    plane = bpy.data.meshes.new(name)
+    plane.from_pydata([(c[0] - hx, c[1] - hy, c[2]), (c[0] + hx, c[1] - hy, c[2]),
+                       (c[0] + hx, c[1] + hy, c[2]), (c[0] - hx, c[1] + hy, c[2])],
+                      [], [(0, 1, 2, 3)])
+    uv = plane.uv_layers.new(name=cp.UV_NORMAL)
+    for loop, xy in zip(uv.uv, ((0, 0), (1, 0), (1, 1), (0, 1))):
+        loop.vector = xy
+    for m in me.materials:
+        plane.materials.append(m)
+    plane.update()
+    return plane
+
+
+def is_retopo(obj):
+    d = getattr(obj, "multicamproject_bake", None)
+    return bool(d is not None and d.retopo)
+
+
+def make_copy(context, obj, retopo=False):
+    """The Remesh button (0C), or with `retopo` 0D Retopo Empty: the same, but the copy gets
+    a plane (retopo_plane) instead of the scan's mesh, and no Decimate. Returns (copy,
+    warnings). Object Mode only."""
     if is_handmade(obj):
         raise RuntimeError(HANDMADE_TEXT)
     scene = context.scene
@@ -386,7 +421,7 @@ def make_copy(context, obj):
     collections = [c for c in obj.users_collection if c != orig_coll]
 
     copy = obj.copy()                   # a full copy: a cut must never touch the original
-    copy.data = obj.data.copy()
+    copy.data = retopo_plane(obj, mesh_name) if retopo else obj.data.copy()
     # plain renames (not export's rename_object): MCP_/MAT_/ALB_/NOR_ keep their names and
     # belong to the copy, which takes the original name
     obj.name = name + ORIGINAL_SUFFIX
@@ -417,10 +452,17 @@ def make_copy(context, obj):
         o.select_set(False)
     context.view_layer.objects.active = copy
     copy.select_set(True)
-    obj.hide_set(True)
+    if context.view_layer.objects.get(obj.name) == obj:
+        obj.hide_set(True)              # (not when "Original Mesh" is excluded)
 
-    ensure_stack(copy)
-    clear_custom_normals(copy)
+    if retopo:
+        copy.multicamproject_bake.retopo = True
+        copy.vertex_groups.clear()      # the scan's groups: no weights on the plane
+        for m in [m for m in copy.modifiers if m.type != 'NODES']:
+            copy.modifiers.remove(m)    # Decimate / Snap / bake helpers: not for a retopo
+    else:
+        ensure_stack(copy)
+        clear_custom_normals(copy)
     if module_manager.is_loaded("camera_project") and was_setup:
         warnings += cp.setup(copy, scene)       # 0B came first: the copy projects too
     if module_manager.is_loaded("baking"):

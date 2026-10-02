@@ -212,6 +212,8 @@ def _uv_stats(obj):
 
 
 def uv_stats(obj):
+    if obj.mode == 'EDIT':          # no UV data in the mesh until Edit Mode is left
+        return 0.0, 0.0
     return cache.get(obj, "uv_stats", _uv_stats)
 
 
@@ -393,6 +395,12 @@ def check_handmade(obj):
                              "again to write one)", ERROR))
     if d.nor_image is not None and d.nor_image.colorspace_settings.name != 'Non-Color':
         out.append(Issue(obj.name, 'TEXTURE', "NOR is not Non-Color", WARNING))
+    from ..baking import handmade
+    if handmade.needs_rebake(obj):
+        out.append(Issue(obj.name, 'HANDMADE', "uv_normal changed, the textures did not - "
+                         "0E Rebake (or Cancel the UV edit)", WARNING))
+    elif handmade.has_uv_old(obj):
+        out.append(Issue(obj.name, 'HANDMADE', "UV edit still open - 0E Finish", INFO))
     if obj.data.uv_layers.get(common.UV_NORMAL) is None:
         out.append(Issue(obj.name, 'HANDMADE', "no uv_normal - rename the textures' UV map to "
                          "uv_normal", ERROR))

@@ -193,6 +193,26 @@ def has_uv_old(obj):
     return obj.type == 'MESH' and obj.data.uv_layers.get(UV_OLD) is not None
 
 
+def uv_state(obj):
+    """A checksum of uv_normal (the layout ALB_ / NOR_ have to be on)."""
+    from .fingerprint import _vec_checksum
+    attr = obj.data.attributes.get(common.UV_NORMAL)
+    return f"{len(obj.data.loops)}/{_vec_checksum(attr, 2)}" if attr is not None else ""
+
+
+def needs_rebake(obj):
+    """uv_normal changed since ALB_ / NOR_ last matched it (only during a UV edit). Unknown in
+    Edit Mode (the UVs reach the mesh when it is left): False, the operators check again."""
+    return has_uv_old(obj) and obj.mode != 'EDIT' and common.data(obj).uv_rebaked != uv_state(obj)
+
+
+def finish_problem(obj):
+    """Why Finish would leave the textures on the wrong layout ('' = it can finish)."""
+    if needs_rebake(obj):
+        return "uv_normal changed since the textures were made - Rebake first (or Cancel)"
+    return ""
+
+
 def _same_file(a, b):
     pa, pb = common.image_file(a), common.image_file(b)
     return bool(pa and pb) and os.path.normcase(os.path.abspath(pa)) == os.path.normcase(
@@ -271,6 +291,8 @@ def start_uv_edit(obj, scene):
         raise RuntimeError("No room for another UV map (8 at most)")
     uvs.active = uvs[common.UV_NORMAL] if active is None else active
     uvs[common.UV_NORMAL].active_render = True
+    d.uv_rebaked = uv_state(obj)        # the textures are on this layout
+    d.rebaked = False
     from . import gn_final
     if gn_final.get_modifier(obj) is not None:
         gn_final.write_inputs(obj, scene)           # Final drops uv_old
@@ -284,9 +306,43 @@ def finish_uv_edit(obj, scene):
         obj.data.uv_layers.remove(uv)
     d = common.data(obj)
     d.prev_alb = d.prev_nor = None
+    d.uv_rebaked = ""
+    d.rebaked = False
     from . import gn_final
     if gn_final.get_modifier(obj) is not None:
         gn_final.write_inputs(obj, scene)
+
+
+def cancel_uv_edit(obj, scene):
+    """Back to before Edit UV: uv_old goes back into uv_normal and, when a Rebake already
+    wrote ALB_ / NOR_, the _previous copies are put back into their files. Then as Finish.
+    Returns notes."""
+    import shutil
+    notes = []
+    uvs = obj.data.uv_layers
+    old, new = uvs.get(UV_OLD), uvs.get(common.UV_NORMAL)
+    if old is None:
+        return notes
+    if new is not None:
+        import numpy as np
+        buf = np.empty(len(obj.data.loops) * 2, np.float32)
+        old.uv.foreach_get("vector", buf)
+        new.uv.foreach_set("vector", buf)
+        notes.append("uv_normal back to uv_old")
+    d = common.data(obj)
+    if d.rebaked:
+        for img, prev in ((d.alb_image, d.prev_alb), (d.nor_image, d.prev_nor)):
+            dst, src = common.image_file(img), common.image_file(prev)
+            if img is None or not (src and dst and os.path.isfile(src)):
+                continue
+            shutil.copy2(src, dst)
+            _reload_file(dst)
+            notes.append(f"{os.path.basename(dst)} back from _previous")
+        from . import cache
+        cache.clear(obj)
+    obj.data.update()
+    finish_uv_edit(obj, scene)
+    return notes
 
 
 def rebake_problem(obj):
@@ -303,7 +359,7 @@ def rebake_problem(obj):
     if d.nor_image is not None and not os.path.isfile(common.image_file(d.nor_image)):
         return "NOR_ has no file - tick Handmade again"
     if d.prev_alb is None or not os.path.isfile(common.image_file(d.prev_alb)):
-        return "The old textures are gone from _previous - Finish, then Edit UV again"
+        return "The old textures are gone from _previous - Cancel the UV edit, then Edit UV again"
     return shown_mismatch(obj) or common.uv_collapsed_text(obj)
 
 
@@ -518,6 +574,8 @@ def rebake_steps(context, obj):
         bpy.data.materials.remove(mat)
         if gn_final.get_modifier(obj) is not None and gn_final.is_final(obj) != was_final:
             gn_final.set_final(obj, scene, was_final)
+    d.uv_rebaked = uv_state(obj)        # Finish may go now
+    d.rebaked = True
     owned.record_used(scene)
     copied = _to_export_textures(obj, scene)
     if copied:

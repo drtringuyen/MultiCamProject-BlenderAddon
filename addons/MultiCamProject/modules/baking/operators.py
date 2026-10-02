@@ -20,6 +20,28 @@ def _object_mode(context):
     return context.mode == 'OBJECT' and not jobs.busy()
 
 
+def _object_or_edit(context):
+    """Object Mode, or Edit Mode (the operator leaves it itself: after a UV edit the
+    Rebake must not be a greyed-out button)."""
+    return context.mode in {'OBJECT', 'EDIT_MESH'} and not jobs.busy()
+
+
+def _to_object_mode(context):
+    if context.mode != 'OBJECT' and context.active_object is not None:
+        bpy.ops.object.mode_set(mode='OBJECT')
+
+
+def _split_handmade(context):
+    """(handmade meshes in a UV edit, the meshes 06 bakes). A handmade mesh without
+    uv_old has nothing to bake (its textures are on uv_normal already): left out."""
+    objs = common.selected_meshes(context)
+    obj = context.active_object
+    if obj is not None and obj.type == 'MESH' and obj not in objs:
+        objs.append(obj)
+    hand = [o for o in objs if handmade.is_handmade(o) and handmade.has_uv_old(o)]
+    return hand, [o for o in objs if not handmade.is_handmade(o)]
+
+
 def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
     """bake_objects_steps, blocking."""
     return jobs.run_sync(bake_objects_steps(context, objs, albedo, nor_source, log))
@@ -394,12 +416,17 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_mode(context):
+        if not _object_or_edit(context):
             return False
-        objs = common.selected_meshes(context)
-        if not objs:
-            cls.poll_message_set("Select meshes")
+        hand, objs = _split_handmade(context)
+        if not objs and not hand:
+            cls.poll_message_set("Select meshes (a handmade one: 0E Edit UV first)")
             return False
+        for o in hand:
+            why = handmade.rebake_problem(o)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
         s = common.settings(context.scene)
         if s.bake_what in {'ALBEDO', 'BOTH'}:
             missing = [o.name for o in objs if not common.has_uv_normal(o)]
@@ -415,11 +442,26 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        _to_object_mode(context)
         s = common.settings(context.scene)
-        objs = common.selected_meshes(context)
+        hand, objs = _split_handmade(context)
         albedo = s.bake_what in {'ALBEDO', 'BOTH'}
         src = s.nor_source if s.bake_what in {'NORMAL', 'BOTH'} else None
-        return _start_bake(self, context, "Bake", objs, albedo, src, "Baked")
+        if not hand:
+            return _start_bake(self, context, "Bake", objs, albedo, src, "Baked")
+        # handmade: ALB_ + NOR_ carried over from uv_old (always both: one layout)
+        log = []
+
+        def steps():
+            done, failed = yield from _rebake_steps(context, hand)
+            if objs:
+                d2, f2 = yield from bake_objects_steps(context, objs, albedo, src,
+                                                       log=lambda t: log.append(t))
+                done, failed = done + d2, failed + f2
+            return done, failed
+        finish = _finisher("Baked / rebaked", len(hand) + len(objs))
+        return jobs.start(self, context, "Bake", [o.name for o in hand + objs], steps(),
+                          lambda r, e: [('INFO', t) for t in log] + finish(r, e))
 
 
 class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
@@ -512,8 +554,7 @@ class MULTICAMPROJECT_OT_HandmadeRebake(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_mode(context):
-            cls.poll_message_set("Object Mode only")
+        if not _object_or_edit(context):
             return False
         objs = _handmade_selected(context, need_old=True)
         if not objs:
@@ -527,7 +568,13 @@ class MULTICAMPROJECT_OT_HandmadeRebake(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        _to_object_mode(context)        # writes the UV edit into the mesh
         objs = _handmade_selected(context, need_old=True)
+        for o in objs:
+            why = handmade.rebake_problem(o)
+            if why:
+                self.report({'ERROR'}, f"{o.name}: {why}")
+                return {'CANCELLED'}
         return jobs.start(self, context, "Rebake", [o.name for o in objs],
                           _rebake_steps(context, objs), _finisher("Rebaked", len(objs)))
 
@@ -541,11 +588,57 @@ class MULTICAMPROJECT_OT_HandmadeFinishUV(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _object_mode(context) and bool(_handmade_selected(context, need_old=True))
+        if not _object_or_edit(context):
+            return False
+        objs = _handmade_selected(context, need_old=True)
+        if not objs:
+            return False
+        for o in objs:
+            why = handmade.finish_problem(o)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
+        return True
 
     def execute(self, context):
-        for o in _handmade_selected(context, need_old=True):
+        _to_object_mode(context)
+        objs = _handmade_selected(context, need_old=True)
+        for o in objs:
+            why = handmade.finish_problem(o)       # a UV change made in Edit Mode just now
+            if why:
+                self.report({'ERROR'}, f"{o.name}: {why}")
+                return {'CANCELLED'}
+        for o in objs:
             handmade.finish_uv_edit(o, context.scene)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_HandmadeCancelUV(bpy.types.Operator):
+    """Handmade: give up the UV edit - uv_normal goes back to uv_old and, if a Rebake
+    already wrote ALB_ / NOR_, the copies in _previous are put back into those files"""
+    bl_idname = "multicamproject.handmade_cancel_uv"
+    bl_label = "Cancel UV Edit"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _object_or_edit(context) and bool(_handmade_selected(context, need_old=True))
+
+    def invoke(self, context, event):
+        objs = _handmade_selected(context, need_old=True)
+        files = any(common.data(o).rebaked for o in objs)
+        return context.window_manager.invoke_confirm(
+            self, event, title="Cancel the UV edit?",
+            message="uv_normal goes back to uv_old"
+                    + (" and ALB_ / NOR_ get their _previous files back (Ctrl+Z does not "
+                       "bring the files back)." if files else "."),
+            confirm_text="Cancel UV Edit", icon='WARNING')
+
+    def execute(self, context):
+        _to_object_mode(context)
+        for o in _handmade_selected(context, need_old=True):
+            for n in handmade.cancel_uv_edit(o, context.scene):
+                self.report({'INFO'}, f"{o.name}: {n}")
         return {'FINISHED'}
 
 
@@ -598,7 +691,8 @@ _classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAM
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
             MULTICAMPROJECT_OT_MaterialRefresh, MULTICAMPROJECT_OT_HandmadeEditUV,
-            MULTICAMPROJECT_OT_HandmadeRebake, MULTICAMPROJECT_OT_HandmadeFinishUV)
+            MULTICAMPROJECT_OT_HandmadeRebake, MULTICAMPROJECT_OT_HandmadeFinishUV,
+            MULTICAMPROJECT_OT_HandmadeCancelUV)
 
 
 def register():
