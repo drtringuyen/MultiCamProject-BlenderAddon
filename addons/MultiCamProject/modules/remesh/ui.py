@@ -32,7 +32,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         d = obj.multicamproject_bake
         baking = module_manager.is_loaded("baking")
         s = context.scene.multicamproject_bake_settings if baking else None
-        in_work = workfile.is_work_file(context.scene)
+        in_work = workfile.is_work_window(context.scene)
         if in_work:
             workfile.draw_work(layout, context)
         else:
@@ -126,9 +126,8 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.label(text="Snap to Source (vg_Snap)", icon='MOD_SHRINKWRAP')
             row.operator("multicamproject.remesh_snap", text="", icon='X').on = False
 
-        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings) - not in a
-        # work file, which only models
-        if not baking or in_work:
+        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings)
+        if not baking:
             return
         from ..baking import common, fingerprint, jobs, operators as bake_ops
         if jobs.busy():

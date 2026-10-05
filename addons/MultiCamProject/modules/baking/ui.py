@@ -72,10 +72,6 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     bl_parent_id = "MULTICAMPROJECT_PT_main"
     bl_order = 3
 
-    @classmethod
-    def poll(cls, context):
-        return not context.scene.get("multicamproject_work_of")     # a Remesh work file
-
     def draw_header(self, context):
         self.layout.label(icon='RENDER_STILL')
 

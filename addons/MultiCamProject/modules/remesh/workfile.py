@@ -1,22 +1,24 @@
-"""Work Window: model a Remesh / Retopo low poly in a second Blender, then bring back only
-its mesh. Nothing is saved: the second Blender's file stays untitled.
+"""Work Window: send one object out of the main file into a second, unsaved Blender -
+with its whole setup (MCP_ / MAT_, GN, its cameras and photos, its Bake Source) - model,
+paint VCMix and bake there, then receive only its mesh and bakes back.
 
-Main file   -> Open in Work Window: a plain copy of the low poly (its Decimate / Snap,
-               vertex groups, UVs, face sets) and of its original - transforms applied, no
-               parent, no materials, no add-on links - opens in a new, unsaved Blender. The
-               main file is not changed.
-Work window -> Send Mesh: the low poly as you see it (modifiers applied) with uv_normal and
-               seams only, to Blender's clipboard (Ctrl+V pastes it) and to the hand-off
-               folder (the Paste button).
-Main file   -> Paste (or Ctrl+V), then Replace Mesh (the object keeps its name, materials,
-               cameras and bake settings; Decimate and Snap go, as Apply would) or Add to
-               Mesh (a join; a live Decimate leaves the added part alone).
-Nothing else travels: cameras, materials, textures and settings stay in the main file. The
-two Blenders hand over through <temp>/mcp_workfile (the way Ctrl+C / Ctrl+V does).
+Main file    -> Send Out (EXPORT row / Cutting & Modelling): the object is written with
+                everything it points to into <temp>/mcp_workfile/<id>/open.blend and a new
+                Blender opens it (workfile_build.py): transforms applied, parents (the
+                `transform` empty) gone, bakes into <id>/bakes. The object records the
+                send-out (OUT_KEY); the main file is not changed otherwise.
+Work window  -> Send Back: the base mesh (modifiers live on both sides), which modifiers
+                are left, slot picks and per-object shifts, the bakes made there and which
+                of them were up to date -> <id>/mesh.blend + manifest.json.
+Main file    -> Receive: Replace (default) swaps the mesh data, removes the modifiers the
+                window applied, takes the slots / shifts and bakes, refreshes the materials
+                and stamps what was up to date there. Add joins the window's mesh instead
+                (nothing else). Cancel only forgets the send-out.
 """
 import hashlib
 import json
 import os
+import shutil
 import subprocess
 import time
 import uuid
@@ -25,482 +27,645 @@ import bpy
 
 from . import workflow as wf
 
-WORK_KEY = "multicamproject_work_of"        # work window scene / object: the main .blend
-WORK_OBJECT_KEY = "multicamproject_work_object"     # work window scene: the main object's name
-INCOMING_KEY = "multicamproject_incoming"   # a sent mesh: the main object it belongs to
-INCOMING_COLLECTION = "MCP_Incoming"
-KEEP_ATTRS = {"position", "uv_seam", "sharp_face", ".edge_verts", ".corner_vert",
-              ".corner_edge", wf.cp.UV_NORMAL}
+OUT_KEY = "multicamproject_out"             # main object: the send-out record (JSON)
+WORK_KEY = "multicamproject_work_of"        # work window scene: the main .blend
+WORK_OBJECT_KEY = "multicamproject_work_object"     # work window scene: the object's name
+WORK_ID_KEY = "multicamproject_work_id"     # work window scene: the send-out id
+MANIFEST = "manifest.json"
+MESH_FILE = "mesh.blend"
+OPEN_FILE = "open.blend"
+SETTINGS_FILE = "settings.json"
+KEEP_DAYS = 3           # hand-off folders older than this go at the next Send Out
+# the textures Receive takes: pointer on multicamproject_bake -> name function in common
+TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
+            ("bap_image", "bap_name", False), ("bnp_image", "bnp_name", True),
+            ("bng_image", "bng_name", True), ("alb_image", "alb_name", False),
+            ("nor_image", "nor_name", True))
+META = ("ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
+        "last_ba_seconds", "last_bp_seconds", "last_bake_seconds", "last_nor_seconds",
+        "ba_far_share", "ba_far_max", "ba_fit_cage")
+SCENE_GROUPS = ("multicamproject_bake_settings", "multicamproject_export",
+                "multicamproject_sides", "multicamproject_props")
 
 
 # ---------------------------------------------------------------- paths
 
-def _temp_base():
-    return os.path.dirname(os.path.normpath(bpy.app.tempdir))
-
-
 def exchange_dir():
     """<temp>/mcp_workfile: what the two Blenders hand each other (never next to the .blend)."""
-    folder = os.path.join(_temp_base(), "mcp_workfile")
+    folder = os.path.join(os.path.dirname(os.path.normpath(bpy.app.tempdir)), "mcp_workfile")
     os.makedirs(folder, exist_ok=True)
     return folder
 
 
-def send_path(main_path, obj_name):
-    """Where Send Mesh puts the mesh for obj_name of main_path (and Paste reads it)."""
-    key = hashlib.sha1(os.path.normcase(os.path.abspath(main_path)).encode()).hexdigest()[:10]
-    stem = os.path.splitext(os.path.basename(main_path))[0]
-    return os.path.join(exchange_dir(),
-                        f"{bpy.path.clean_name(stem)}__{bpy.path.clean_name(obj_name)}_{key}.blend")
+def job_dir(job_id):
+    return os.path.join(exchange_dir(), job_id)
 
 
-def sent_time(obj):
-    """Modification time of the mesh sent for obj (None = nothing sent)."""
-    if not bpy.data.filepath:
-        return None
-    try:
-        return os.path.getmtime(send_path(bpy.data.filepath, obj.name))
-    except OSError:
-        return None
+def bakes_dir(job_id):
+    return os.path.join(job_dir(job_id), "bakes")
 
 
-def clipboard_path():
-    """Blender's own copy buffer (Ctrl+C / Ctrl+V in the 3D View): <temp>/copybuffer.blend."""
-    return os.path.join(_temp_base(), "copybuffer.blend")
+def _clear_old_jobs():
+    now = time.time()
+    for name in os.listdir(exchange_dir()):
+        p = os.path.join(exchange_dir(), name)
+        try:
+            if os.path.isdir(p) and now - os.path.getmtime(p) > KEEP_DAYS * 86400:
+                shutil.rmtree(p, ignore_errors=True)
+        except OSError:
+            pass
 
 
-def is_work_file(scene):
+def is_work_window(scene):
     return bool(scene.get(WORK_KEY))
 
 
-def is_incoming(obj):
-    return obj is not None and bool(obj.get(INCOMING_KEY))
+# ---------------------------------------------------------------- main file: the record
+
+def out_record(obj):
+    """The send-out of obj ({id, time, matrix, sig}), None when it is home."""
+    raw = obj.get(OUT_KEY) if obj is not None else None
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except ValueError:
+        return None
 
 
-def incoming_target(obj, context=None):
-    """The main-file object a pasted mesh goes into: the one it was sent for, else the
-    other selected mesh."""
-    target = bpy.data.objects.get(obj.get(INCOMING_KEY, ""))
-    if target is not None and target != obj and target.type == 'MESH' and not target.library:
-        return target
-    if context is not None:
-        others = [o for o in context.selected_objects
-                  if o != obj and o.type == 'MESH' and not is_incoming(o)]
-        if len(others) == 1:
-            return others[0]
-    return None
+def sent_back(obj):
+    """The manifest of what the work window sent back for obj (None = nothing yet)."""
+    rec = out_record(obj)
+    if rec is None:
+        return None
+    path = os.path.join(job_dir(rec["id"]), MANIFEST)
+    try:
+        with open(path, encoding="utf-8") as f:
+            return json.load(f)
+    except (OSError, ValueError):
+        return None
 
 
-# ---------------------------------------------------------------- mesh helpers
+def mesh_signature(obj):
+    """The mesh (shape, uv_normal) and its painted VCMix layers: edits in the main file
+    while the object is out are noticed at Receive."""
+    parts = []
+    try:
+        from ..baking import fingerprint
+        parts += fingerprint._source_parts(obj) + list(fingerprint._checksums(obj))
+    except ImportError:
+        me = obj.data
+        parts += [len(me.vertices), len(me.polygons)]
+    return hashlib.sha1(repr(parts).encode()).hexdigest()
 
-def _bake_world(me, matrix):
-    """Transform `me` by `matrix`; a mirroring matrix flips the faces back outwards."""
-    me.transform(matrix)
-    if matrix.determinant() < 0:
+
+def _matrix_list(m):
+    return [round(v, 6) for row in m for v in row]
+
+
+def receive_warnings(obj):
+    """What changed in the main file since obj went out (Receive asks first)."""
+    rec = out_record(obj)
+    if rec is None:
+        return []
+    out = []
+    if max(abs(a - b) for a, b in zip(_matrix_list(obj.matrix_world), rec["matrix"])) > 1e-4:
+        out.append("it was moved (the mesh comes back where the object is now)")
+    if mesh_signature(obj) != rec["sig"]:
+        out.append("its mesh or painting was edited here (those edits are replaced)")
+    return out
+
+
+# ---------------------------------------------------------------- main file: Send Out
+
+def _scene_settings(scene):
+    """The add-on's scene settings as plain values (pointers / collections left out)."""
+    out = {}
+    for group in SCENE_GROUPS:
+        pg = getattr(scene, group, None)
+        if pg is None:
+            continue
+        vals = {}
+        for p in pg.bl_rna.properties:
+            if p.identifier == "rna_type" or p.type in {'POINTER', 'COLLECTION'} or p.is_readonly:
+                continue
+            v = getattr(pg, p.identifier)
+            if p.type == 'ENUM' and p.is_enum_flag:
+                v = sorted(v)
+            elif hasattr(v, "__len__") and not isinstance(v, str):
+                v = list(v)
+            vals[p.identifier] = v
+        out[group] = vals
+    return out
+
+
+def send_out(context, obj):
+    """Write obj (with everything it points to) for a new Blender and open it there.
+    Returns the send-out id."""
+    main = bpy.data.filepath
+    if not main:
+        raise RuntimeError("Save the main file first (Receive copies the bakes into its folder)")
+    if obj.mode != 'OBJECT':
+        obj.update_from_editmode()
+    _clear_old_jobs()
+    job_id = uuid.uuid4().hex[:12]
+    os.makedirs(bakes_dir(job_id), exist_ok=True)
+    lib = os.path.join(job_dir(job_id), OPEN_FILE)
+    # the real object, written with its dependencies (the main file is not changed): its
+    # mesh, MCP_ / MAT_ and textures, GN, the cameras of its list with their photos, the
+    # Bake Source and the parents. A Scene can't be written (Blender 5.2 crashes)
+    bpy.data.libraries.write(lib, {obj}, path_remap='ABSOLUTE')
+    src = wf.bake_source_of(obj)
+    scene = context.scene
+    settings = {
+        "id": job_id, "lib": lib, "object": obj.name, "main": main,
+        "original": src.name if src is not None else "",
+        "bakes": bakes_dir(job_id), "scene": _scene_settings(scene),
+        "render": [scene.render.resolution_x, scene.render.resolution_y,
+                   scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
+        "unit_system": scene.unit_settings.system,
+        "unit_scale": scene.unit_settings.scale_length}
+    settings_path = os.path.join(job_dir(job_id), SETTINGS_FILE)
+    with open(settings_path, "w", encoding="utf-8") as f:
+        json.dump(settings, f)
+    obj[OUT_KEY] = json.dumps({"id": job_id, "time": time.time(),
+                               "matrix": _matrix_list(obj.matrix_world),
+                               "sig": mesh_signature(obj)})
+    script = os.path.join(os.path.dirname(__file__), "workfile_build.py")
+    subprocess.Popen([bpy.app.binary_path, "--python", script, "--", settings_path])
+    return job_id
+
+
+def cancel(obj):
+    """Forget the send-out; the main object stays as it is."""
+    if OUT_KEY in obj:
+        del obj[OUT_KEY]
+
+
+# ---------------------------------------------------------------- work window: Send Back
+
+def work_object(scene):
+    obj = bpy.data.objects.get(scene.get(WORK_OBJECT_KEY, ""))
+    return obj if obj is not None and obj.type == 'MESH' else None
+
+
+def _fresh(obj):
+    """Which bakes are up to date in the work window (its own stamps, read uncached)."""
+    try:
+        from ..baking import common, fingerprint
+    except ImportError:
+        return {}
+    d = common.data(obj)
+    size = common.resolution(obj)
+    ba = bool(d.ba_image and d.ba_fingerprint and (not d.ba_size or d.ba_size == size)
+              and d.ba_fingerprint.split(":")[0] == fingerprint.source_state(obj))
+    bp = bool(d.bap_image and d.bp_fingerprint and (not d.bp_size or d.bp_size == size)
+              and d.bp_fingerprint.split(":")[0] == fingerprint.projection_state(obj))
+    return {
+        "ba": ba, "bp": bp,
+        "bng": bool(ba and d.bng_image and d.bng_fingerprint.startswith(d.ba_fingerprint + "|")),
+        "bnp": bool(bp and d.bnp_image and d.bnp_fingerprint.startswith(d.bp_fingerprint + "|")),
+        "alb": bool(d.alb_image and d.fingerprint and d.fingerprint == fingerprint.compute(obj)),
+    }
+
+
+def send_back(context):
+    """The work object's base mesh + manifest into its hand-off folder. Returns faces."""
+    scene = context.scene
+    obj = work_object(scene)
+    job_id = scene.get(WORK_ID_KEY, "")
+    if obj is None or not job_id:
+        raise RuntimeError("This window's object is gone")
+    if obj.mode != 'OBJECT':
+        obj.update_from_editmode()
+    folder = job_dir(job_id)
+    os.makedirs(folder, exist_ok=True)
+    me = obj.data.copy()
+    me.name = obj.name
+    me.materials.clear()        # the faces keep their slot index; the main file has the slots
+    try:
+        bpy.data.libraries.write(os.path.join(folder, MESH_FILE), {me}, path_remap='ABSOLUTE')
+        faces = len(me.polygons)
+    finally:
+        bpy.data.meshes.remove(me)
+    man = {"mesh": obj.name, "time": time.time(),
+           "modifiers": [m.name for m in obj.modifiers],
+           "applied": bool(obj.get(wf.APPLIED_KEY))}
+    dec, snap = wf.decimate_modifier(obj), wf.snap_modifier(obj)
+    if dec is not None:
+        man["decimate"] = {"ratio": dec.ratio, "show_viewport": dec.show_viewport}
+    if snap is not None:
+        man["snap"] = {"show_viewport": snap.show_viewport}
+    cam = getattr(obj, "multicamproject_cam", None)
+    if cam is not None and cam.is_setup:
+        from ..camera_project import core as cp
+        man["slots"] = [getattr(cam, f"slot_{i}").name if getattr(cam, f"slot_{i}") else ""
+                        for i in range(1, 7)]
+        man["slot_count"] = cam.slot_count
+        man["user_picked"] = cam.user_picked
+        man["shifts"] = {it.camera.name: list(it.shift) for it in cam.shifts
+                         if it.camera is not None and not cp.is_global(it.camera)}
+    try:
+        from ..baking import common
+        d = common.data(obj)
+        bakes = os.path.normcase(os.path.abspath(bakes_dir(job_id)))
+        tex = {}
+        for ptr, _fn, _n in TEXTURES:
+            path = common.image_file(getattr(d, ptr))
+            if path and os.path.normcase(os.path.dirname(os.path.abspath(path))) == bakes \
+                    and os.path.isfile(path):
+                tex[ptr] = path     # baked in this window
+        man["textures"] = tex
+        man["fresh"] = _fresh(obj)
+        man["stamps"] = {k: getattr(d, k) for k in ("ba_fingerprint", "bng_fingerprint",
+                                                    "bp_fingerprint", "bnp_fingerprint",
+                                                    "fingerprint", "ba_parts")}
+        man["meta"] = {k: getattr(d, k) for k in META}
+    except ImportError:
+        pass
+    tmp = os.path.join(folder, MANIFEST + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(man, f)
+    os.replace(tmp, os.path.join(folder, MANIFEST))     # Receive never reads half a file
+    return faces
+
+
+# ---------------------------------------------------------------- main file: Receive
+
+def _load_mesh(job_id, name):
+    path = os.path.join(job_dir(job_id), MESH_FILE)
+    with bpy.data.libraries.load(path, link=False) as (src, dst):
+        dst.meshes = [n for n in src.meshes if n == name] or list(src.meshes[:1])
+    if not dst.meshes or dst.meshes[0] is None:
+        raise RuntimeError("The sent mesh could not be read - Send Back again")
+    return dst.meshes[0]
+
+
+def _to_local(me, obj):
+    """The window's mesh is in world space (its transforms applied): into obj's space."""
+    m = obj.matrix_world.inverted()
+    me.transform(m)
+    if m.determinant() < 0:
         me.flip_normals()
 
 
-def _plain_object(name, me, matrix):
-    """A new object (no add-on data, no parent) whose mesh holds the world transform."""
-    _bake_world(me, matrix)
-    me.materials.clear()
-    return bpy.data.objects.new(name, me)
-
-
-def strip_mesh(me):
-    """Only the geometry, uv_normal (the UV map kept, renamed) and seams stay."""
-    keep = me.uv_layers.get(wf.cp.UV_NORMAL) or me.uv_layers.active
-    for uv in [u for u in me.uv_layers if u != keep]:
-        me.uv_layers.remove(uv)
-    if keep is not None:
-        keep.name = wf.cp.UV_NORMAL
-    me.materials.clear()
-    for name in [a.name for a in me.attributes]:
-        a = me.attributes.get(name)
-        if a is not None and name not in KEEP_ATTRS and not a.is_required:
-            try:
-                me.attributes.remove(a)
-            except RuntimeError:
-                pass
-
-
-# ---------------------------------------------------------------- main file: Open
-
-def open_work_window(context, obj):
-    """obj + its original into a new, unsaved Blender. They are written as one collection
-    to the hand-off folder; workfile_build.py (run by the new Blender) puts it in a scene
-    and deletes the file. Returns the new process."""
-    main = bpy.data.filepath
-    if not main:
-        raise RuntimeError("Save the main file first (Send / Paste find each other by its path)")
-    if obj.mode != 'OBJECT':
-        obj.update_from_editmode()
-    src = wf.bake_source_of(obj) or wf.source_of(obj)
-    lib = os.path.join(exchange_dir(), f"open_{uuid.uuid4().hex[:12]}.blend")
-    made = []
-    names = {}          # name in this file (may get .001) -> name in the work window
-    coll = bpy.data.collections.new("MCP Work")
-    try:
-        work = _plain_object(obj.name, obj.data.copy(), obj.matrix_world)
-        made.append(work)
-        names[work.name] = obj.name
-        coll.objects.link(work)
-        for vg in obj.vertex_groups:                # vg_Protect / vg_Snap for the modifiers
-            if work.vertex_groups.get(vg.name) is None:
-                work.vertex_groups.new(name=vg.name)
-        if obj.get(wf.APPLIED_KEY):
-            work[wf.APPLIED_KEY] = True
-        work[WORK_KEY] = main
-        d = work.multicamproject_bake
-        d.retopo = wf.is_retopo(obj)
-        if src is not None:
-            orig = _plain_object(src.name, src.data.copy(), src.matrix_world)
-            made.append(orig)
-            names[orig.name] = src.name
-            coll.objects.link(orig)
-            d.bake_source = orig                    # Cutting & Modelling shows, Snap aims here
-        dec = wf.decimate_modifier(obj)
-        if dec is not None:
-            new = wf.ensure_stack(work, applied_ok=False)
-            new.ratio = dec.ratio
-            new.show_viewport = dec.show_viewport
-        snap = wf.snap_modifier(obj)
-        if snap is not None and src is not None:
-            wf.set_snap(work, True).show_viewport = snap.show_viewport
-        bpy.data.libraries.write(lib, {coll}, path_remap='ABSOLUTE')
-        work_name, coll_name = work.name, coll.name
-    finally:
-        for o in made:
-            me = o.data
-            bpy.data.objects.remove(o)
-            if me.users == 0:
-                bpy.data.meshes.remove(me)
-        bpy.data.collections.remove(coll)
-    settings = {
-        "lib": lib, "collection": coll_name, "names": names, "active": work_name,
-        "keys": {WORK_KEY: main, WORK_OBJECT_KEY: obj.name},
-        "unit_system": context.scene.unit_settings.system,
-        "unit_scale": context.scene.unit_settings.scale_length}
-    script = os.path.join(os.path.dirname(__file__), "workfile_build.py")
-    return subprocess.Popen([bpy.app.binary_path, "--python", script, "--",
-                             json.dumps(settings)])
-
-
-# ---------------------------------------------------------------- work file: Send
-
-def work_object(context):
-    """The low poly of this work file (the active object if it is one)."""
-    obj = context.active_object
-    if obj is not None and obj.type == 'MESH' and obj.get(WORK_KEY):
-        return obj
-    for o in context.scene.objects:
-        if o.type == 'MESH' and o.get(WORK_KEY):
-            return o
-    return None
-
-
-def send_mesh(context, obj):
-    """The low poly as seen (modifiers applied, world space), stripped, written to the
-    hand-off folder and the clipboard. Returns (faces, file)."""
-    scene = context.scene
-    main_name = scene.get(WORK_OBJECT_KEY, obj.name)
-    dg = context.evaluated_depsgraph_get()
-    me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg), preserve_all_data_layers=True,
-                                         depsgraph=dg)
-    me.name = f"{main_name}_work"
-    _bake_world(me, obj.matrix_world)
-    strip_mesh(me)
-    sent = bpy.data.objects.new(f"{main_name}_work", me)
-    sent.vertex_groups.clear()
-    sent[INCOMING_KEY] = main_name
-    out = send_path(scene[WORK_KEY], main_name)
-    try:
-        bpy.data.libraries.write(out, {sent}, path_remap='ABSOLUTE')
-        bpy.data.libraries.write(clipboard_path(), {sent}, path_remap='ABSOLUTE')
-        faces = len(me.polygons)
-    finally:
-        bpy.data.objects.remove(sent)
-        bpy.data.meshes.remove(me)
-    return faces, out
-
-
-# ---------------------------------------------------------------- main file: Paste
-
-def _incoming_collection(scene):
-    coll = bpy.data.collections.get(INCOMING_COLLECTION)
-    if coll is None:
-        coll = bpy.data.collections.new(INCOMING_COLLECTION)
-    if not scene.collection.children.get(coll.name):
-        scene.collection.children.link(coll)
-    return coll
-
-
-def paste(context, obj):
-    """The mesh last sent for obj, into MCP_Incoming."""
-    path = send_path(bpy.data.filepath, obj.name) if bpy.data.filepath else ""
-    if not path or not os.path.exists(path):
-        raise RuntimeError("Nothing sent yet - press Send Mesh in the work window")
-    with bpy.data.libraries.load(path, link=False) as (src, dst):
-        dst.objects = list(src.objects)
-    coll = _incoming_collection(context.scene)
-    pasted = [o for o in dst.objects if o is not None]
-    for o in context.selected_objects:
-        o.select_set(False)
-    for o in pasted:
-        o[INCOMING_KEY] = obj.name
-        coll.objects.link(o)
-        o.select_set(True)
-    if pasted:
-        context.view_layer.objects.active = pasted[0]
-    return pasted
-
-
-def _drop_incoming(obj):
-    me = obj.data
-    bpy.data.objects.remove(obj)
-    if me is not None and me.users == 0:
-        bpy.data.meshes.remove(me)
-    coll = bpy.data.collections.get(INCOMING_COLLECTION)
-    if coll is not None and not coll.all_objects:
-        bpy.data.collections.remove(coll)
-
-
-def _resync(target, scene):
-    try:
-        from ..baking import matsync
-        matsync.sync(target, scene)
-    except ImportError:
-        pass
-
-
-def replace_mesh(context, incoming, target):
-    """target's geometry becomes incoming's; name, materials, cameras, bake settings and
-    the other modifiers stay. Decimate / Snap go (the sent mesh has them applied)."""
-    if target.data.shape_keys:
-        raise RuntimeError(f"'{target.name}' has shape keys - replace would drop them")
-    me = incoming.data
-    _bake_world(me, target.matrix_world.inverted())
-    old = target.data
+def _swap_mesh(obj, me):
+    old = obj.data
     for m in old.materials:
         me.materials.append(m)
     name = old.name
-    incoming.data = bpy.data.meshes.new("_mcp_empty")   # me leaves the pasted object
-    _drop_incoming(incoming)
     shared = old.users > 1
-    target.data = me
-    if not shared:
-        bpy.data.meshes.remove(old)
-    else:
+    obj.data = me
+    if shared:
         old.name = name + "_before_work"
+    else:
+        bpy.data.meshes.remove(old)
     me.name = name
-    had_decimate = wf.decimate_modifier(target) is not None
-    for mod in (wf.decimate_modifier(target), wf.snap_modifier(target)):
-        if mod is not None:
-            target.modifiers.remove(mod)
-    if target.vertex_groups.get(wf.VG_PROTECT) is None:
-        target.vertex_groups.new(name=wf.VG_PROTECT)
-    if had_decimate or target.get(wf.APPLIED_KEY):
-        target[wf.APPLIED_KEY] = True
-    _resync(target, context.scene)
-    return len(me.polygons)
 
 
-def add_mesh(context, incoming, target):
-    """Join incoming into target. A live Decimate leaves the added part alone (vg_Protect)."""
-    if wf.decimate_modifier(target) is not None:
-        vg = incoming.vertex_groups.new(name=wf.VG_PROTECT)
-        vg.add(range(len(incoming.data.vertices)), 1.0, 'REPLACE')
-    added = len(incoming.data.polygons)
-    del incoming[INCOMING_KEY]
-    incoming.hide_set(False)
-    with context.temp_override(active_object=target, object=target,
-                               selected_objects=[target, incoming],
-                               selected_editable_objects=[target, incoming]):
-        bpy.ops.object.join()
-    coll = bpy.data.collections.get(INCOMING_COLLECTION)
-    if coll is not None and not coll.all_objects:
-        bpy.data.collections.remove(coll)
-    _resync(target, context.scene)
-    return added
+def _take_modifiers(obj, man):
+    """Modifiers the window applied or removed go here too; Decimate / Snap take its values."""
+    kept = set(man["modifiers"])
+    for m in [m for m in obj.modifiers if m.type != 'NODES' and m.name not in kept]:
+        obj.modifiers.remove(m)
+    dec, snap = wf.decimate_modifier(obj), wf.snap_modifier(obj)
+    if dec is not None and "decimate" in man:
+        dec.ratio = man["decimate"]["ratio"]
+        dec.show_viewport = man["decimate"]["show_viewport"]
+    if snap is not None and "snap" in man:
+        snap.show_viewport = man["snap"]["show_viewport"]
+    if man.get("applied"):
+        obj[wf.APPLIED_KEY] = True
+
+
+def _take_cameras(obj, scene, man):
+    """Slot picks and per-object shifts (VCMix's channels mean slots 1/2/3)."""
+    cam = getattr(obj, "multicamproject_cam", None)
+    if cam is None or not cam.is_setup or "slots" not in man:
+        return
+    from ..camera_project import core as cp
+    for i, name in enumerate(man["slots"], 1):
+        c = bpy.data.objects.get(name) if name else None
+        setattr(cam, f"slot_{i}", c if c is not None and c.type == 'CAMERA' else None)
+    if cam.slot_count != man["slot_count"]:
+        cam["slot_count"] = int(man["slot_count"])     # raw: no re-pick from the callback
+    cam.user_picked = man["user_picked"]
+    for name, shift in man["shifts"].items():
+        c = bpy.data.objects.get(name)
+        if c is not None and c.type == 'CAMERA' and not cp.is_global(c):
+            it = cp.shift_item(obj, c, create=True)
+            if tuple(round(v, 6) for v in it.shift) != tuple(round(v, 6) for v in shift):
+                it.shift = shift            # the slider's own update: modifier + photo offset
+    cp.apply_slots(obj, scene)
+
+
+def _take_textures(obj, scene, man):
+    """The bakes made in the window over the object's own files (the old ones to the Recycle
+    Bin), its images pointed at them. Returns the pointers taken."""
+    from ..baking import common, engine
+    from ..export import fixes
+    d = common.data(obj)
+    taken = []
+    for ptr, fn, normal in TEXTURES:
+        src = man.get("textures", {}).get(ptr)
+        if not src or not os.path.isfile(src):
+            continue
+        name = getattr(common, fn)(obj)
+        dst = common.texture_path(scene, name)
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.isfile(dst):
+            fixes.to_recycle_bin([dst])
+        shutil.copyfile(src, dst)
+        img = getattr(d, ptr) or bpy.data.images.get(name)
+        if img is None:
+            img = bpy.data.images.load(dst, check_existing=False)
+            img.name = name
+        if normal:
+            img.colorspace_settings.name = 'Non-Color'
+        engine.link_file(img, dst)
+        setattr(d, ptr, img)
+        taken.append(ptr)
+    for k, v in man.get("meta", {}).items():
+        try:
+            setattr(d, k, v)
+        except (AttributeError, TypeError):
+            pass
+    return taken
+
+
+def _restamp(obj, man, taken):
+    """What was up to date in the window is up to date here (stamped from this file's own
+    state); a bake taken that was not keeps the window's stamp, so it reads outdated."""
+    from ..baking import common, fingerprint
+    d = common.data(obj)
+    fresh, stamps = man.get("fresh", {}), man.get("stamps", {})
+    if fresh.get("ba"):
+        d.ba_fingerprint = fingerprint.stamp_source(obj)
+    elif "ba_image" in taken:
+        d.ba_fingerprint, d.ba_parts = stamps.get("ba_fingerprint", ""), stamps.get("ba_parts", "")
+    if fresh.get("bng"):
+        rest = stamps["bng_fingerprint"][len(stamps["ba_fingerprint"]):]
+        d.bng_fingerprint = d.ba_fingerprint + rest
+    elif "bng_image" in taken:
+        d.bng_fingerprint = stamps.get("bng_fingerprint", "")
+    if fresh.get("bp"):
+        d.bp_fingerprint = fingerprint.stamp_projection(obj)
+    elif "bap_image" in taken:
+        d.bp_fingerprint = stamps.get("bp_fingerprint", "")
+    if fresh.get("bnp"):
+        rest = stamps["bnp_fingerprint"][len(stamps["bp_fingerprint"]):]
+        d.bnp_fingerprint = d.bp_fingerprint + rest
+    elif "bnp_image" in taken:
+        d.bnp_fingerprint = stamps.get("bnp_fingerprint", "")
+    if fresh.get("alb"):
+        d.fingerprint = fingerprint.compute(obj)
+    elif "alb_image" in taken:
+        d.fingerprint = stamps.get("fingerprint", "")
+
+
+def _refresh(obj, scene):
+    """The Refresh button for obj: MCP_ / MAT_ rebuilt with the new textures, cameras rewired."""
+    try:
+        from ..baking import cache, gn_final, matsync
+    except ImportError:
+        return
+    matsync.sync(obj, scene, full=True)
+    if gn_final.get_modifier(obj) is not None:
+        gn_final.write_inputs(obj, scene)
+    cache.clear()
+
+
+def receive(context, obj, action='REPLACE'):
+    """Take back what the work window sent. REPLACE: mesh, modifiers, slots / shifts, bakes,
+    materials, stamps. ADD: the window's mesh joined into obj, nothing else."""
+    man = sent_back(obj)
+    rec = out_record(obj)
+    if man is None or rec is None:
+        raise RuntimeError("Nothing sent back yet - press Send Back in the work window")
+    if obj.mode != 'OBJECT':
+        raise RuntimeError("Object Mode first")
+    scene = context.scene
+    me = _load_mesh(rec["id"], man["mesh"])
+    if action == 'ADD':
+        tmp = bpy.data.objects.new(f"{obj.name}_work", me)     # world space, like the window
+        scene.collection.objects.link(tmp)
+        with context.temp_override(active_object=obj, object=obj,
+                                   selected_objects=[obj, tmp],
+                                   selected_editable_objects=[obj, tmp]):
+            bpy.ops.object.join()
+        faces = len(me.polygons)
+        if me.users == 0:
+            bpy.data.meshes.remove(me)
+        try:
+            from ..baking import matsync
+            matsync.sync(obj, scene)
+        except ImportError:
+            pass
+    else:
+        _to_local(me, obj)
+        faces = len(me.polygons)
+        _swap_mesh(obj, me)
+        _take_modifiers(obj, man)
+        _take_cameras(obj, scene, man)
+        taken = []
+        try:
+            taken = _take_textures(obj, scene, man)
+        except ImportError:
+            pass
+        _refresh(obj, scene)
+        try:
+            _restamp(obj, man, taken)
+            from ..baking import cache
+            cache.clear()
+        except ImportError:
+            pass
+    cancel(obj)
+    return faces
 
 
 # ---------------------------------------------------------------- operators
 
-def _main_low_poly(context):
-    obj = context.active_object
-    return (obj if obj is not None and obj.type == 'MESH' and not obj.library
-            and wf.is_low_poly(obj) and not is_work_file(context.scene) else None)
+def _target(context, name):
+    obj = bpy.data.objects.get(name) if name else context.active_object
+    return obj if obj is not None and obj.type == 'MESH' and not obj.library else None
 
 
-class MULTICAMPROJECT_OT_WorkFileOpen(bpy.types.Operator):
-    """Model this low poly in a new Blender window: the object and its original only
-    (transforms applied, no materials or links), in an untitled file nothing saves"""
-    bl_idname = "multicamproject.workfile_open"
-    bl_label = "Open in Work Window"
-    bl_options = {'REGISTER'}
+class MULTICAMPROJECT_OT_WorkSendOut(bpy.types.Operator):
+    """Send Out: work on this object in a new, unsaved Blender - its materials, cameras and
+    Bake Source come along (transforms applied there). Model, paint and bake, then Send Back
+    and Receive here"""
+    bl_idname = "multicamproject.work_send_out"
+    bl_label = "Send Out"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
-        return context.mode == 'OBJECT' and _main_low_poly(context) is not None
+        return context.mode == 'OBJECT' and not is_work_window(context.scene)
 
     def execute(self, context):
+        obj = _target(context, self.object_name)
+        if obj is None:
+            return {'CANCELLED'}
+        if out_record(obj) is not None:
+            self.report({'WARNING'}, f"'{obj.name}' is already out: Receive or cancel (X) first")
+            return {'CANCELLED'}
         try:
-            open_work_window(context, context.active_object)
+            send_out(context, obj)
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        self.report({'INFO'}, "Work window opening (unsaved) - Send Mesh there when done")
+        self.report({'INFO'}, f"'{obj.name}' sent out: a work window is opening (unsaved)")
         return {'FINISHED'}
 
 
-class MULTICAMPROJECT_OT_WorkFileSend(bpy.types.Operator):
-    """Send the low poly back: as you see it (modifiers applied), uv_normal and seams
-    only. Paste it in the main file with Ctrl+V or the Paste button"""
-    bl_idname = "multicamproject.workfile_send"
-    bl_label = "Send Mesh to Main File"
+class MULTICAMPROJECT_OT_WorkReceive(bpy.types.Operator):
+    """Receive what the work window sent back"""
+    bl_idname = "multicamproject.work_receive"
+    bl_label = "Receive"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    action: bpy.props.EnumProperty(name="Receive as", default='REPLACE', items=(
+        ('REPLACE', "Replace", "The mesh becomes the window's (with its VCMix painting); "
+                               "modifiers applied there go, slot picks, shifts and the bakes "
+                               "made there come along, materials are refreshed"),
+        ('ADD', "Add", "Join the window's mesh into this object - its own geometry stays; "
+                       "nothing else is taken")),
+        options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return ("Receive as Add: join the window's mesh into this object (its geometry stays)"
+                if props.action == 'ADD' else
+                "Receive: the mesh, painting, slot picks and bakes from the work window "
+                "(materials refreshed). Ctrl+Z undoes the mesh; replaced texture files are "
+                "in the Recycle Bin")
+
+    def invoke(self, context, event):
+        obj = _target(context, self.object_name)
+        why = receive_warnings(obj) if obj is not None else []
+        if why:
+            return context.window_manager.invoke_confirm(
+                self, event, title=f"Receive into '{obj.name}'?",
+                message="Since it was sent out, " + "; ".join(why), confirm_text="Receive",
+                icon='WARNING')
+        return self.execute(context)
+
+    def execute(self, context):
+        obj = _target(context, self.object_name)
+        if obj is None or sent_back(obj) is None:
+            self.report({'WARNING'}, "Nothing sent back yet - press Send Back in the work window")
+            return {'CANCELLED'}
+        try:
+            faces = receive(context, obj, self.action)
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        verb = "added" if self.action == 'ADD' else "received"
+        self.report({'INFO'}, f"'{obj.name}': {faces:,} faces {verb}")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_WorkCancel(bpy.types.Operator):
+    """Cancel the send-out: forget the work window (this object stays as it is)"""
+    bl_idname = "multicamproject.work_cancel"
+    bl_label = "Cancel Send Out"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        obj = _target(context, self.object_name)
+        if obj is not None:
+            cancel(obj)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
+    """Send Back: this object's mesh (with VCMix painting), slot picks and the bakes made
+    here, for Receive in the main file. No need to save this window"""
+    bl_idname = "multicamproject.work_send_back"
+    bl_label = "Send Back to Main File"
     bl_options = {'REGISTER'}
 
     @classmethod
     def poll(cls, context):
-        return is_work_file(context.scene) and work_object(context) is not None
+        return is_work_window(context.scene) and work_object(context.scene) is not None
 
     def execute(self, context):
-        obj = work_object(context)
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         try:
-            faces, out = send_mesh(context, obj)
+            faces = send_back(context)
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        self.report({'INFO'}, f"{faces:,} faces sent: Ctrl+V or Paste in the main file")
+        self.report({'INFO'}, f"{faces:,} faces sent back: Receive in the main file")
         return {'FINISHED'}
 
 
-class MULTICAMPROJECT_OT_WorkFilePaste(bpy.types.Operator):
-    """Paste the mesh last sent from this object's work window (into MCP_Incoming)"""
-    bl_idname = "multicamproject.workfile_paste"
-    bl_label = "Paste from Work File"
-    bl_options = {'REGISTER', 'UNDO'}
+# ---------------------------------------------------------------- UI pieces
 
-    @classmethod
-    def poll(cls, context):
-        return context.mode == 'OBJECT' and _main_low_poly(context) is not None
-
-    def execute(self, context):
-        try:
-            pasted = paste(context, context.active_object)
-        except Exception as e:
-            self.report({'ERROR'}, str(e))
-            return {'CANCELLED'}
-        self.report({'INFO'}, f"Pasted {', '.join(o.name for o in pasted)}: Replace or Add next")
-        return {'FINISHED'}
-
-
-class MULTICAMPROJECT_OT_WorkFileApply(bpy.types.Operator):
-    """Put the pasted mesh into its object"""
-    bl_idname = "multicamproject.workfile_apply"
-    bl_label = "Use Pasted Mesh"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    action: bpy.props.EnumProperty(items=(
-        ('REPLACE', "Replace Mesh", "The object's geometry becomes the pasted mesh. Name, "
-                                    "materials, cameras and bake settings stay; Decimate and "
-                                    "Snap go (they are applied in the pasted mesh)"),
-        ('ADD', "Add to Mesh", "Join the pasted mesh into the object (its old geometry stays)")))
-
-    @classmethod
-    def poll(cls, context):
-        obj = context.active_object
-        return (context.mode == 'OBJECT' and is_incoming(obj)
-                and incoming_target(obj, context) is not None)
-
-    def execute(self, context):
-        incoming = context.active_object
-        target = incoming_target(incoming, context)
-        try:
-            if self.action == 'REPLACE':
-                n = replace_mesh(context, incoming, target)
-                self.report({'INFO'}, f"'{target.name}': mesh replaced, {n:,} faces")
-            else:
-                n = add_mesh(context, incoming, target)
-                self.report({'INFO'}, f"'{target.name}': {n:,} faces added")
-        except Exception as e:
-            self.report({'ERROR'}, str(e))
-            return {'CANCELLED'}
-        for o in context.selected_objects:
-            o.select_set(False)
-        context.view_layer.objects.active = target
-        target.select_set(True)
-        return {'FINISHED'}
-
-
-class MULTICAMPROJECT_PT_WorkFileIncoming(bpy.types.Panel):
-    """A mesh sent from a work file: where it goes"""
-    bl_label = "Mesh from Work File"
-    bl_idname = "MULTICAMPROJECT_PT_workfile_incoming"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "MultiCamProject"
-    bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 0
-
-    @classmethod
-    def poll(cls, context):
-        return is_incoming(context.active_object)
-
-    def draw_header(self, context):
-        self.layout.label(icon='PASTEDOWN')
-
-    def draw(self, context):
-        layout = self.layout.column(align=True)
-        obj = context.active_object
-        target = incoming_target(obj, context)
-        if target is None:
-            row = layout.row()
-            row.alert = True
-            row.label(text=f"'{obj.get(INCOMING_KEY)}' not found: also select its object",
-                      icon='ERROR')
-            return
-        layout.label(text=f"{len(obj.data.polygons):,} faces for '{target.name}'",
-                     icon='OBJECT_DATA')
-        row = layout.row(align=True)
-        row.scale_y = 1.3
-        row.operator(MULTICAMPROJECT_OT_WorkFileApply.bl_idname, text="Replace Mesh",
-                     icon='FILE_REFRESH').action = 'REPLACE'
-        row.operator(MULTICAMPROJECT_OT_WorkFileApply.bl_idname, text="Add to Mesh",
-                     icon='ADD').action = 'ADD'
+def draw_row_button(layout, obj):
+    """The EXPORT row column: Send Out, or Receive (blue once sent back) + X."""
+    rec = out_record(obj)
+    if rec is None:
+        cell = layout.row(align=True)
+        cell.ui_units_x = 1.1
+        cell.operator(MULTICAMPROJECT_OT_WorkSendOut.bl_idname, text="",
+                      icon='WINDOW').object_name = obj.name
+        return
+    ready = sent_back(obj) is not None
+    cell = layout.row(align=True)
+    cell.ui_units_x = 2.2
+    sub = cell.row(align=True)
+    sub.enabled = ready
+    sub.operator(MULTICAMPROJECT_OT_WorkReceive.bl_idname, text="", icon='IMPORT',
+                 depress=ready).object_name = obj.name
+    cell.operator(MULTICAMPROJECT_OT_WorkCancel.bl_idname, text="",
+                  icon='X').object_name = obj.name
 
 
 def draw_main(layout, context, obj):
-    """Cutting & Modelling in the main file: the work window row."""
+    """Cutting & Modelling in the main file: Send Out, or Receive (Replace / Add) + X."""
+    rec = out_record(obj)
     row = layout.row(align=True)
-    row.operator(MULTICAMPROJECT_OT_WorkFileOpen.bl_idname, text="Work Window", icon='WINDOW')
-    sent = sent_time(obj)
+    if rec is None:
+        row.operator(MULTICAMPROJECT_OT_WorkSendOut.bl_idname, text="Send Out to Work Window",
+                     icon='WINDOW').object_name = obj.name
+        return
+    ready = sent_back(obj) is not None
     sub = row.row(align=True)
-    sub.enabled = sent is not None
-    sub.operator(MULTICAMPROJECT_OT_WorkFilePaste.bl_idname,
-                 text="Paste" + (f" ({time.strftime('%H:%M', time.localtime(sent))})"
-                                 if sent else ""), icon='PASTEDOWN')
+    sub.enabled = ready
+    op = sub.operator(MULTICAMPROJECT_OT_WorkReceive.bl_idname,
+                      text="Receive" if ready else "Out: waiting for Send Back",
+                      icon='IMPORT', depress=ready)
+    op.object_name, op.action = obj.name, 'REPLACE'
+    add = sub.row(align=True)
+    add.ui_units_x = 3.0
+    op = add.operator(MULTICAMPROJECT_OT_WorkReceive.bl_idname, text="Add", icon='ADD')
+    op.object_name, op.action = obj.name, 'ADD'
+    row.operator(MULTICAMPROJECT_OT_WorkCancel.bl_idname, text="", icon='X').object_name = obj.name
 
 
 def draw_work(layout, context):
-    """Cutting & Modelling in a work window: where it came from + Send."""
+    """Cutting & Modelling in a work window: where it came from + Send Back."""
     box = layout.box().column(align=True)
     scene = context.scene
     main = os.path.basename(scene.get(WORK_KEY, ""))
-    box.label(text=f"Work window for {scene.get(WORK_OBJECT_KEY, '')} ({main})", icon='WINDOW')
+    box.label(text=f"Work window: {scene.get(WORK_OBJECT_KEY, '')} of {main}", icon='WINDOW')
     row = box.row(align=True)
     row.scale_y = 1.4
-    row.operator(MULTICAMPROJECT_OT_WorkFileSend.bl_idname, icon='EXPORT')
+    row.operator(MULTICAMPROJECT_OT_WorkSendBack.bl_idname, icon='EXPORT')
     info = box.row()
     info.active = False
-    info.label(text="As you see it · uv_normal + seams · no need to save", icon='INFO')
+    info.label(text="Mesh + painting + bakes made here · no need to save", icon='INFO')
 
 
-_CLASSES = (MULTICAMPROJECT_OT_WorkFileOpen, MULTICAMPROJECT_OT_WorkFileSend,
-            MULTICAMPROJECT_OT_WorkFilePaste, MULTICAMPROJECT_OT_WorkFileApply,
-            MULTICAMPROJECT_PT_WorkFileIncoming)
+_CLASSES = (MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+            MULTICAMPROJECT_OT_WorkCancel, MULTICAMPROJECT_OT_WorkSendBack)
 
 
 def register():

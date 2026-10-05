@@ -84,6 +84,9 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         else:
             row.prop(item, "name", text="", emboss=False)
         right = layout.row(align=True)
+        if module_manager.is_loaded("remesh"):
+            from ..remesh import workfile
+            workfile.draw_row_button(right, item)      # Send Out / Receive + X
         hand = right.row(align=True)
         hand.ui_units_x = 1.1
         hand.prop(bake, "handmade", text="", icon='VIEW_PAN', toggle=True)
@@ -143,7 +146,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return not context.scene.get("multicamproject_work_of")     # a Remesh work file
+        return not context.scene.get("multicamproject_work_of")     # a Work Window
 
     def draw_header(self, context):
         self.layout.label(icon='EXPORT')

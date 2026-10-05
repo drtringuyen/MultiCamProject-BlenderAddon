@@ -62,6 +62,8 @@ def record_used(scene=None):
 
 @persistent
 def _on_save_pre(_):
+    if common.is_work_window():     # the files belong to the main file
+        return
     try:
         record_used()
     except Exception as e:          # never block a save

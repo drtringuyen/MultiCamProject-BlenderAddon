@@ -148,6 +148,17 @@ def mesh_objects(objs):
     return [o for o in objs if o.type == 'MESH']
 
 
+WORK_WINDOW_KEY = "multicamproject_work_of"     # scene of a Work Window: the main .blend
+
+
+def is_work_window(scene=None):
+    """A Work Window (remesh.workfile): an untitled Blender holding one object sent out of a
+    main file. Its texture links point at the main file's real bakes: nothing here may
+    delete or recycle files."""
+    scenes = [scene] if scene is not None else list(bpy.data.scenes)
+    return any(sc.get(WORK_WINDOW_KEY) for sc in scenes)
+
+
 def output_dir(scene):
     return bpy.path.abspath(settings(scene).output_dir)
 

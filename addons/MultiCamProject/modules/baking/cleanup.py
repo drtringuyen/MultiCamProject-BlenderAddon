@@ -135,6 +135,10 @@ class MULTICAMPROJECT_OT_CheckTextures(bpy.types.Operator):
                     "of a From Original object, BAo_/BNo_ of a From Projection one) - "
                     "switching back bakes them again")
 
+    @classmethod
+    def poll(cls, context):
+        return not common.is_work_window(context.scene)  # its links are the main file's bakes
+
     def invoke(self, context, event):
         imgs, files = find(context.scene, True)
         if not imgs and not files:
