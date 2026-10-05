@@ -113,7 +113,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             if d.ba_image is None:
                 row.label(text=f"No BA_ yet: bakes from {d.bake_source.name} first", icon='INFO')
             elif fingerprint.ba_outdated(obj):
-                row.label(text="BA_ outdated: bakes from the source again first", icon='INFO')
+                row.label(text=f"BA_ outdated ({fingerprint.ba_why(obj)}): bakes from the "
+                               "source again first", icon='INFO')
             else:
                 row.label(text=f"Over BA_ {_res(d.ba_size)} from {d.bake_source.name}",
                           icon='LINKED')

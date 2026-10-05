@@ -10,6 +10,9 @@
 - **Processing material (MCP_) mixes the normals by the blend mask:** BN_ where baked, NOR_
   where projected - painting VCMix alpha now changes the shading too. NOR_ is the last Bake
   Final's; without NOR_ it is BN_ alone as before. Not an input of ALB_ (no outdated).
+- **BA_ outdated says why:** each Bake from Source now records what it depended on, and
+  04, Bake Final and the Export check name what changed (vertex / face count, mesh shape,
+  uv_normal, Bake Source, Cage, size). BA_s baked before cannot say.
 - **Normal Map > Projected** slider: where projected, 0 = BN_ + the generated detail (as
   before), 1 = the generated normal alone (against a noisy or wrong BN_).
 

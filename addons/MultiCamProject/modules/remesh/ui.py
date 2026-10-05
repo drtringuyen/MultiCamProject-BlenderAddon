@@ -155,10 +155,11 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             info.active = False
             info.label(text=f"BA_ + BN_ {_res(d.ba_size)} (packed, not final) · "
                             f"{d.last_ba_seconds:.1f} s", icon='IMAGE_RGB')
-            if fingerprint.ba_outdated(obj):
+            why = fingerprint.ba_why(obj)
+            if why:
                 warn = box.row()
                 warn.alert = True
-                warn.label(text="Mesh or uv_normal changed - bake from source again", icon='ERROR')
+                warn.label(text=f"{why[:1].upper()}{why[1:]} - bake from source again", icon='ERROR')
             if d.ba_far_share > 0.02 and d.ba_fit_cage > d.cage:
                 row = box.row(align=True)
                 warn = row.row(align=True)

@@ -54,6 +54,8 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                               description="BN_<name>: normal baked from the Bake Source (packed)")
     ba_fingerprint: StringProperty(description="State of the mesh and uv_normal at the last "
                                                "Bake from Source")
+    ba_parts: StringProperty(description="JSON: what the last Bake from Source depended on, "
+                                         "readable (fingerprint.ba_why)")
     ba_size: IntProperty(description="Resolution of the last Bake from Source (0 = never)")
     ba_far_share: FloatProperty(description="Share of the low poly farther from the source "
                                             "than the Cage at the last Bake from Source")

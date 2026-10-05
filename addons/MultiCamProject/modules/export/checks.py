@@ -361,8 +361,8 @@ def check_state(obj):
         out.append(Issue(obj.name, 'DECIMATE', "Decimate not applied (03) - left out of the FBX",
                          ERROR))
     if fingerprint.ba_outdated(obj):
-        out.append(Issue(obj.name, 'OUTDATED', "BA_ outdated - the mesh or uv_normal changed "
-                         "since Bake from Source", WARNING))
+        out.append(Issue(obj.name, 'OUTDATED', f"BA_ outdated - {fingerprint.ba_why(obj)}",
+                         WARNING))
     elif fingerprint.is_outdated(obj):
         out.append(Issue(obj.name, 'OUTDATED', "outdated - the projection changed since the bake",
                          WARNING))

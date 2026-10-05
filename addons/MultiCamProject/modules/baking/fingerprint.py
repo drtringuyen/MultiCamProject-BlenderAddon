@@ -5,6 +5,7 @@ Two levels:
       BA_ outdates ALB_ too.
 Cheap: no image is ever loaded (paths only)."""
 import hashlib
+import json
 import time
 
 import bpy
@@ -36,9 +37,7 @@ def _source_parts(obj):
             _vec_checksum(uv, 2) if uv is not None else "no uv_normal"]
 
 
-def source_state(obj, cached=False, cage=None):
-    """Hash of what Bake from Source depends on: the low poly's shape and uv_normal, the
-    Bake Source (by name and size) and its own Cage (`cage`: try another value)."""
+def _source_list(obj, cached=False, cage=None):
     d = common.data(obj)
     src = d.bake_source
     parts = list(cache.get(obj, "source_parts", _source_parts) if cached else _source_parts(obj))
@@ -46,12 +45,27 @@ def source_state(obj, cached=False, cage=None):
         parts += [src.name, src.data.name if src.data else "", len(src.data.vertices)
                   if src.type == 'MESH' else 0]
     parts.append(round(common.cage(obj) if cage is None else cage, 5))
-    return hashlib.sha1(repr(parts).encode()).hexdigest()
+    return parts
+
+
+def source_state(obj, cached=False, cage=None):
+    """Hash of what Bake from Source depends on: the low poly's shape and uv_normal, the
+    Bake Source (by name and size) and its own Cage (`cage`: try another value)."""
+    return hashlib.sha1(repr(_source_list(obj, cached, cage)).encode()).hexdigest()
+
+
+def _named(parts):
+    """The parts by what they are - stored readable, so the panel can say what changed."""
+    return {"mesh": repr(parts[:2]), "shape": repr(parts[2]), "uv_normal": repr(parts[3]),
+            "Bake Source": repr(parts[4:-1]), "Cage": repr(parts[-1])}
 
 
 def stamp_source(obj):
-    """What a Bake from Source stores: the state + when (so ALB_ sees every new BA_)."""
-    return f"{source_state(obj)}:{time.time():.0f}"
+    """What a Bake from Source stores: the state + when (so ALB_ sees every new BA_). Also
+    keeps the parts readable in ba_parts (ba_why)."""
+    parts = _source_list(obj)
+    common.data(obj).ba_parts = json.dumps(_named(parts))
+    return f"{hashlib.sha1(repr(parts).encode()).hexdigest()}:{time.time():.0f}"
 
 
 def ba_outdated(obj):
@@ -63,6 +77,28 @@ def ba_outdated(obj):
     if d.ba_size and d.ba_size != common.resolution(obj):
         return True
     return d.ba_fingerprint.split(":")[0] != source_state(obj, cached=True)
+
+
+_WHY = {"mesh": "vertex / face count", "shape": "mesh shape", "uv_normal": "uv_normal",
+        "Bake Source": "Bake Source", "Cage": "Cage"}
+
+
+def ba_why(obj):
+    """Why BA_ is outdated, in words ('' = it is not)."""
+    if not ba_outdated(obj):
+        return ""
+    d = common.data(obj)
+    if d.ba_size and d.ba_size != common.resolution(obj):
+        return f"baked at {d.ba_size // 1024}K, set to {common.resolution(obj) // 1024}K"
+    try:
+        old = json.loads(d.ba_parts) if d.ba_parts else None
+    except ValueError:
+        old = None
+    if not old:
+        return "mesh, uv_normal or Bake Source changed (not recorded before 2026-10-05)"
+    now = _named(_source_list(obj, cached=True))
+    changed = [_WHY[k] for k in _WHY if old.get(k) != now[k]]
+    return f"{', '.join(changed) or 'something'} changed since Bake from Source"
 
 
 def _checksum(attr, field, alpha=None):
