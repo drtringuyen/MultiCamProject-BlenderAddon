@@ -52,6 +52,15 @@ def labeled(context, layout, label, units=LABEL_UNITS):
     return split.row(align=True)
 
 
+def _draw_original(row, obj):
+    """[original picker] [Cage]: as in Cutting & Modelling (the Cage is the object's own)."""
+    d = common.data(obj)
+    row.prop(d, "bake_source", text="", icon='OUTLINER_OB_MESH')
+    cage = row.row(align=True)
+    cage.ui_units_x = 4.5
+    cage.prop(d, "cage", text="Cage")
+
+
 class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     """06 Bake Final: ALB_ (the Processing material baked onto the object) and NOR_, the
     final 8K textures in MAT_"""
@@ -109,7 +118,6 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         row = split.row(align=True)
         row.prop_enum(s, "bake_what", 'ALBEDO')
         row.prop_enum(s, "bake_what", 'NORMAL')
-        row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
         row.prop_enum(s, "bake_what", 'BOTH')
         self._draw_route(box, obj)
         info = box.column(align=True)
@@ -188,16 +196,16 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         Refresh fixed show below, never in a popup."""
         probs = matsync.problems(obj) if matsync.in_scope(obj) else []
         kinds = {k for k, _t in probs}
+        if not matsync.is_projection(obj) and not common.data(obj).handmade:
+            # no projection: the original it bakes from (Bake Source) + Cage on top
+            _draw_original(layout.row(align=True), obj)
         row = layout.row(align=True)
         cam = getattr(obj, "multicamproject_cam", None)
         for kind, data, ok_icon, enabled in (
                 ('MCP', cam, 'NODE_MATERIAL', matsync.is_projection(obj)),
                 ('MAT', common.data(obj), 'SHADING_TEXTURE', True)):
             if kind == 'MCP' and not enabled:
-                # no projection: the original it bakes from (Bake Source) instead
-                b = row.row(align=True)
-                b.prop(common.data(obj), "bake_source", text="", icon='OUTLINER_OB_MESH')
-                continue
+                continue            # no projection material: MAT_ takes the whole row
             b = row.row(align=True)
             b.enabled = enabled and data is not None
             b.alert = kind in kinds
@@ -211,7 +219,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         if (matsync.is_projection(obj) and not common.data(obj).handmade
                 and route.uses_original(obj)):
             # Mixed / From Original with a projection: the original it bakes from as well
-            layout.prop(common.data(obj), "bake_source", text="", icon='OUTLINER_OB_MESH')
+            _draw_original(layout.row(align=True), obj)
         if probs:
             col = layout.column(align=True)
             col.alert = True
@@ -272,10 +280,60 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
 
 
-class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
-    """The normal map's options, opened from the gear next to the Normal toggle"""
-    bl_label = "Normal Map"
-    bl_idname = "MULTICAMPROJECT_PT_normal_settings"
+def _draw_normal_settings(layout, context):
+    """The normal map's options (first part of the bake settings' gear)."""
+    s = common.settings(context.scene)
+    obj = context.active_object
+    col = layout.column()
+    col.label(text="Normal Map", icon='NORMALS_FACE')
+    src = s.nor_source
+    ai = src == 'AI'
+    d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
+    baked = False
+    if d is not None and not d.handmade and route.get(obj) == route.ORIGINAL:
+        # From Original: BNo_ itself, or generated from BAo_ with the engine below
+        split = col.split(factor=0.34, align=True)
+        split.label(text="From Original")
+        split.prop(d, "original_normal", text="")
+        baked = d.original_normal == 'BAKED'
+    engine_col = col.column()
+    engine_col.active = not baked
+    col = engine_col
+    # [Lite / AI v] [High-pass v] - the engine, then Lite's method
+    split = col.split(factor=0.34, align=True)
+    split.label(text="Generate Engine")
+    row = split.row(align=True)
+    row.menu("MULTICAMPROJECT_MT_normal_engine", text="AI" if ai else "Lite",
+             icon='LIGHT_SUN' if ai else 'IMAGE_RGB')
+    if not ai:
+        row.menu("MULTICAMPROJECT_MT_normal_method", text=normal.LABELS.get(src, src))
+
+    # the detail's settings; BN_ (from the Bake Source) is the base where it exists
+    opts = col.column(align=True)
+    if src == 'HIGHPASS':
+        row = opts.row(align=True)
+        row.prop(s, "nor_strength", text="Strength")
+        row.prop(s, "nor_radius", text="Radius")
+        opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
+    note = col.row()
+    note.active = False
+    if d is not None:
+        note.label(text={route.ORIGINAL: ("NOR_ = BNo_ (the engine is not used)" if baked else
+                                          "NOR_ generated from BAo_ with this"),
+                         route.PROJECTION: "BNp_ from BAp_ with this; NOR_ = BNp_",
+                         route.MIXED: "BNp_ from BAp_ with this; NOR_ = BNo_ -> BNp_"}[
+                             route.get(obj)], icon='INFO')
+    if obj is not None and obj.type == 'MESH':
+        why = normal.problem(obj, context.scene, src)
+        if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
+            col.label(text=why, icon='ERROR')
+
+
+class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
+    """Bake settings, opened from the gear at the end of the Bake button: the normal map's
+    options first, then the bake's"""
+    bl_label = "Bake Settings"
+    bl_idname = "MULTICAMPROJECT_PT_bake_settings"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'HEADER'           # a popover only - not drawn in the sidebar
     bl_ui_units_x = 17
@@ -283,62 +341,9 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
     def draw(self, context):
         s = common.settings(context.scene)
         obj = context.active_object
-        col = self.layout.column()
-        col.label(text="Normal Map", icon='NORMALS_FACE')
-        src = s.nor_source
-        ai = src == 'AI'
-        d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
-        baked = False
-        if d is not None and not d.handmade and route.get(obj) == route.ORIGINAL:
-            # From Original: BNo_ itself, or generated from BAo_ with the engine below
-            split = col.split(factor=0.34, align=True)
-            split.label(text="From Original")
-            split.prop(d, "original_normal", text="")
-            baked = d.original_normal == 'BAKED'
-        engine_col = col.column()
-        engine_col.active = not baked
-        col = engine_col
-        # [Lite / AI v] [High-pass v] - the engine, then Lite's method
-        split = col.split(factor=0.34, align=True)
-        split.label(text="Generate Engine")
-        row = split.row(align=True)
-        row.menu("MULTICAMPROJECT_MT_normal_engine", text="AI" if ai else "Lite",
-                 icon='LIGHT_SUN' if ai else 'IMAGE_RGB')
-        if not ai:
-            row.menu("MULTICAMPROJECT_MT_normal_method", text=normal.LABELS.get(src, src))
-
-        # the detail's settings; BN_ (from the Bake Source) is the base where it exists
-        opts = col.column(align=True)
-        if src == 'HIGHPASS':
-            row = opts.row(align=True)
-            row.prop(s, "nor_strength", text="Strength")
-            row.prop(s, "nor_radius", text="Radius")
-            opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
-        note = col.row()
-        note.active = False
-        if d is not None:
-            note.label(text={route.ORIGINAL: ("NOR_ = BNo_ (the engine is not used)" if baked else
-                                              "NOR_ generated from BAo_ with this"),
-                             route.PROJECTION: "BNp_ from BAp_ with this; NOR_ = BNp_",
-                             route.MIXED: "BNp_ from BAp_ with this; NOR_ = BNo_ -> BNp_"}[
-                                 route.get(obj)], icon='INFO')
-        if obj is not None and obj.type == 'MESH':
-            why = normal.problem(obj, context.scene, src)
-            if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):
-                col.label(text=why, icon='ERROR')
-
-
-class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
-    """Bake settings, opened from the gear in the Normal Map header"""
-    bl_label = "Bake Settings"
-    bl_idname = "MULTICAMPROJECT_PT_bake_settings"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'HEADER'           # a popover only - not drawn in the sidebar
-    bl_ui_units_x = 14
-
-    def draw(self, context):
-        s = common.settings(context.scene)
-        obj = context.active_object
+        _draw_normal_settings(self.layout, context)
+        self.layout.separator()
+        self.layout.label(text="Bake", icon='RENDER_STILL')
         col = self.layout.column(align=True)
         col.use_property_split = True
         col.use_property_decorate = False
@@ -396,7 +401,7 @@ class MULTICAMPROJECT_MT_normal_method(bpy.types.Menu):
 
 
 _classes = (MULTICAMPROJECT_MT_normal_engine, MULTICAMPROJECT_MT_normal_method,
-            MULTICAMPROJECT_PT_BakeSettings, MULTICAMPROJECT_PT_NormalSettings)
+            MULTICAMPROJECT_PT_BakeSettings)
 
 
 def register():
