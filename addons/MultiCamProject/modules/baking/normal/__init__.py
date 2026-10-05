@@ -1,7 +1,8 @@
 """NOR_<name>: 16-bit, Non-Color, OpenGL (Y+), always <output dir>/NOR_<name>.png.
 
     with BN_ (baked from the Bake Source):  BN_ where the mask says baked, BN_ with the
-        albedo's detail on top (Reoriented Normal Mapping) where it says projected
+        albedo's detail on top (Reoriented Normal Mapping) where it says projected -
+        Projected (nor_projected) moves that toward the detail alone
     without BN_:                            the albedo's detail alone
 
 The detail comes from ALB_: High-pass (Lite) or the AI model (Full build, onnxruntime)."""
@@ -70,9 +71,12 @@ def compose_steps(context, obj, detail, size):
     base = _read_resized(d.bn_image, size)
     mask = yield from engine.bake_mask_steps(context, obj, size)
     yield jobs.Step("Normal: combining with BN_")
-    top = rnm(base, detail)
     if mask is None:            # no projection: the source's normals alone
         return base
+    top = rnm(base, detail)
+    g = np.float32(common.settings(context.scene).nor_projected)
+    if g > 0:                   # toward the detail alone (where BN_ is noisy or wrong)
+        top = top * (np.float32(1.0) - g) + detail * g
     m = mask[..., None]
     out = base * (np.float32(1.0) - m) + top * m
     n = out * np.float32(2.0) - np.float32(1.0)
@@ -151,4 +155,7 @@ def generate_steps(context, obj, source):
     record_time(d, source, size, d.last_nor_seconds)
     material.build(obj, scene)
     final.write_inputs(obj, scene)
+    if getattr(getattr(obj, "multicamproject_cam", None), "is_setup", False):
+        from ...camera_project import core as cp
+        cp.ensure_material(obj)         # MCP_ previews NOR_ where projected
     return d.last_nor_seconds

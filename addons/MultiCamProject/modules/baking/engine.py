@@ -549,7 +549,7 @@ def _bake_from_source(context, obj):
                 configure(scene, 'EMIT')
                 yield jobs.Step("Bake from Source: colors (BA_)")
                 yield from _bake(context, obj, [obj, src], 'EMIT', size, ba,
-                                 use_selected_to_active=True, cage_extrusion=s.cage_extrusion)
+                                 use_selected_to_active=True, cage_extrusion=common.cage(obj))
             with mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
                 configure(scene, 'NORMAL')
                 b = scene.render.bake
@@ -559,7 +559,7 @@ def _bake_from_source(context, obj):
                 hp.select_set(True)
                 yield jobs.Step("Bake from Source: surface (BN_)")
                 yield from _bake(context, obj, sel, 'NORMAL', size, bn, use_selected_to_active=True,
-                                 cage_extrusion=s.cage_extrusion, normal_space='TANGENT')
+                                 cage_extrusion=common.cage(obj), normal_space='TANGENT')
     except Exception:
         bpy.data.images.remove(ba)      # the old BA_ / BN_ stay as they were
         bpy.data.images.remove(bn)
@@ -585,13 +585,13 @@ def source_distance(obj, src, samples=4000):
     low poly's vertices to the source's surface. Rays start Cage outside the low poly: a
     part farther away than that misses the source (black in BA_) or hits the wrong side."""
     from mathutils.bvhtree import BVHTree
-    s = common.settings(bpy.context.scene)
+    cage = common.cage(obj)
     dg = bpy.context.evaluated_depsgraph_get()
     tree = BVHTree.FromObject(src.evaluated_get(dg), dg)
     me = obj.data
     n = len(me.vertices)
     if not n:
-        return 0.0, 0.0, s.cage_extrusion
+        return 0.0, 0.0, cage
     co = np.empty(n * 3, np.float32)
     me.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)[np.linspace(0, n - 1, min(samples, n)).astype(int)]
@@ -601,7 +601,7 @@ def source_distance(obj, src, samples=4000):
                      for p in co.tolist()], np.float32)
     scale = max(src.matrix_world.to_scale())        # the source's local units -> world
     dist *= scale
-    return (float((dist > s.cage_extrusion).mean()), float(dist.max()),
+    return (float((dist > cage).mean()), float(dist.max()),
             float(np.percentile(dist, 99)) * 1.1)
 
 

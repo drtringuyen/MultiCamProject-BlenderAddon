@@ -258,9 +258,13 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
             row.prop(s, "nor_radius", text="Radius")
             opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
         d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
+        has_bn = d is not None and d.bn_image
+        if has_bn:
+            row = col.row(align=True)
+            row.prop(s, "nor_projected", text="Projected: BN_ + detail <> generated", slider=True)
         note = col.row()
         note.active = False
-        note.label(text="BN_ + this detail where projected" if d is not None and d.bn_image
+        note.label(text="Where baked (VCMix alpha 0): BN_ alone" if has_bn
                    else "No BN_: this detail alone", icon='INFO')
         if obj is not None and obj.type == 'MESH':
             why = normal.problem(obj, context.scene, src)
@@ -283,7 +287,8 @@ class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
         col.use_property_split = True
         col.use_property_decorate = False
         col.prop(s, "output_dir", text="Folder")
-        col.prop(s, "cage_extrusion", text="Cage")
+        if obj is not None and obj.type == 'MESH':
+            col.prop(common.data(obj), "cage", text=f"Cage ({obj.name})")
         row = col.row(align=True)
         row.prop(s, "smooth_source", text="Smooth BN_ Source")
         sub = row.row(align=True)

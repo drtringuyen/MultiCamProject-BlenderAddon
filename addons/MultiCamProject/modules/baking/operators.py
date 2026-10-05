@@ -174,8 +174,8 @@ def source_poll_problem(obj):
 
 
 class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
-    """Fit Cage: the Cage (scene-wide) to what reaches 99% of the active low poly, measured
-    at its last Bake from Source. Then bake from source again"""
+    """Fit Cage: each selected low poly's own Cage to what reaches 99% of it, measured at its
+    last Bake from Source. Then bake from source again"""
     bl_idname = "multicamproject.fit_cage"
     bl_label = "Fit Cage"
     bl_options = {'REGISTER', 'UNDO'}
@@ -186,10 +186,15 @@ class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
         return obj is not None and obj.type == 'MESH' and common.data(obj).ba_fit_cage > 0
 
     def execute(self, context):
+        objs = [o for o in common.selected_meshes(context) if common.data(o).ba_fit_cage > 0]
+        if context.active_object not in objs:
+            objs.append(context.active_object)
+        for o in objs:      # the others only grow: a smaller Cage would outdate them for nothing
+            d = common.data(o)
+            if o == context.active_object or d.ba_fit_cage > d.cage:
+                d.cage = d.ba_fit_cage
         d = common.data(context.active_object)
-        s = common.settings(context.scene)
-        s.cage_extrusion = d.ba_fit_cage
-        self.report({'INFO'}, f"Cage {s.cage_extrusion:.3f} m - bake from source again")
+        self.report({'INFO'}, f"Cage {d.cage:.3f} m - bake from source again")
         return {'FINISHED'}
 
 

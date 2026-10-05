@@ -28,6 +28,11 @@ def resolution(obj, scene=None):
     return settings(scene or bpy.context.scene).resolution
 
 
+def cage(obj):
+    """`obj`'s Cage Extrusion for Bake from Source (one per object)."""
+    return obj.multicamproject_bake.cage
+
+
 def margin_px(s, size=None):
     """The bake margin at `size` (default: the scene's resolution); Margin is set at 8K."""
     size = size or s.resolution

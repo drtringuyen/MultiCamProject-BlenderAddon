@@ -36,16 +36,16 @@ def _source_parts(obj):
             _vec_checksum(uv, 2) if uv is not None else "no uv_normal"]
 
 
-def source_state(obj, cached=False):
+def source_state(obj, cached=False, cage=None):
     """Hash of what Bake from Source depends on: the low poly's shape and uv_normal, the
-    Bake Source (by name and size) and the Cage."""
+    Bake Source (by name and size) and its own Cage (`cage`: try another value)."""
     d = common.data(obj)
     src = d.bake_source
     parts = list(cache.get(obj, "source_parts", _source_parts) if cached else _source_parts(obj))
     if src is not None:
         parts += [src.name, src.data.name if src.data else "", len(src.data.vertices)
                   if src.type == 'MESH' else 0]
-    parts.append(round(common.settings(bpy.context.scene).cage_extrusion, 5))
+    parts.append(round(common.cage(obj) if cage is None else cage, 5))
     return hashlib.sha1(repr(parts).encode()).hexdigest()
 
 
@@ -87,6 +87,8 @@ def _material_images(mat):
         return []
     out = []
     for n in mat.node_tree.nodes:
+        if n.name == cp.GENERATED_NORMAL:       # NOR_ preview in MCP_: a result, not an input
+            continue
         if n.type == 'TEX_IMAGE' and n.image:
             out.append((n.name, n.image.name, n.image.filepath))
         elif n.type == 'VALUE':

@@ -39,7 +39,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         if s is not None:
             cage = row.row(align=True)
             cage.ui_units_x = 4.5
-            cage.prop(s, "cage_extrusion", text="Cage")
+            cage.prop(d, "cage", text="Cage")
 
         retopo = wf.is_retopo(obj)
         if retopo:
@@ -159,7 +159,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 warn = box.row()
                 warn.alert = True
                 warn.label(text="Mesh or uv_normal changed - bake from source again", icon='ERROR')
-            if d.ba_far_share > 0.02 and d.ba_fit_cage > s.cage_extrusion:
+            if d.ba_far_share > 0.02 and d.ba_fit_cage > d.cage:
                 row = box.row(align=True)
                 warn = row.row(align=True)
                 warn.alert = True

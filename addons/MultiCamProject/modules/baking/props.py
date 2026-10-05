@@ -60,6 +60,9 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     ba_far_max: FloatProperty(description="Largest low poly - source distance at the last "
                                           "Bake from Source", unit='LENGTH')
     ba_fit_cage: FloatProperty(description="Cage that reaches 99% of the low poly", unit='LENGTH')
+    cage: FloatProperty(name="Cage Extrusion", default=0.02, min=0.0, unit='LENGTH',
+                        description="Bake from Source: how far rays start outside this low "
+                                    "poly's surface to find the high poly (each object its own)")
     last_ba_seconds: FloatProperty()
     material: PointerProperty(
         type=bpy.types.Material, name="Final Material",
@@ -178,11 +181,15 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
                             description="High-pass radius in pixels at 8K (scaled with the "
                                         "resolution): details smaller than this become relief, "
                                         "larger shading is ignored")
+    nor_projected: FloatProperty(
+        name="Projected", default=0.0, min=0.0, max=1.0, subtype='FACTOR',
+        description="Where projected: 0 = BN_ with the generated detail on top, 1 = the "
+                    "generated normal alone (against a noisy or wrong BN_). Where baked: BN_")
     nor_invert: BoolProperty(name="Invert", default=False,
                              description="Dark = raised instead of dark = recessed")
+    # before 2026-10-05 the Cage was scene-wide: only read once, to give each object its own
     cage_extrusion: FloatProperty(name="Cage Extrusion", default=0.02, min=0.0, unit='LENGTH',
-                                  description="Bake from Source: how far rays start outside the "
-                                              "low poly's surface to find the high poly")
+                                  options={'HIDDEN'})
     smooth_source: BoolProperty(name="Smooth Source", default=False,
                                 description="Bake from Source: BN_ from a smoothed temporary "
                                             "copy of the high poly (against scan noise)")

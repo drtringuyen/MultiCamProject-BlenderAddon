@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Cage per object, normals follow VCMix in Processing (2026-10-05)
+- **Cage per object.** The Cage next to the Bake Source (and in Bake Settings) is the active
+  object's own; changing it outdates only that object's BA_. **Fit Cage** sets the active
+  object to its fit and grows (never shrinks) the other selected ones. Once per file, every
+  object gets the Cage its BA_ was baked with (else the old scene Cage).
+- **Processing material (MCP_) mixes the normals by the blend mask:** BN_ where baked, NOR_
+  where projected - painting VCMix alpha now changes the shading too. NOR_ is the last Bake
+  Final's; without NOR_ it is BN_ alone as before. Not an input of ALB_ (no outdated).
+- **Normal Map > Projected** slider: where projected, 0 = BN_ + the generated detail (as
+  before), 1 = the generated normal alone (against a noisy or wrong BN_).
+
 ### Handmade: new UVs, rebaked on itself (2026-10-01)
 - **Edit UV / Rebake from uv_old / Finish** under the EXPORT list for a handmade object (no
   Remesh copy; 0C Remesh is blocked on handmade objects). Edit UV keeps the painted layout as

@@ -226,6 +226,7 @@ BAKED_TAG = "multicamproject_baked"     # MAT_<name> built by the baking module
 LEGACY_PREFIX = "MATMCP_"           # material of the removed Convert Material button
 BAKED_ALBEDO = "Baked Albedo"       # the BA_ Image Texture node
 BAKED_NORMAL = "Baked Normal"       # the BN_ Image Texture node
+GENERATED_NORMAL = "Generated Normal"   # the NOR_ Image Texture node (preview, not an input)
 NO_BAKE = "No Bake"                 # the grey RGB node while there is no BA_
 UV_INDEX = "uv_index"               # face attribute: the face's material slot
 UV_NORMAL = "uv_normal"             # the user's non-overlapping bake UV (never touched here)
@@ -295,6 +296,33 @@ def baked_images(obj):
     if d is None:
         return None, None
     return getattr(d, "ba_image", None), getattr(d, "bn_image", None)
+
+
+def generated_normal(obj):
+    """NOR_ of the object, shown where projected - only next to BA_ and BN_."""
+    d = getattr(obj, "multicamproject_bake", None)
+    ba, bn = baked_images(obj)
+    return getattr(d, "nor_image", None) if ba is not None and bn is not None else None
+
+
+def _build_normal_mix(b, baked_normal, nor, mask):
+    """BN_ where baked, NOR_ (BN_ + the albedo's detail) where projected - by the same blend
+    mask as the colors, so painting VCMix alpha shows both. NOR_ is the last Bake Final's."""
+    f = b.t.nodes["BAKED"]
+    tex = _named(b.n("ShaderNodeTexImage", (400, -636), f, image=nor), GENERATED_NORMAL)
+    tex.label = "NOR (Generated Normal)"
+    b.link(b.t.nodes["Baked UV"].outputs["UV"], tex.inputs["Vector"])
+    nm = _named(b.n("ShaderNodeNormalMap", (700, -636), f, space='TANGENT', uv_map=UV_NORMAL),
+                "Generated Normal Map")
+    b.link(tex.outputs["Color"], nm.inputs["Color"])
+    f = b.t.nodes["BLEND"]
+    mix = _named(b.n("ShaderNodeMix", (620, -300), f, data_type="VECTOR"), "Normal Mix")
+    b.link(mask, mix.inputs[0])
+    b.link(baked_normal, gn_builder._sock(mix.inputs, "A"))
+    b.link(nm.outputs["Normal"], gn_builder._sock(mix.inputs, "B"))
+    norm = _named(b.vmath("NORMALIZE", gn_builder._sock(mix.outputs, "Result"), None,
+                          (800, -300), f), "Normal Mix Normalize")
+    return norm.outputs["Vector"]
 
 
 def _build_baked(b, ba, bn):
@@ -463,6 +491,9 @@ def build_material(obj, warnings=None):
     b.link(projected, gn_builder._sock(mix.inputs, "B"))
     b.link(gn_builder._sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
     if normal is not None:
+        nor = generated_normal(obj)
+        if nor is not None:
+            normal = _build_normal_mix(b, normal, nor, mask)
         b.link(normal, bsdf.inputs["Normal"])
     # the slot cameras' photos right away: a rebuild (e.g. after Bake from Source) must
     # not wait for apply_slots
@@ -497,8 +528,10 @@ def _baked_ok(nodes, obj):
     if ba is None:
         return nodes.get(NO_BAKE) is not None
     tex, ntex = nodes.get(BAKED_ALBEDO), nodes.get(BAKED_NORMAL)
+    gtex = nodes.get(GENERATED_NORMAL)
     return (tex is not None and tex.image == ba
-            and (ntex.image if ntex is not None else None) == bn)
+            and (ntex.image if ntex is not None else None) == bn
+            and (gtex.image if gtex is not None else None) == generated_normal(obj))
 
 
 def _material_ok(mat, n, obj=None):
