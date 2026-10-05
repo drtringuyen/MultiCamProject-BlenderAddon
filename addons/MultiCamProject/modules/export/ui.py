@@ -84,9 +84,9 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         else:
             row.prop(item, "name", text="", emboss=False)
         right = layout.row(align=True)
-        if module_manager.is_loaded("remesh"):
-            from ..remesh import workfile
-            workfile.draw_row_button(right, item)      # Send Out / Receive + X
+        if module_manager.is_loaded("linking"):
+            from ..linking import ui as link_ui
+            link_ui.draw_row_button(right, item)       # Send Out / Receive + X
         hand = right.row(align=True)
         hand.ui_units_x = 1.1
         hand.prop(bake, "handmade", text="", icon='VIEW_PAN', toggle=True)

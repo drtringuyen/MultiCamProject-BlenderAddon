@@ -1,8 +1,8 @@
-"""Run by workfile.send_out in a new Blender (never imported): the object written by the
+"""Run by linking.core.send_out in a new Blender (never imported): the object written by the
 main file - with its cameras, original, materials and GN - goes into an empty scene, its
 transforms applied and the parents dropped. The file stays untitled: nothing saves it.
 
-blender --python workfile_build.py -- <settings.json>
+blender --python build.py -- <settings.json>
 """
 import importlib
 import json
@@ -15,9 +15,9 @@ from mathutils import Matrix
 with open(sys.argv[sys.argv.index("--") + 1], encoding="utf-8") as _f:
     settings = json.load(_f)
 
-# workfile.WORK_KEY / WORK_OBJECT_KEY / WORK_ID_KEY (this script runs outside the add-on)
+# core.WORK_KEY / WORK_OBJECT_KEY / WORK_ID_KEY / WORK_BAKES_KEY (this script runs outside the add-on)
 SCENE_KEYS = {"main": "multicamproject_work_of", "object": "multicamproject_work_object",
-              "id": "multicamproject_work_id"}
+              "id": "multicamproject_work_id", "work_bakes": "multicamproject_work_bakes"}
 
 
 def _apply_world(objs):

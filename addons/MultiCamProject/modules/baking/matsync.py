@@ -336,6 +336,10 @@ def _objects_changed():
         scene = bpy.context.scene
         now = {o.as_pointer(): o for o in bpy.data.objects}
         new = [o for p, o in now.items() if p not in _known]
+        from ... import module_manager
+        if module_manager.is_loaded("linking"):
+            from ..linking import core as link
+            link.forget_copies(new)         # a Shift+D copy is not linked to the window
         _known.clear()
         _known.update(now)
         _count[0] = len(bpy.data.objects)

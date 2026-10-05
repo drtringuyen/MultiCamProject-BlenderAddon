@@ -1,19 +1,24 @@
-"""Work Window: send one object out of the main file into a second, unsaved Blender -
+"""Linking: the Work Window. Send one object out of the main file into a second, unsaved Blender -
 with its whole setup (MCP_ / MAT_, GN, its cameras and photos, its Bake Source) - model,
 paint VCMix and bake there, then receive only its mesh and bakes back.
 
 Main file    -> Send Out (EXPORT row / Cutting & Modelling): the object is written with
                 everything it points to into <temp>/mcp_workfile/<id>/open.blend and a new
-                Blender opens it (workfile_build.py): transforms applied, parents (the
+                Blender opens it (build.py): transforms applied, parents (the
                 `transform` empty) gone, bakes into <id>/bakes. The object records the
                 send-out (OUT_KEY); the main file is not changed otherwise.
 Work window  -> Send Back: the base mesh (modifiers live on both sides), which modifiers
                 are left, slot picks and per-object shifts, the bakes made there and which
                 of them were up to date -> <id>/mesh.blend + manifest.json.
 Main file    -> Receive: Replace (default) swaps the mesh data, removes the modifiers the
-                window applied, takes the slots / shifts and bakes, refreshes the materials
-                and stamps what was up to date there. Add joins the window's mesh instead
-                (nothing else). Cancel only forgets the send-out.
+                window applied, takes the camera list, slots / shifts and bakes, refreshes
+                the materials and stamps what was up to date there. Add joins the window's
+                mesh instead (nothing else). The link stays: every new Send Back can be
+                received; X ends it. Send Out is blocked while linked.
+Saved window -> its bakes move to <main bake folder>/_work/<object>/ (the temp folder is
+                cleaned) and it tells the main file where it is (window.json): the row's
+                open button opens it again, still linked.
+The link is the send-out id: on the main object (OUT_KEY) and in the window's scene.
 """
 import hashlib
 import json
@@ -24,18 +29,22 @@ import time
 import uuid
 
 import bpy
+from bpy.app.handlers import persistent
 
-from . import workflow as wf
+from ..remesh import workflow as wf
 
 OUT_KEY = "multicamproject_out"             # main object: the send-out record (JSON)
 WORK_KEY = "multicamproject_work_of"        # work window scene: the main .blend
 WORK_OBJECT_KEY = "multicamproject_work_object"     # work window scene: the object's name
 WORK_ID_KEY = "multicamproject_work_id"     # work window scene: the send-out id
+WORK_BAKES_KEY = "multicamproject_work_bakes"   # work window scene: main bake folder/_work/<obj>
+WINDOW_FILE = "window.json"     # the saved work file's path, written by the window
+WORK_SUBDIR = "_work"           # in the main bake folder: saved work windows' bakes
 MANIFEST = "manifest.json"
 MESH_FILE = "mesh.blend"
 OPEN_FILE = "open.blend"
 SETTINGS_FILE = "settings.json"
-KEEP_DAYS = 3           # hand-off folders older than this go at the next Send Out
+KEEP_DAYS = 30          # unlinked hand-off folders older than this go at the next Send Out
 # the textures Receive takes: pointer on multicamproject_bake -> name function in common
 TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
             ("bap_image", "bap_name", False), ("bnp_image", "bnp_name", True),
@@ -66,9 +75,13 @@ def bakes_dir(job_id):
 
 
 def _clear_old_jobs():
+    """Old hand-off folders go - never one an object of this file is still linked to."""
     now = time.time()
+    linked = {r["id"] for r in (out_record(o) for o in bpy.data.objects) if r}
     for name in os.listdir(exchange_dir()):
         p = os.path.join(exchange_dir(), name)
+        if name in linked:
+            continue
         try:
             if os.path.isdir(p) and now - os.path.getmtime(p) > KEEP_DAYS * 86400:
                 shutil.rmtree(p, ignore_errors=True)
@@ -106,6 +119,53 @@ def sent_back(obj):
         return None
 
 
+def new_send(obj):
+    """The manifest when the window sent back something not received yet, else None."""
+    man = sent_back(obj)
+    if man is None:
+        return None
+    return man if man.get("time", 0) > out_record(obj).get("received", 0) else None
+
+
+def saved_window(obj):
+    """The linked work window's saved file ('' = not saved / gone)."""
+    rec = out_record(obj)
+    if rec is None:
+        return ""
+    try:
+        with open(os.path.join(job_dir(rec["id"]), WINDOW_FILE), encoding="utf-8") as f:
+            path = json.load(f).get("path", "")
+    except (OSError, ValueError):
+        return ""
+    return path if path and os.path.isfile(path) else ""
+
+
+def link_text(obj):
+    path = saved_window(obj)
+    return (f"Linked to {os.path.basename(path)}" if path
+            else "Linked to an unsaved work window")
+
+
+def forget_copies(new_objs):
+    """A copy (Shift+D) of a linked object carries the same record: only the original stays
+    linked."""
+    new = set(new_objs)
+    for o in new_objs:
+        rec = out_record(o)
+        if rec is None:
+            continue
+        if any(x not in new and (out_record(x) or {}).get("id") == rec["id"]
+               for x in bpy.data.objects):
+            del o[OUT_KEY]
+
+
+def _stamp_record(obj, **extra):
+    """The record's placement and mesh signature as they are now (+ extra fields)."""
+    rec = out_record(obj) or {}
+    rec.update(matrix=_matrix_list(obj.matrix_world), sig=mesh_signature(obj), **extra)
+    obj[OUT_KEY] = json.dumps(rec)
+
+
 def mesh_signature(obj):
     """The mesh (shape, uv_normal) and its painted VCMix layers: edits in the main file
     while the object is out are noticed at Receive."""
@@ -124,13 +184,14 @@ def _matrix_list(m):
 
 
 def receive_warnings(obj):
-    """What changed in the main file since obj went out (Receive asks first)."""
+    """What changed in the main file since obj went out or was last received (Receive asks
+    first)."""
     rec = out_record(obj)
     if rec is None:
         return []
     out = []
     if max(abs(a - b) for a, b in zip(_matrix_list(obj.matrix_world), rec["matrix"])) > 1e-4:
-        out.append("it was moved (the mesh comes back where the object is now)")
+        out.append("it was moved (the mesh comes where the object is now)")
     if mesh_signature(obj) != rec["sig"]:
         out.append("its mesh or painting was edited here (those edits are replaced)")
     return out
@@ -231,6 +292,7 @@ def send_out(context, obj):
         "addon": __package__.rsplit(".modules", 1)[0],
         "original": src.name if src is not None else "",
         "bakes": bakes_dir(job_id), "scene": _scene_settings(scene),
+        "work_bakes": _work_bakes(scene, obj),
         "render": [scene.render.resolution_x, scene.render.resolution_y,
                    scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
         "unit_system": scene.unit_settings.system,
@@ -241,9 +303,27 @@ def send_out(context, obj):
     obj[OUT_KEY] = json.dumps({"id": job_id, "time": time.time(),
                                "matrix": _matrix_list(obj.matrix_world),
                                "sig": mesh_signature(obj)})
-    script = os.path.join(os.path.dirname(__file__), "workfile_build.py")
+    script = os.path.join(os.path.dirname(__file__), "build.py")
     subprocess.Popen([bpy.app.binary_path, "--python", script, "--", settings_path])
     return job_id
+
+
+def _work_bakes(scene, obj):
+    """Where a saved work window keeps its bakes: <main bake folder>/_work/<object> (never
+    overwrites the main file's own files; Clean only looks at the folder itself)."""
+    try:
+        from ..baking import common
+        folder = common.output_dir(scene)
+    except ImportError:
+        folder = os.path.join(os.path.dirname(bpy.data.filepath), "01.Baking")
+    return os.path.join(folder, WORK_SUBDIR, bpy.path.clean_name(obj.name))
+
+
+def open_saved(obj):
+    path = saved_window(obj)
+    if not path:
+        raise RuntimeError("The work window was not saved (or its file is gone)")
+    subprocess.Popen([bpy.app.binary_path, path])
 
 
 def cancel(obj):
@@ -315,10 +395,14 @@ def send_back(context):
         man["user_picked"] = cam.user_picked
         man["shifts"] = {it.camera.name: list(it.shift) for it in cam.shifts
                          if it.camera is not None and not cp.is_global(it.camera)}
+        man["cameras"] = [(it.camera.name, it.score, it.coverage) for it in cam.cameras
+                          if it.camera is not None]
+        man["removed"] = [r.camera.name for r in cam.removed if r.camera is not None]
+        man["coverage_filter"] = cam.coverage_filter
     try:
         from ..baking import common
         d = common.data(obj)
-        bakes = os.path.normcase(os.path.abspath(bakes_dir(job_id)))
+        bakes = os.path.normcase(os.path.abspath(common.output_dir(scene)))
         tex = {}
         for ptr, _fn, _n in TEXTURES:
             path = common.image_file(getattr(d, ptr))
@@ -400,6 +484,20 @@ def _take_cameras(obj, scene, man):
     if cam.slot_count != man["slot_count"]:
         cam["slot_count"] = int(man["slot_count"])     # raw: no re-pick from the callback
     cam.user_picked = man["user_picked"]
+    if "cameras" in man:            # the list as scored / edited in the window
+        cam.cameras.clear()
+        for name, score, cov in man["cameras"]:
+            c = bpy.data.objects.get(name)
+            if c is not None and c.type == 'CAMERA':
+                it = cam.cameras.add()
+                it.camera, it.score, it.coverage = c, score, cov
+        cam.removed.clear()
+        for name in man["removed"]:
+            c = bpy.data.objects.get(name)
+            if c is not None and c.type == 'CAMERA':
+                cam.removed.add().camera = c
+        cam["cam_index"] = -1           # raw: no solo from the callback
+        cam.coverage_filter = man["coverage_filter"]
     for name, shift in man["shifts"].items():
         c = bpy.data.objects.get(name)
         if c is not None and c.type == 'CAMERA' and not cp.is_global(c):
@@ -488,10 +586,10 @@ def _refresh(obj, scene):
 def receive(context, obj, action='REPLACE'):
     """Take back what the work window sent. REPLACE: mesh, modifiers, slots / shifts, bakes,
     materials, stamps. ADD: the window's mesh joined into obj, nothing else."""
-    man = sent_back(obj)
+    man = new_send(obj) if obj is not None and out_record(obj) else None
     rec = out_record(obj)
     if man is None or rec is None:
-        raise RuntimeError("Nothing sent back yet - press Send Back in the work window")
+        raise RuntimeError("Nothing new sent back - press Send Back in the work window")
     if obj.mode != 'OBJECT':
         raise RuntimeError("Object Mode first")
     scene = context.scene
@@ -529,200 +627,117 @@ def receive(context, obj, action='REPLACE'):
             cache.clear()
         except ImportError:
             pass
-    cancel(obj)
+    _stamp_record(obj, received=man["time"])   # linked on: the next Send Back is new
     return faces
 
 
-# ---------------------------------------------------------------- operators
+# ---------------------------------------------------------------- work window: saved
 
-def _target(context, name):
-    obj = bpy.data.objects.get(name) if name else context.active_object
-    return obj if obj is not None and obj.type == 'MESH' and not obj.library else None
-
-
-class MULTICAMPROJECT_OT_WorkSendOut(bpy.types.Operator):
-    """Send Out: work on this object in a new, unsaved Blender - its materials, cameras and
-    Bake Source come along (transforms applied there). Model, paint and bake, then Send Back
-    and Receive here"""
-    bl_idname = "multicamproject.work_send_out"
-    bl_label = "Send Out"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-
-    @classmethod
-    def poll(cls, context):
-        return context.mode == 'OBJECT' and not is_work_window(context.scene)
-
-    def execute(self, context):
-        obj = _target(context, self.object_name)
-        if obj is None:
-            return {'CANCELLED'}
-        if out_record(obj) is not None:
-            self.report({'WARNING'}, f"'{obj.name}' is already out: Receive or cancel (X) first")
-            return {'CANCELLED'}
-        try:
-            send_out(context, obj)
-        except Exception as e:
-            self.report({'ERROR'}, str(e))
-            return {'CANCELLED'}
-        self.report({'INFO'}, f"'{obj.name}' sent out: a work window is opening (unsaved)")
-        return {'FINISHED'}
-
-
-class MULTICAMPROJECT_OT_WorkReceive(bpy.types.Operator):
-    """Receive what the work window sent back"""
-    bl_idname = "multicamproject.work_receive"
-    bl_label = "Receive"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-    action: bpy.props.EnumProperty(name="Receive as", default='REPLACE', items=(
-        ('REPLACE', "Replace", "The mesh becomes the window's (with its VCMix painting); "
-                               "modifiers applied there go, slot picks, shifts and the bakes "
-                               "made there come along, materials are refreshed"),
-        ('ADD', "Add", "Join the window's mesh into this object - its own geometry stays; "
-                       "nothing else is taken")),
-        options={'SKIP_SAVE'})
-
-    @classmethod
-    def description(cls, context, props):
-        return ("Receive as Add: join the window's mesh into this object (its geometry stays)"
-                if props.action == 'ADD' else
-                "Receive: the mesh, painting, slot picks and bakes from the work window "
-                "(materials refreshed). Ctrl+Z undoes the mesh; replaced texture files are "
-                "in the Recycle Bin")
-
-    def invoke(self, context, event):
-        obj = _target(context, self.object_name)
-        why = receive_warnings(obj) if obj is not None else []
-        if why:
-            return context.window_manager.invoke_confirm(
-                self, event, title=f"Receive into '{obj.name}'?",
-                message="Since it was sent out, " + "; ".join(why), confirm_text="Receive",
-                icon='WARNING')
-        return self.execute(context)
-
-    def execute(self, context):
-        obj = _target(context, self.object_name)
-        if obj is None or sent_back(obj) is None:
-            self.report({'WARNING'}, "Nothing sent back yet - press Send Back in the work window")
-            return {'CANCELLED'}
-        try:
-            faces = receive(context, obj, self.action)
-        except Exception as e:
-            self.report({'ERROR'}, str(e))
-            return {'CANCELLED'}
-        verb = "added" if self.action == 'ADD' else "received"
-        self.report({'INFO'}, f"'{obj.name}': {faces:,} faces {verb}")
-        return {'FINISHED'}
-
-
-class MULTICAMPROJECT_OT_WorkCancel(bpy.types.Operator):
-    """Cancel the send-out: forget the work window (this object stays as it is)"""
-    bl_idname = "multicamproject.work_cancel"
-    bl_label = "Cancel Send Out"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
-
-    def execute(self, context):
-        obj = _target(context, self.object_name)
-        if obj is not None:
-            cancel(obj)
-        return {'FINISHED'}
-
-
-class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
-    """Send Back: this object's mesh (with VCMix painting), slot picks and the bakes made
-    here, for Receive in the main file. No need to save this window"""
-    bl_idname = "multicamproject.work_send_back"
-    bl_label = "Send Back to Main File"
-    bl_options = {'REGISTER'}
-
-    @classmethod
-    def poll(cls, context):
-        return is_work_window(context.scene) and work_object(context.scene) is not None
-
-    def execute(self, context):
-        if context.mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-        try:
-            faces = send_back(context)
-        except Exception as e:
-            self.report({'ERROR'}, str(e))
-            return {'CANCELLED'}
-        self.report({'INFO'}, f"{faces:,} faces sent back: Receive in the main file")
-        return {'FINISHED'}
-
-
-# ---------------------------------------------------------------- UI pieces
-
-def draw_row_button(layout, obj):
-    """The EXPORT row column: Send Out, or Receive (blue once sent back) + X."""
-    rec = out_record(obj)
-    if rec is None:
-        cell = layout.row(align=True)
-        cell.ui_units_x = 1.1
-        cell.operator(MULTICAMPROJECT_OT_WorkSendOut.bl_idname, text="",
-                      icon='WINDOW').object_name = obj.name
+def _move_bakes_for_save(scene):
+    """Before a work window is saved: its bake folder (temp) moves to the main file's
+    _work/<object> folder and its images follow, so the saved file keeps its textures."""
+    dest = scene.get(WORK_BAKES_KEY, "")
+    obj = work_object(scene)
+    if not dest or obj is None:
         return
-    ready = sent_back(obj) is not None
-    cell = layout.row(align=True)
-    cell.ui_units_x = 2.2
-    sub = cell.row(align=True)
-    sub.enabled = ready
-    sub.operator(MULTICAMPROJECT_OT_WorkReceive.bl_idname, text="", icon='IMPORT',
-                 depress=ready).object_name = obj.name
-    cell.operator(MULTICAMPROJECT_OT_WorkCancel.bl_idname, text="",
-                  icon='X').object_name = obj.name
-
-
-def draw_main(layout, context, obj):
-    """Cutting & Modelling in the main file: Send Out, or Receive (Replace / Add) + X."""
-    rec = out_record(obj)
-    row = layout.row(align=True)
-    if rec is None:
-        row.operator(MULTICAMPROJECT_OT_WorkSendOut.bl_idname, text="Send Out to Work Window",
-                     icon='WINDOW').object_name = obj.name
+    from ..baking import common, engine
+    s = common.settings(scene)
+    cur = os.path.normcase(os.path.abspath(common.output_dir(scene)))
+    if cur == os.path.normcase(os.path.abspath(dest)):
         return
-    ready = sent_back(obj) is not None
-    sub = row.row(align=True)
-    sub.enabled = ready
-    op = sub.operator(MULTICAMPROJECT_OT_WorkReceive.bl_idname,
-                      text="Receive" if ready else "Out: waiting for Send Back",
-                      icon='IMPORT', depress=ready)
-    op.object_name, op.action = obj.name, 'REPLACE'
-    add = sub.row(align=True)
-    add.ui_units_x = 3.0
-    op = add.operator(MULTICAMPROJECT_OT_WorkReceive.bl_idname, text="Add", icon='ADD')
-    op.object_name, op.action = obj.name, 'ADD'
-    row.operator(MULTICAMPROJECT_OT_WorkCancel.bl_idname, text="", icon='X').object_name = obj.name
+    os.makedirs(dest, exist_ok=True)
+    d = common.data(obj)
+    for ptr, _fn, _n in TEXTURES:
+        img = getattr(d, ptr)
+        path = common.image_file(img)
+        if path and os.path.normcase(os.path.dirname(os.path.abspath(path))) == cur \
+                and os.path.isfile(path):
+            new = os.path.join(dest, os.path.basename(path))
+            shutil.copyfile(path, new)
+            engine.link_file(img, new)
+    s.output_dir = os.path.join(dest, "")
 
 
-def draw_work(layout, context):
-    """Cutting & Modelling in a work window: where it came from + Send Back."""
-    box = layout.box().column(align=True)
-    scene = context.scene
-    main = os.path.basename(scene.get(WORK_KEY, ""))
-    box.label(text=f"Work window: {scene.get(WORK_OBJECT_KEY, '')} of {main}", icon='WINDOW')
-    row = box.row(align=True)
-    row.scale_y = 1.4
-    row.operator(MULTICAMPROJECT_OT_WorkSendBack.bl_idname, icon='EXPORT')
-    info = box.row()
-    info.active = False
-    info.label(text="Mesh + painting + bakes made here · no need to save", icon='INFO')
+@persistent
+def _on_save_pre(*_args):
+    try:
+        for scene in bpy.data.scenes:
+            if is_work_window(scene):
+                _move_bakes_for_save(scene)
+    except Exception as e:  # never block a save
+        print(f"[MultiCamProject] work window bakes not moved: {e}")
 
 
-_CLASSES = (MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
-            MULTICAMPROJECT_OT_WorkCancel, MULTICAMPROJECT_OT_WorkSendBack)
+@persistent
+def _on_save_post(*_args):
+    """A saved work window tells the main file where it is (the row's open button)."""
+    try:
+        for scene in bpy.data.scenes:
+            job_id = scene.get(WORK_ID_KEY, "")
+            if is_work_window(scene) and job_id and bpy.data.filepath:
+                os.makedirs(job_dir(job_id), exist_ok=True)
+                with open(os.path.join(job_dir(job_id), WINDOW_FILE), "w", encoding="utf-8") as f:
+                    json.dump({"path": bpy.data.filepath, "time": time.time()}, f)
+    except Exception as e:
+        print(f"[MultiCamProject] work window path not recorded: {e}")
+
+
+# ---------------------------------------------------------------- relink by hand
+
+def read_work_file(path):
+    """(send-out id, object name, main file) of a saved work window, read by linking its
+    scene for a moment (its objects are not kept)."""
+    if not os.path.isfile(path):
+        raise RuntimeError(f"No file at {path}")
+    with bpy.data.libraries.load(path, link=True) as (src, dst):
+        dst.scenes = list(src.scenes[:1])
+    scene = dst.scenes[0] if dst.scenes else None
+    lib = scene.library if scene is not None else None
+    try:
+        if scene is None or not scene.get(WORK_ID_KEY):
+            raise RuntimeError(f"{os.path.basename(path)} is not a work window "
+                               "(saved from Send Out)")
+        return scene[WORK_ID_KEY], scene.get(WORK_OBJECT_KEY, ""), scene.get(WORK_KEY, "")
+    finally:
+        if lib is not None:
+            bpy.data.libraries.remove(lib)
+
+
+def relink(obj, path):
+    """Link obj to the saved work window at `path` (moved, renamed or never linked): the
+    window's id goes on obj, the main file remembers where the file is. Another object of
+    this file linked to the same window lets go. Returns the window's object name."""
+    job_id, work_name, _main = read_work_file(path)
+    for o in bpy.data.objects:
+        if o != obj and (out_record(o) or {}).get("id") == job_id:
+            cancel(o)
+    rec = out_record(obj) or {}
+    if rec.get("id") != job_id:
+        rec = {"id": job_id, "time": time.time()}
+        obj[OUT_KEY] = json.dumps(rec)
+        _stamp_record(obj)
+        man = sent_back(obj)        # what was sent before the relink counts as received
+        if man is not None:
+            _stamp_record(obj, received=man.get("time", 0))
+    os.makedirs(job_dir(job_id), exist_ok=True)
+    with open(os.path.join(job_dir(job_id), WINDOW_FILE), "w", encoding="utf-8") as f:
+        json.dump({"path": os.path.abspath(path), "time": time.time()}, f)
+    return work_name
+
+
+def linked_objects():
+    """The objects of this file linked to a work window, by name."""
+    return sorted((o for o in bpy.data.objects if not o.library and out_record(o)),
+                  key=lambda o: o.name.lower())
 
 
 def register():
-    for c in _CLASSES:
-        bpy.utils.register_class(c)
+    bpy.app.handlers.save_pre.append(_on_save_pre)
+    bpy.app.handlers.save_post.append(_on_save_post)
 
 
 def unregister():
-    for c in reversed(_CLASSES):
-        bpy.utils.unregister_class(c)
+    for lst, fn in ((bpy.app.handlers.save_pre, _on_save_pre),
+                    (bpy.app.handlers.save_post, _on_save_post)):
+        if fn in lst:
+            lst.remove(fn)

@@ -152,7 +152,7 @@ WORK_WINDOW_KEY = "multicamproject_work_of"     # scene of a Work Window: the ma
 
 
 def is_work_window(scene=None):
-    """A Work Window (remesh.workfile): an untitled Blender holding one object sent out of a
+    """A Work Window (linking module): an untitled Blender holding one object sent out of a
     main file. Its texture links point at the main file's real bakes: nothing here may
     delete or recycle files."""
     scenes = [scene] if scene is not None else list(bpy.data.scenes)
