@@ -62,15 +62,17 @@ def _build():
     except OSError:
         pass
     objs = [o for o in dst.objects if o is not None]
-    for o in objs:
-        if not o.users_collection:
+    wanted = set(settings["keep"])
+    keep = [o for o in objs if o.name in wanted and o.type in {'MESH', 'CAMERA'}]
+    for o in keep:              # straight into the scene (their collections are not)
+        if scene.collection.objects.get(o.name) is None:
             scene.collection.objects.link(o)
     bpy.context.view_layer.update()
-    keep = [o for o in objs if o.type in {'MESH', 'CAMERA'}]
     _apply_world(keep)
-    for o in objs:              # the `transform` empty and other parents: not needed here
-        if o not in keep:
-            bpy.data.objects.remove(o)
+    # the `transform` empty, other parents and anything else that came along: not needed
+    bpy.data.batch_remove([o for o in objs if o not in keep])
+    bpy.data.batch_remove(list(bpy.data.collections))
+    bpy.data.orphans_purge(do_recursive=True)
     for k, key in SCENE_KEYS.items():
         scene[key] = settings[k]
     _scene_settings(scene)
@@ -82,7 +84,7 @@ def _build():
     if s is not None:           # every bake here goes to the hand-off folder, never the real one
         s.output_dir = os.path.join(settings["bakes"], "")
     orig = bpy.data.objects.get(settings["original"]) if settings["original"] else None
-    if orig is not None:
+    if orig is not None and bpy.context.view_layer.objects.get(orig.name) is not None:
         orig.hide_set(True)     # as in the main file: the low poly is what you work on
     obj = bpy.data.objects.get(settings["object"])
     if obj is not None:

@@ -159,6 +159,55 @@ def _scene_settings(scene):
     return out
 
 
+def _scene_driver_targets():
+    """Driver targets that point at a Scene (e.g. a scan material driven by a scene
+    property). libraries.write follows them and would write the whole scene - every object,
+    camera and image of the file - into the hand-off."""
+    out = []
+    for scene in bpy.data.scenes:
+        for idb in bpy.data.user_map(subset=[scene]).get(scene, ()):
+            if isinstance(idb, (bpy.types.Scene, bpy.types.WindowManager, bpy.types.Screen,
+                                bpy.types.WorkSpace)):
+                continue
+            for holder in (idb, getattr(idb, "node_tree", None)):
+                ad = getattr(holder, "animation_data", None) if holder is not None else None
+                if ad is None:
+                    continue
+                for fc in ad.drivers:
+                    for var in fc.driver.variables:
+                        for t in var.targets:
+                            if t.id == scene:
+                                out.append((t, scene))
+    return out
+
+
+def _write_object(path, obj):
+    """obj with what it points to, without any Scene: the scene links of drivers are
+    off only while the file is written (put back right after, nothing is evaluated)."""
+    cut = _scene_driver_targets()
+    try:
+        for t, _scene in cut:
+            t.id = None
+        bpy.data.libraries.write(path, {obj}, path_remap='ABSOLUTE')
+    finally:
+        for t, scene in cut:
+            t.id = scene
+
+
+def _keep_names(obj):
+    """What the work window keeps: the object, its Bake Source and its cameras."""
+    names = [obj.name]
+    src = wf.bake_source_of(obj)
+    if src is not None:
+        names.append(src.name)
+    cam = getattr(obj, "multicamproject_cam", None)
+    if cam is not None:
+        cams = [it.camera for it in cam.cameras]
+        cams += [getattr(cam, f"slot_{i}") for i in range(1, 7)]
+        names += sorted({c.name for c in cams if c is not None})
+    return names
+
+
 def send_out(context, obj):
     """Write obj (with everything it points to) for a new Blender and open it there.
     Returns the send-out id."""
@@ -174,11 +223,11 @@ def send_out(context, obj):
     # the real object, written with its dependencies (the main file is not changed): its
     # mesh, MCP_ / MAT_ and textures, GN, the cameras of its list with their photos, the
     # Bake Source and the parents. A Scene can't be written (Blender 5.2 crashes)
-    bpy.data.libraries.write(lib, {obj}, path_remap='ABSOLUTE')
+    _write_object(lib, obj)
     src = wf.bake_source_of(obj)
     scene = context.scene
     settings = {
-        "id": job_id, "lib": lib, "object": obj.name, "main": main,
+        "id": job_id, "lib": lib, "object": obj.name, "main": main, "keep": _keep_names(obj),
         "original": src.name if src is not None else "",
         "bakes": bakes_dir(job_id), "scene": _scene_settings(scene),
         "render": [scene.render.resolution_x, scene.render.resolution_y,
