@@ -228,6 +228,7 @@ def send_out(context, obj):
     scene = context.scene
     settings = {
         "id": job_id, "lib": lib, "object": obj.name, "main": main, "keep": _keep_names(obj),
+        "addon": __package__.rsplit(".modules", 1)[0],
         "original": src.name if src is not None else "",
         "bakes": bakes_dir(job_id), "scene": _scene_settings(scene),
         "render": [scene.render.resolution_x, scene.render.resolution_y,

@@ -4,6 +4,7 @@ transforms applied and the parents dropped. The file stays untitled: nothing sav
 
 blender --python workfile_build.py -- <settings.json>
 """
+import importlib
 import json
 import os
 import sys
@@ -92,6 +93,11 @@ def _build():
             o.select_set(False)
         bpy.context.view_layer.objects.active = obj
         obj.select_set(True)
+        try:                    # always open on the Processing material (painting, 04-06)
+            gn_final = importlib.import_module(f"{settings['addon']}.modules.baking.gn_final")
+            gn_final.set_final(obj, scene, False)
+        except Exception as e:  # never stop the window over the view
+            print(f"[MultiCamProject] work window: Processing view skipped: {e}")
         for win in bpy.context.window_manager.windows:
             for area in win.screen.areas:
                 if area.type == 'VIEW_3D':
