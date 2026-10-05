@@ -45,6 +45,8 @@ def in_scope(obj, originals=None, export=None):
     not Remesh originals, library objects or deleted objects."""
     if obj.type != 'MESH' or obj.library or not obj.users_collection:
         return False
+    if obj.get("multicamproject_incoming") or obj.get("multicamproject_work_of"):
+        return False        # a mesh pasted from a work file, or a work file's low poly
     if obj in (cp._originals() if originals is None else originals):
         return False
     d = common.data(obj)

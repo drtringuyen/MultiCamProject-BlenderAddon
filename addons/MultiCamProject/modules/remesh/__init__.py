@@ -1,7 +1,7 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import operators, tool, ui
+from . import operators, tool, ui, workfile
 
 
 def _repair():
@@ -20,6 +20,7 @@ def _on_load(_):
 
 def register():
     operators.register()
+    workfile.register()
     tool.register()
     ui.register()
     bpy.app.handlers.load_post.append(_on_load)
@@ -31,4 +32,5 @@ def unregister():
         bpy.app.handlers.load_post.remove(_on_load)
     ui.unregister()
     tool.unregister()
+    workfile.unregister()
     operators.unregister()

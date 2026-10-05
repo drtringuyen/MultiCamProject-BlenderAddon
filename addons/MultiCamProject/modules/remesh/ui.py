@@ -1,7 +1,7 @@
 import bpy
 
 from ... import module_manager
-from . import tool, workflow as wf
+from . import tool, workfile, workflow as wf
 
 
 def _res(n):
@@ -32,6 +32,11 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         d = obj.multicamproject_bake
         baking = module_manager.is_loaded("baking")
         s = context.scene.multicamproject_bake_settings if baking else None
+        in_work = workfile.is_work_file(context.scene)
+        if in_work:
+            workfile.draw_work(layout, context)
+        else:
+            workfile.draw_main(layout, context, obj)
 
         # the high poly this low poly bakes from (only 04 uses it)
         row = layout.row(align=True)
@@ -121,8 +126,9 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.label(text="Snap to Source (vg_Snap)", icon='MOD_SHRINKWRAP')
             row.operator("multicamproject.remesh_snap", text="", icon='X').on = False
 
-        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings)
-        if not baking:
+        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings) - not in a
+        # work file, which only models
+        if not baking or in_work:
             return
         from ..baking import common, fingerprint, jobs, operators as bake_ops
         if jobs.busy():
