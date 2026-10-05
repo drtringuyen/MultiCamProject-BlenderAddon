@@ -65,6 +65,14 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     # where 06 Bake Final takes ALB_ / NOR_ from (each object its own)
     route: EnumProperty(name="Bake Route", items=ROUTE_ITEMS, default='MIXED', update=_on_route,
                         description="Where Bake Final takes ALB_ / NOR_ from")
+    original_normal: EnumProperty(
+        name="Normal from Original", default='BAKED',
+        items=(('BAKED', "Bake Normal from Original",
+                "NOR_ = BNo_: the original's surface baked onto the low poly (Cycles)", 'MESH_DATA', 0),
+               ('GENERATED', "Generate from High-pass",
+                "NOR_ generated from BAo_ (the original's colors) with the engine below - "
+                "High-pass or AI", 'IMAGE_RGB', 1)),
+        description="From Original: how NOR_ is made")
     route_user: BoolProperty(description="The route was picked by hand (never changed by a "
                                           "Setup step then)")
     route_prompt: StringProperty(description="A Setup step added a workflow: shown in 06 until a "

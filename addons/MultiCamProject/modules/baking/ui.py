@@ -249,7 +249,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         say, the bake settings' gear at its end."""
         parts = {'ALBEDO': "Albedo", 'NORMAL': "Normal", 'BOTH': "Albedo + Normal"}[s.bake_what]
         if s.bake_what != 'ALBEDO':
-            parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)})"
+            d = common.data(obj)
+            if route.get(obj) == route.ORIGINAL and d.original_normal == 'BAKED':
+                parts += " (BNo_)"
+            else:
+                parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)})"
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
@@ -274,6 +278,17 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
         col.label(text="Normal Map", icon='NORMALS_FACE')
         src = s.nor_source
         ai = src == 'AI'
+        d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
+        baked = False
+        if d is not None and not d.handmade and route.get(obj) == route.ORIGINAL:
+            # From Original: BNo_ itself, or generated from BAo_ with the engine below
+            split = col.split(factor=0.34, align=True)
+            split.label(text="From Original")
+            split.prop(d, "original_normal", text="")
+            baked = d.original_normal == 'BAKED'
+        engine_col = col.column()
+        engine_col.active = not baked
+        col = engine_col
         # [Lite / AI v] [High-pass v] - the engine, then Lite's method
         split = col.split(factor=0.34, align=True)
         split.label(text="Generate Engine")
@@ -290,11 +305,11 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
             row.prop(s, "nor_strength", text="Strength")
             row.prop(s, "nor_radius", text="Radius")
             opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
-        d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
         note = col.row()
         note.active = False
         if d is not None:
-            note.label(text={route.ORIGINAL: "From Original: NOR_ = BNo_ (this is not used)",
+            note.label(text={route.ORIGINAL: ("NOR_ = BNo_ (the engine is not used)" if baked else
+                                              "NOR_ generated from BAo_ with this"),
                              route.PROJECTION: "BNp_ from BAp_ with this; NOR_ = BNp_",
                              route.MIXED: "BNp_ from BAp_ with this; NOR_ = BNo_ -> BNp_"}[
                                  route.get(obj)], icon='INFO')

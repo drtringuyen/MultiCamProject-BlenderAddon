@@ -1,7 +1,8 @@
 """NOR_<name>: 16-bit, Non-Color, OpenGL (Y+), always <output dir>/NOR_<name>.png, by the
 object's Bake Route:
 
-    From Original    a copy of BNo_ (baked from the Bake Source)
+    From Original    a copy of BNo_ (baked from the Bake Source), or generated from BAo_
+                     (High-pass / AI) when the object's Normal from Original says so
     From Projection  a copy of BNp_ - generated from BAp_ (the projection's albedo)
     Mixed            BNo_ -> BNp_ by the VCMix mask (a plain mix)
 
@@ -161,19 +162,25 @@ def generate_steps(context, obj, source):
         yield from engine.bake_projection_steps(context, obj)
     if r in {route.PROJECTION, route.MIXED}:
         yield from bnp_steps(context, obj, source)
-    if r == route.ORIGINAL:
+    generated = r == route.ORIGINAL and d.original_normal == 'GENERATED'
+    if r == route.ORIGINAL and not generated:
         yield jobs.Step(f"Normal: copying BNo_ to {os.path.basename(path)}")
         d.nor_image = engine.copy_file(scene, d.bn_image, name, d.nor_image, normal=True)
     elif r == route.PROJECTION:
         yield jobs.Step(f"Normal: copying BNp_ to {os.path.basename(path)}")
         d.nor_image = engine.copy_file(scene, d.bnp_image, name, d.nor_image, normal=True)
     else:
-        was_final = final.is_final(obj)
-        try:
-            rgb = yield from compose_steps(context, obj, size)
-        finally:
-            if final.is_final(obj) != was_final:
-                final.set_final(obj, scene, was_final)
+        if generated:           # From Original, generated from the original's colors
+            yield jobs.Step(f"Normal: {LABELS[source]} from BAo_")
+            rgb = (ai.generate(d.ba_image, size) if source == 'AI'
+                   else highpass.generate(d.ba_image, size, s))
+        else:
+            was_final = final.is_final(obj)
+            try:
+                rgb = yield from compose_steps(context, obj, size)
+            finally:
+                if final.is_final(obj) != was_final:
+                    final.set_final(obj, scene, was_final)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         yield jobs.Step(f"Normal: writing {os.path.basename(path)} (16-bit)")
         pngio.write_rgb16(path, rgb, s.png_compression)
@@ -188,7 +195,7 @@ def generate_steps(context, obj, source):
         engine.link_file(img, path)
         d.nor_image = img
     d.nor_size = size
-    d.nor_source_used = source if r != route.ORIGINAL else 'ORIGINAL'
+    d.nor_source_used = 'ORIGINAL' if r == route.ORIGINAL and not generated else source
     d.last_nor_seconds = time.perf_counter() - t0
     record_time(d, d.nor_source_used, size, d.last_nor_seconds)
     material.build(obj, scene)
