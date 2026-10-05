@@ -1,62 +1,76 @@
-"""Work File: model a Remesh / Retopo low poly in a small .blend of its own, then bring
-back only its mesh.
+"""Work Window: model a Remesh / Retopo low poly in a second Blender, then bring back only
+its mesh. Nothing is saved: the second Blender's file stays untitled.
 
-Main file  -> Open in Work File: <main>__<object>.blend next to the main file, holding a
-             plain copy of the low poly (its Decimate / Snap, vertex groups, UVs, face sets)
-             and of its original - transforms applied, no parent, no materials, no
-             add-on links. It opens in a second Blender; the main file is not changed.
-Work file  -> Send Mesh: the low poly as you see it (modifiers applied) with uv_normal and
-             seams only, written to <main>__<object>_mesh.blend and to Blender's clipboard
-             (Ctrl+V pastes it).
-Main file  -> Paste (or Ctrl+V), then Replace Mesh (the object keeps its name, materials,
-             cameras and bake settings; Decimate and Snap go, as Apply would) or Add to
-             Mesh (a join; a live Decimate leaves the added part alone).
-Nothing else travels: cameras, materials, textures and settings stay in the main file.
+Main file   -> Open in Work Window: a plain copy of the low poly (its Decimate / Snap,
+               vertex groups, UVs, face sets) and of its original - transforms applied, no
+               parent, no materials, no add-on links - opens in a new, unsaved Blender. The
+               main file is not changed.
+Work window -> Send Mesh: the low poly as you see it (modifiers applied) with uv_normal and
+               seams only, to Blender's clipboard (Ctrl+V pastes it) and to the hand-off
+               folder (the Paste button).
+Main file   -> Paste (or Ctrl+V), then Replace Mesh (the object keeps its name, materials,
+               cameras and bake settings; Decimate and Snap go, as Apply would) or Add to
+               Mesh (a join; a live Decimate leaves the added part alone).
+Nothing else travels: cameras, materials, textures and settings stay in the main file. The
+two Blenders hand over through <temp>/mcp_workfile (the way Ctrl+C / Ctrl+V does).
 """
+import hashlib
 import json
 import os
 import subprocess
+import time
+import uuid
 
 import bpy
-from bpy.app.handlers import persistent
 
 from . import workflow as wf
 
-WORK_KEY = "multicamproject_work_of"        # work file scene / object: the main .blend
-WORK_OBJECT_KEY = "multicamproject_work_object"     # work file scene: the main object's name
-WORKFILE_KEY = "multicamproject_workfile"   # main object: its work file
+WORK_KEY = "multicamproject_work_of"        # work window scene / object: the main .blend
+WORK_OBJECT_KEY = "multicamproject_work_object"     # work window scene: the main object's name
 INCOMING_KEY = "multicamproject_incoming"   # a sent mesh: the main object it belongs to
 INCOMING_COLLECTION = "MCP_Incoming"
-WORK_BAKE_FOLDER = "//01.Baking_work/"
 KEEP_ATTRS = {"position", "uv_seam", "sharp_face", ".edge_verts", ".corner_vert",
               ".corner_edge", wf.cp.UV_NORMAL}
 
 
 # ---------------------------------------------------------------- paths
 
-def work_path(main_path, obj_name):
-    folder, base = os.path.split(main_path)
-    stem = os.path.splitext(base)[0]
-    return os.path.join(folder, f"{stem}__{bpy.path.clean_name(obj_name)}.blend")
+def _temp_base():
+    return os.path.dirname(os.path.normpath(bpy.app.tempdir))
 
 
-def mesh_path(work):
-    return os.path.splitext(work)[0] + "_mesh.blend"
+def exchange_dir():
+    """<temp>/mcp_workfile: what the two Blenders hand each other (never next to the .blend)."""
+    folder = os.path.join(_temp_base(), "mcp_workfile")
+    os.makedirs(folder, exist_ok=True)
+    return folder
+
+
+def send_path(main_path, obj_name):
+    """Where Send Mesh puts the mesh for obj_name of main_path (and Paste reads it)."""
+    key = hashlib.sha1(os.path.normcase(os.path.abspath(main_path)).encode()).hexdigest()[:10]
+    stem = os.path.splitext(os.path.basename(main_path))[0]
+    return os.path.join(exchange_dir(),
+                        f"{bpy.path.clean_name(stem)}__{bpy.path.clean_name(obj_name)}_{key}.blend")
+
+
+def sent_time(obj):
+    """Modification time of the mesh sent for obj (None = nothing sent)."""
+    if not bpy.data.filepath:
+        return None
+    try:
+        return os.path.getmtime(send_path(bpy.data.filepath, obj.name))
+    except OSError:
+        return None
 
 
 def clipboard_path():
     """Blender's own copy buffer (Ctrl+C / Ctrl+V in the 3D View): <temp>/copybuffer.blend."""
-    return os.path.join(os.path.dirname(os.path.normpath(bpy.app.tempdir)), "copybuffer.blend")
+    return os.path.join(_temp_base(), "copybuffer.blend")
 
 
 def is_work_file(scene):
     return bool(scene.get(WORK_KEY))
-
-
-def work_file_of(obj):
-    """The work file recorded on a main-file object ('' = none yet)."""
-    p = obj.get(WORKFILE_KEY, "")
-    return bpy.path.abspath(p) if p else ""
 
 
 def is_incoming(obj):
@@ -112,20 +126,19 @@ def strip_mesh(me):
 
 # ---------------------------------------------------------------- main file: Open
 
-def make_work_file(context, obj):
-    """Write obj + its original into the work file. Returns its path. The objects are
-    written as one collection; a background Blender puts it in a scene and saves (a Scene
-    cannot be written directly - workfile_build.py)."""
+def open_work_window(context, obj):
+    """obj + its original into a new, unsaved Blender. They are written as one collection
+    to the hand-off folder; workfile_build.py (run by the new Blender) puts it in a scene
+    and deletes the file. Returns the new process."""
     main = bpy.data.filepath
     if not main:
-        raise RuntimeError("Save the main file first (the work file goes next to it)")
+        raise RuntimeError("Save the main file first (Send / Paste find each other by its path)")
     if obj.mode != 'OBJECT':
         obj.update_from_editmode()
     src = wf.bake_source_of(obj) or wf.source_of(obj)
-    path = work_path(main, obj.name)
-    lib = os.path.join(bpy.app.tempdir, "mcp_workfile_lib.blend")
+    lib = os.path.join(exchange_dir(), f"open_{uuid.uuid4().hex[:12]}.blend")
     made = []
-    names = {}          # name in this file (may get .001) -> name in the work file
+    names = {}          # name in this file (may get .001) -> name in the work window
     coll = bpy.data.collections.new("MCP Work")
     try:
         work = _plain_object(obj.name, obj.data.copy(), obj.matrix_world)
@@ -154,7 +167,7 @@ def make_work_file(context, obj):
         snap = wf.snap_modifier(obj)
         if snap is not None and src is not None:
             wf.set_snap(work, True).show_viewport = snap.show_viewport
-        bpy.data.libraries.write(lib, {coll}, path_remap='RELATIVE_ALL')
+        bpy.data.libraries.write(lib, {coll}, path_remap='ABSOLUTE')
         work_name, coll_name = work.name, coll.name
     finally:
         for o in made:
@@ -164,27 +177,13 @@ def make_work_file(context, obj):
                 bpy.data.meshes.remove(me)
         bpy.data.collections.remove(coll)
     settings = {
-        "collection": coll_name, "names": names, "active": work_name,
+        "lib": lib, "collection": coll_name, "names": names, "active": work_name,
         "keys": {WORK_KEY: main, WORK_OBJECT_KEY: obj.name},
         "unit_system": context.scene.unit_settings.system,
         "unit_scale": context.scene.unit_settings.scale_length}
     script = os.path.join(os.path.dirname(__file__), "workfile_build.py")
-    run = subprocess.run([bpy.app.binary_path, "-b", "--factory-startup", "--python", script,
-                          "--", lib, path, json.dumps(settings)],
-                         capture_output=True, text=True, timeout=600)
-    try:
-        os.remove(lib)
-    except OSError:
-        pass
-    if run.returncode != 0 or not os.path.exists(path):
-        tail = (run.stderr or run.stdout or "").strip().splitlines()[-3:]
-        raise RuntimeError("Work file not written: " + " / ".join(tail))
-    obj[WORKFILE_KEY] = bpy.path.relpath(path)
-    return path
-
-
-def open_in_blender(path):
-    subprocess.Popen([bpy.app.binary_path, path])
+    return subprocess.Popen([bpy.app.binary_path, "--python", script, "--",
+                             json.dumps(settings)])
 
 
 # ---------------------------------------------------------------- work file: Send
@@ -202,7 +201,7 @@ def work_object(context):
 
 def send_mesh(context, obj):
     """The low poly as seen (modifiers applied, world space), stripped, written to the
-    mesh file and the clipboard. Returns (faces, mesh file)."""
+    hand-off folder and the clipboard. Returns (faces, file)."""
     scene = context.scene
     main_name = scene.get(WORK_OBJECT_KEY, obj.name)
     dg = context.evaluated_depsgraph_get()
@@ -214,10 +213,9 @@ def send_mesh(context, obj):
     sent = bpy.data.objects.new(f"{main_name}_work", me)
     sent.vertex_groups.clear()
     sent[INCOMING_KEY] = main_name
-    out = mesh_path(bpy.data.filepath) if bpy.data.filepath else ""
+    out = send_path(scene[WORK_KEY], main_name)
     try:
-        if out:
-            bpy.data.libraries.write(out, {sent}, path_remap='RELATIVE_ALL')
+        bpy.data.libraries.write(out, {sent}, path_remap='ABSOLUTE')
         bpy.data.libraries.write(clipboard_path(), {sent}, path_remap='ABSOLUTE')
         faces = len(me.polygons)
     finally:
@@ -238,12 +236,10 @@ def _incoming_collection(scene):
 
 
 def paste(context, obj):
-    """The mesh sent for obj (its work file's _mesh.blend), into MCP_Incoming."""
-    work = work_file_of(obj) or (work_path(bpy.data.filepath, obj.name) if bpy.data.filepath
-                                 else "")
-    path = mesh_path(work) if work else ""
+    """The mesh last sent for obj, into MCP_Incoming."""
+    path = send_path(bpy.data.filepath, obj.name) if bpy.data.filepath else ""
     if not path or not os.path.exists(path):
-        raise RuntimeError("Nothing sent yet - press Send Mesh in the work file")
+        raise RuntimeError("Nothing sent yet - press Send Mesh in the work window")
     with bpy.data.libraries.load(path, link=False) as (src, dst):
         dst.objects = list(src.objects)
     coll = _incoming_collection(context.scene)
@@ -337,41 +333,23 @@ def _main_low_poly(context):
 
 
 class MULTICAMPROJECT_OT_WorkFileOpen(bpy.types.Operator):
-    """Model this low poly in a small file of its own: the object and its original only
-    (transforms applied, no materials or links). Opens it in a second Blender"""
+    """Model this low poly in a new Blender window: the object and its original only
+    (transforms applied, no materials or links), in an untitled file nothing saves"""
     bl_idname = "multicamproject.workfile_open"
-    bl_label = "Open in Work File"
+    bl_label = "Open in Work Window"
     bl_options = {'REGISTER'}
-
-    fresh: bpy.props.BoolProperty(
-        name="Make Again", default=False,
-        description="Write the work file again from this object (what was modelled there "
-                    "and not sent back is lost)")
 
     @classmethod
     def poll(cls, context):
         return context.mode == 'OBJECT' and _main_low_poly(context) is not None
 
-    def invoke(self, context, event):
-        if self.fresh and os.path.exists(work_file_of(context.active_object)):
-            return context.window_manager.invoke_confirm(
-                self, event, title="Make the work file again?",
-                message="The work file is written again from this object - what was "
-                        "modelled there and not sent back is lost",
-                confirm_text="Make Again", icon='WARNING')
-        return self.execute(context)
-
     def execute(self, context):
-        obj = context.active_object
-        path = work_file_of(obj)
         try:
-            if self.fresh or not path or not os.path.exists(path):
-                path = make_work_file(context, obj)
-                self.report({'INFO'}, f"Work file written: {os.path.basename(path)}")
-            open_in_blender(path)
+            open_work_window(context, context.active_object)
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
+        self.report({'INFO'}, "Work window opening (unsaved) - Send Mesh there when done")
         return {'FINISHED'}
 
 
@@ -395,14 +373,12 @@ class MULTICAMPROJECT_OT_WorkFileSend(bpy.types.Operator):
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        where = "Paste in the main file (Ctrl+V or Paste)" if out else \
-            "Ctrl+V in the main file (save the work file to also use Paste)"
-        self.report({'INFO'}, f"{faces:,} faces sent. {where}")
+        self.report({'INFO'}, f"{faces:,} faces sent: Ctrl+V or Paste in the main file")
         return {'FINISHED'}
 
 
 class MULTICAMPROJECT_OT_WorkFilePaste(bpy.types.Operator):
-    """Paste the mesh last sent from this object's work file (into MCP_Incoming)"""
+    """Paste the mesh last sent from this object's work window (into MCP_Incoming)"""
     bl_idname = "multicamproject.workfile_paste"
     bl_label = "Paste from Work File"
     bl_options = {'REGISTER', 'UNDO'}
@@ -497,33 +473,29 @@ class MULTICAMPROJECT_PT_WorkFileIncoming(bpy.types.Panel):
 
 
 def draw_main(layout, context, obj):
-    """Cutting & Modelling in the main file: the work file row."""
+    """Cutting & Modelling in the main file: the work window row."""
     row = layout.row(align=True)
-    path = work_file_of(obj)
-    exists = bool(path) and os.path.exists(path)
-    row.operator(MULTICAMPROJECT_OT_WorkFileOpen.bl_idname,
-                 text="Open Work File" if exists else "Open in Work File",
-                 icon='FILE_BLEND').fresh = False
-    if exists:
-        row.operator(MULTICAMPROJECT_OT_WorkFileOpen.bl_idname, text="",
-                     icon='FILE_REFRESH').fresh = True
-        sent = os.path.exists(mesh_path(path))
-        sub = row.row(align=True)
-        sub.enabled = sent
-        sub.operator(MULTICAMPROJECT_OT_WorkFilePaste.bl_idname, text="Paste", icon='PASTEDOWN')
+    row.operator(MULTICAMPROJECT_OT_WorkFileOpen.bl_idname, text="Work Window", icon='WINDOW')
+    sent = sent_time(obj)
+    sub = row.row(align=True)
+    sub.enabled = sent is not None
+    sub.operator(MULTICAMPROJECT_OT_WorkFilePaste.bl_idname,
+                 text="Paste" + (f" ({time.strftime('%H:%M', time.localtime(sent))})"
+                                 if sent else ""), icon='PASTEDOWN')
 
 
 def draw_work(layout, context):
-    """Cutting & Modelling in a work file: where it came from + Send."""
+    """Cutting & Modelling in a work window: where it came from + Send."""
     box = layout.box().column(align=True)
-    main = context.scene.get(WORK_KEY, "")
-    box.label(text=f"Work file of {os.path.basename(main)}", icon='FILE_BLEND')
+    scene = context.scene
+    main = os.path.basename(scene.get(WORK_KEY, ""))
+    box.label(text=f"Work window for {scene.get(WORK_OBJECT_KEY, '')} ({main})", icon='WINDOW')
     row = box.row(align=True)
     row.scale_y = 1.4
     row.operator(MULTICAMPROJECT_OT_WorkFileSend.bl_idname, icon='EXPORT')
     info = box.row()
     info.active = False
-    info.label(text="As you see it · uv_normal + seams only", icon='INFO')
+    info.label(text="As you see it · uv_normal + seams · no need to save", icon='INFO')
 
 
 _CLASSES = (MULTICAMPROJECT_OT_WorkFileOpen, MULTICAMPROJECT_OT_WorkFileSend,
@@ -531,32 +503,11 @@ _CLASSES = (MULTICAMPROJECT_OT_WorkFileOpen, MULTICAMPROJECT_OT_WorkFileSend,
             MULTICAMPROJECT_PT_WorkFileIncoming)
 
 
-def _separate_bake_folder():
-    """A work file's bakes (if any) never go to the main file's folder. Set on load: the
-    background Blender that writes the work file runs without the add-on."""
-    try:
-        for scene in bpy.data.scenes:
-            s = getattr(scene, "multicamproject_bake_settings", None)
-            if is_work_file(scene) and s is not None and s.output_dir != WORK_BAKE_FOLDER:
-                s.output_dir = WORK_BAKE_FOLDER
-    except Exception as e:  # never block a load
-        print(f"[MultiCamProject] work file bake folder skipped: {e}")
-    return None
-
-
-@persistent
-def _on_load(_):
-    _separate_bake_folder()
-
-
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
-    bpy.app.handlers.load_post.append(_on_load)
 
 
 def unregister():
-    if _on_load in bpy.app.handlers.load_post:
-        bpy.app.handlers.load_post.remove(_on_load)
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)
