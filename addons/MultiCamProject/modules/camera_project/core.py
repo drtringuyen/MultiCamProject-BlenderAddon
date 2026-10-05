@@ -223,6 +223,27 @@ def score_camera(cam, co_w, nr_w, scene):
     return coverage * float(facing), coverage
 
 
+def camera_collections(scene, view_layer):
+    """[(collection, layer collection)] of the scene's collections that hold cameras only
+    (e.g. CAMERAS): what the Hide / Show Cameras button switches."""
+    out = []
+
+    def walk(lc):
+        for child in lc.children:
+            objs = child.collection.objects
+            if len(objs) and all(o.type == 'CAMERA' for o in objs):
+                out.append((child.collection, child))
+            walk(child)
+    walk(view_layer.layer_collection)
+    return out
+
+
+def cameras_shown(scene, view_layer):
+    """True when a camera collection is in the view layer and not hidden (the eye)."""
+    return any(not lc.exclude and not lc.hide_viewport
+               for _c, lc in camera_collections(scene, view_layer))
+
+
 def scene_cameras(scene):
     return [o for o in scene.objects if o.type == 'CAMERA']
 
