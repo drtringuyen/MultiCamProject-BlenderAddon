@@ -576,7 +576,7 @@ def is_soloed(context, obj):
 
 
 def solo(context, obj, report=None):
-    """Solo obj and its original in local view (the original selected, obj active), or leave
+    """Solo obj and its original in local view (then only obj selected and active), or leave
     the solo when obj is soloed already. Returns 'ON' (soloed now), 'OFF' (left) or None
     (obj cannot be shown). A 3D view's context."""
     report = report or (lambda *_a: None)
@@ -619,6 +619,12 @@ def solo(context, obj, report=None):
         o.select_set(True)
     vl.objects.active = obj
     bpy.ops.view3d.localview(frame_selected=True)
+    # both are in the solo now: only the object we work on stays selected and active
+    for o in keep:
+        if o != obj:
+            o.select_set(False)
+    obj.select_set(True)
+    vl.objects.active = obj
     states[key] = {"obj": obj.name, "hidden": hidden}
     return 'ON'
 

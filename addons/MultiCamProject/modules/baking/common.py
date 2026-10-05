@@ -53,7 +53,7 @@ def nor_name(obj):
 # of the two routes - BAo_/BNo_ baked from the Original (Bake from Source), BAp_/BNp_ from
 # the Projection. Only files with these prefixes are ever cleaned up
 FINAL_PREFIXES = ("ALB_", "NOR_")
-WORK_PREFIXES = ("BAo_", "BNo_", "BAp_", "BNp_")
+WORK_PREFIXES = ("BAo_", "BNo_", "BNoG_", "BAp_", "BNp_")
 OWN_PREFIXES = FINAL_PREFIXES + WORK_PREFIXES
 LEGACY_PREFIXES = ("BA_", "BN_")        # packed BA_/BN_ before 2026-10-05 (now BAo_/BNo_)
 
@@ -68,6 +68,12 @@ def bn_name(obj):
     """BNo_<name>: the normal baked from the Original (Bake Source)."""
     from .naming import typed_name
     return typed_name("BNo", obj)
+
+
+def bng_name(obj):
+    """BNoG_<name>: the original's side of the normal generated from BAo_ (High-pass / AI)."""
+    from .naming import typed_name
+    return typed_name("BNoG", obj)
 
 
 def bap_name(obj):

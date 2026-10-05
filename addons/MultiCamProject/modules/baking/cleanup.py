@@ -20,6 +20,7 @@ from . import common, owned, route
 
 _COPY = re.compile(r"\.\d{3}$")
 _WORK = (("ba_image", "BAo_", route.ORIGINAL), ("bn_image", "BNo_", route.ORIGINAL),
+         ("bng_image", "BNoG_", route.ORIGINAL),
          ("bap_image", "BAp_", route.PROJECTION), ("bnp_image", "BNp_", route.PROJECTION))
 
 
@@ -101,6 +102,8 @@ def remove(scene, imgs, files):
                     d.bp_fingerprint, d.bp_size = "", 0
                 elif attr == "bnp_image":
                     d.bnp_fingerprint = ""
+                elif attr == "bng_image":
+                    d.bng_fingerprint = ""
     n = 0
     for img in imgs:
         try:

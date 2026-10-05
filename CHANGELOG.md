@@ -15,6 +15,13 @@
   Original = *From Original's Surface* (BNo_) or *Generated from Albedo High-pass* (from
   BAo_ with the engine below). Projection is always generated from BAp_. Mixed blends the
   two by the VCMix mask.
+- **Processing shows the generated normal too:** the original's side generated from BAo_ is
+  kept as BNoG_ (a 16-bit file, made again only when BAo_ or the settings change) and MCP_
+  shows it when Original = Generated.
+- **EXPORT list: normal map toggle** next to the hand - flat normals in the viewport (MAT_ and
+  MCP_) while off. Viewing only: the FBX export always writes the normal map.
+- **Solo (EXPORT row eye):** after the object and its original are soloed, only the object
+  stays selected and active.
 - **Nothing is packed any more.** BAo_ / BNo_ / BAp_ / BNp_ are PNG files in the bake folder
   (normals 16-bit). Once per file the old packed BA_ / BN_ become the files BAo_ / BNo_
   (they were baked from the original), each object gets the route it baked with so far

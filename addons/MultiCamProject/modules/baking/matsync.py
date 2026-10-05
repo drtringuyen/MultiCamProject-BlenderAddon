@@ -195,7 +195,8 @@ def _work_owners():
             continue
         d = common.data(o)
         for img, fn in ((d.ba_image, common.ba_name), (d.bn_image, common.bn_name),
-                        (d.bap_image, common.bap_name), (d.bnp_image, common.bnp_name)):
+                        (d.bap_image, common.bap_name), (d.bnp_image, common.bnp_name),
+                        (d.bng_image, common.bng_name)):
             if img is not None and not img.library:
                 users.setdefault(img, []).append((o, fn))
     out = {}

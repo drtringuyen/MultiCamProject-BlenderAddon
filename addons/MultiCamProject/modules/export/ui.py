@@ -87,6 +87,9 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         hand = right.row(align=True)
         hand.ui_units_x = 1.1
         hand.prop(bake, "handmade", text="", icon='VIEW_PAN', toggle=True)
+        nrm = right.row(align=True)
+        nrm.ui_units_x = 1.1
+        nrm.prop(bake, "show_normal", text="", icon='NORMALS_FACE', toggle=True)
         tris = right.row()
         tris.ui_units_x = 2.2
         tris.active = False

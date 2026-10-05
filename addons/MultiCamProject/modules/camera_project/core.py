@@ -295,11 +295,16 @@ def _named(node, name):
 
 
 def baked_images(obj):
-    """(BA_, BN_) of the object - baked from its Bake Source (the baking module's data)."""
+    """(BAo_, the original's normal) of the object - baked from its Bake Source (the baking
+    module's data). The normal is BNo_ (its surface), or BNoG_ (generated from BAo_) when
+    the object's Original Normal says so and BNoG_ exists."""
     d = getattr(obj, "multicamproject_bake", None)
     if d is None:
         return None, None
-    return getattr(d, "ba_image", None), getattr(d, "bn_image", None)
+    bn = getattr(d, "bn_image", None)
+    if getattr(d, "original_normal", 'BAKED') == 'GENERATED' and getattr(d, "bng_image", None):
+        bn = d.bng_image
+    return getattr(d, "ba_image", None), bn
 
 
 def generated_normal(obj):
@@ -586,6 +591,10 @@ def build_material(obj, warnings=None):
     # the slot cameras' photos right away: a rebuild (e.g. after Bake from Source) must
     # not wait for apply_slots
     fill_cam_images(obj, mat)
+    if not getattr(getattr(obj, "multicamproject_bake", None), "show_normal", True):
+        for n in nt.nodes:          # its EXPORT row's normal toggle is off: flat
+            if n.type == 'NORMAL_MAP':
+                n.inputs["Strength"].default_value = 0.0
     _place(nt, kept)
     return mat
 

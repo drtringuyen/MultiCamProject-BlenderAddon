@@ -260,8 +260,9 @@ def release_materials(obj):
         obj.multicamproject_cam.material = None
     d = obj.multicamproject_bake
     d.material = d.alb_image = d.nor_image = d.ba_image = d.bn_image = None
-    d.bap_image = d.bnp_image = None
+    d.bap_image = d.bnp_image = d.bng_image = None
     d.fingerprint = d.ba_fingerprint = d.bp_fingerprint = d.bnp_fingerprint = ""
+    d.bng_fingerprint = ""
     d.alb_size = d.nor_size = d.ba_size = d.bp_size = 0
 
 
@@ -429,8 +430,8 @@ def unlink_original(obj):
         if img is not None:
             out.append(img.name)
     d.bake_source = None
-    d.ba_image = d.bn_image = None
-    d.ba_fingerprint = d.ba_parts = ""
+    d.ba_image = d.bn_image = d.bng_image = None
+    d.ba_fingerprint = d.ba_parts = d.bng_fingerprint = ""
     d.ba_size = 0
     d.ba_far_share = d.ba_far_max = d.ba_fit_cage = 0.0
     d.route_prompt = ""

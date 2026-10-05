@@ -31,6 +31,20 @@ ROUTE_ITEMS = (
                        "projection (colors) and BNo_ -> BNp_ (normals)", 'MOD_MASK', 2))
 
 
+def _on_show_normal(data):
+    from . import material
+    material.apply_normal_visibility(data.id_data)
+
+
+def _on_original_normal(data):
+    """The Processing material shows the original's side as picked (BNo_ / BNoG_)."""
+    obj = data.id_data
+    cam = getattr(obj, "multicamproject_cam", None)
+    if cam is not None and cam.is_setup:
+        from ..camera_project import core as cp
+        cp.ensure_material(obj)
+
+
 def _on_tex_size(data, context):
     from . import cache
     cache.clear()
@@ -72,7 +86,13 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                ('GENERATED', "Generated from Albedo High-pass",
                 "Generated from BAo_ (the original's colors) with the engine below - "
                 "High-pass or AI", 'IMAGE_RGB', 1)),
+        update=lambda self, context: _on_original_normal(self),
         description="From Original / Mixed: the normal on the original's side")
+    show_normal: BoolProperty(
+        name="Normal Map", default=True,
+        update=lambda self, context: _on_show_normal(self),
+        description="Show the normal map in the viewport (MAT_ and the Processing material). "
+                    "Viewing only: the export always writes it")
     route_user: BoolProperty(description="The route was picked by hand (never changed by a "
                                           "Setup step then)")
     route_prompt: StringProperty(description="A Setup step added a workflow: shown in 06 until a "
@@ -88,6 +108,9 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                                description="BAp_<name>: albedo rendered from the projection")
     bnp_image: PointerProperty(type=bpy.types.Image, name="Baked Normal (Projection)",
                                description="BNp_<name>: normal generated from BAp_")
+    bng_image: PointerProperty(type=bpy.types.Image, name="Generated Normal (Original)",
+                               description="BNoG_<name>: normal generated from BAo_")
+    bng_fingerprint: StringProperty(description="BAo_ state + normal settings at the last BNoG_")
     bp_fingerprint: StringProperty(description="State of the projection at the last BAp_")
     bp_size: IntProperty(description="Resolution of the last BAp_ (0 = never)")
     bnp_fingerprint: StringProperty(description="BAp_ state + normal settings at the last BNp_")

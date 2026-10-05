@@ -89,6 +89,25 @@ def _bnp_state(obj, source, s):
             f"{s.nor_invert}|{common.resolution(obj)}")
 
 
+def bng_steps(context, obj, source):
+    """BNoG_<name>: the original's side generated from BAo_ (High-pass / AI), a 16-bit file in
+    the bake folder - kept while BAo_ and the settings stay. A generator (jobs)."""
+    scene = context.scene
+    s = common.settings(scene)
+    d = common.data(obj)
+    size = common.resolution(obj, scene)
+    state = (f"{d.ba_fingerprint}|{source}|{round(s.nor_strength, 4)}|{s.nor_radius}|"
+             f"{s.nor_invert}|{size}")
+    if d.bng_image is not None and d.bng_fingerprint == state and common.file_ok(d.bng_image):
+        return
+    yield jobs.Step(f"Normal: {LABELS[source]} from BAo_ (BNoG_)")
+    rgb = (ai.generate(d.ba_image, size) if source == 'AI'
+           else highpass.generate(d.ba_image, size, s))
+    yield jobs.Step("Normal: writing BNoG_ (16-bit)")
+    d.bng_image = engine.store_work(scene, rgb, d.bng_image, common.bng_name(obj), normal=True)
+    d.bng_fingerprint = state
+
+
 def bnp_steps(context, obj, source):
     """BNp_<name>: the normal generated from BAp_ (High-pass / AI), a 16-bit file in the bake
     folder - kept while BAp_ and the settings stay. A generator (jobs)."""
@@ -165,27 +184,25 @@ def generate_steps(context, obj, source):
         yield from bnp_steps(context, obj, source)
     # the original's side: its surface (BNo_) or generated from its colors (BAo_)
     generated = r in {route.ORIGINAL, route.MIXED} and d.original_normal == 'GENERATED'
-    if r == route.ORIGINAL and not generated:
-        yield jobs.Step(f"Normal: copying BNo_ to {os.path.basename(path)}")
-        d.nor_image = engine.copy_file(scene, d.bn_image, name, d.nor_image, normal=True)
+    if generated:
+        yield from bng_steps(context, obj, source)
+    if r == route.ORIGINAL:
+        src_img = d.bng_image if generated else d.bn_image
+        yield jobs.Step(f"Normal: copying {src_img.name.split(chr(95))[0]}_ to "
+                        f"{os.path.basename(path)}")
+        d.nor_image = engine.copy_file(scene, src_img, name, d.nor_image, normal=True)
     elif r == route.PROJECTION:
         yield jobs.Step(f"Normal: copying BNp_ to {os.path.basename(path)}")
         d.nor_image = engine.copy_file(scene, d.bnp_image, name, d.nor_image, normal=True)
     else:
-        base = None
-        if generated:           # the original's side, generated from its colors
-            yield jobs.Step(f"Normal: {LABELS[source]} from BAo_")
-            base = (ai.generate(d.ba_image, size) if source == 'AI'
-                    else highpass.generate(d.ba_image, size, s))
-        if r == route.ORIGINAL:
-            rgb = base
-        else:
-            was_final = final.is_final(obj)
-            try:
-                rgb = yield from compose_steps(context, obj, size, base)
-            finally:
-                if final.is_final(obj) != was_final:
-                    final.set_final(obj, scene, was_final)
+        # Mixed: the original's side (BNo_, or BNoG_ generated from BAo_) -> BNp_
+        base = _read_resized(d.bng_image, size) if generated else None
+        was_final = final.is_final(obj)
+        try:
+            rgb = yield from compose_steps(context, obj, size, base)
+        finally:
+            if final.is_final(obj) != was_final:
+                final.set_final(obj, scene, was_final)
         os.makedirs(os.path.dirname(path), exist_ok=True)
         yield jobs.Step(f"Normal: writing {os.path.basename(path)} (16-bit)")
         pngio.write_rgb16(path, rgb, s.png_compression)
@@ -207,5 +224,5 @@ def generate_steps(context, obj, source):
     final.write_inputs(obj, scene)
     if route.has_projection(obj):
         from ...camera_project import core as cp
-        cp.ensure_material(obj)         # MCP_ shows the new BNp_
+        cp.ensure_material(obj)         # MCP_ shows the new BNp_ / BNoG_
     return d.last_nor_seconds

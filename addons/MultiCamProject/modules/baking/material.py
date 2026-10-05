@@ -1,6 +1,8 @@
 """MAT_<name>: the baked export material - ALB_ into Base Color, NOR_ through a tangent
 Normal Map, both on uv_normal. Only nodes named mcp_bake_* are managed; nodes the user
 adds survive a rebuild. The FBX exporter's Principled wrapper reads exactly this."""
+from contextlib import contextmanager
+
 import bpy
 
 from ..camera_project import core as cp
@@ -37,9 +39,45 @@ def release(obj):
     baked on its own."""
     d = common.data(obj)
     d.material = d.alb_image = d.nor_image = d.ba_image = d.bn_image = None
-    d.bap_image = d.bnp_image = None
+    d.bap_image = d.bnp_image = d.bng_image = None
     d.fingerprint = d.ba_fingerprint = d.bp_fingerprint = d.bnp_fingerprint = ""
+    d.bng_fingerprint = ""
     d.alb_size = d.nor_size = d.ba_size = d.bp_size = 0
+
+
+def _normal_maps(obj):
+    """The Normal Map nodes of obj's MAT_ and Processing material (MCP_)."""
+    mats = [common.data(obj).material]
+    cam = getattr(obj, "multicamproject_cam", None)
+    if cam is not None:
+        mats.append(cam.material)
+    return [n for m in mats if m is not None and m.node_tree
+            for n in m.node_tree.nodes if n.type == 'NORMAL_MAP']
+
+
+def apply_normal_visibility(obj, show=None):
+    """The normal maps of obj's materials at full strength, or flat (Strength 0) while its
+    EXPORT row's normal toggle is off. `show` overrides the toggle (the export)."""
+    show = common.data(obj).show_normal if show is None else show
+    for n in _normal_maps(obj):
+        v = 1.0 if show else 0.0
+        if n.inputs["Strength"].default_value != v:
+            n.inputs["Strength"].default_value = v
+
+
+@contextmanager
+def normals_on(objs):
+    """Every normal map at full strength for the time of an export, then as toggled."""
+    try:
+        for o in objs:
+            apply_normal_visibility(o, True)
+        yield
+    finally:
+        for o in objs:
+            try:
+                apply_normal_visibility(o)
+            except ReferenceError:
+                pass
 
 
 def build(obj, scene, place_slots=True):
@@ -81,6 +119,7 @@ def build(obj, scene, place_slots=True):
         b.link(nor.outputs["Color"], nm.inputs["Color"])
         b.link(nm.outputs["Normal"], bsdf.inputs["Normal"])
     d.material = mat
+    apply_normal_visibility(obj)
     if place_slots:
         place(obj)
     return mat
