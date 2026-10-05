@@ -272,7 +272,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
             if cp.camera_collections(scene, vl):
                 shown = cp.cameras_shown(scene, vl)
                 right.operator("multicamproject.toggle_cameras", text="", depress=shown,
-                               icon='HIDE_OFF' if shown else 'HIDE_ON')
+                               icon='OUTLINER_OB_CAMERA')
         _scene_label(right, scene, es)
 
     def _draw_info(self, layout, scene, es, scene_row=True):
