@@ -208,6 +208,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         b.operator("multicamproject.material_refresh", text="",
                    icon='FILE_REFRESH').scope = 'SELECTED'
         row.operator("multicamproject.check_textures", text="", icon='TRASH')
+        if (matsync.is_projection(obj) and not common.data(obj).handmade
+                and route.uses_original(obj)):
+            # Mixed / From Original with a projection: the original it bakes from as well
+            layout.prop(common.data(obj), "bake_source", text="", icon='OUTLINER_OB_MESH')
         if probs:
             col = layout.column(align=True)
             col.alert = True
