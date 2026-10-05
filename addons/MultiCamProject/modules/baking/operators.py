@@ -3,7 +3,7 @@ import os
 import bpy
 from bpy.props import BoolProperty, EnumProperty
 
-from . import common, engine, gn_final, handmade, jobs, normal
+from . import common, engine, gn_final, handmade, jobs, normal, route
 
 SCOPES = (('SELECTED', "Selected", "The selected meshes"),
           ('EXPORT', "EXPORT", "Every mesh in the EXPORT collection"))
@@ -92,17 +92,14 @@ def _bake_one(context, obj, albedo, nor_source, res, log):
         why = common.uv_collapsed_text(obj)
         if why:
             raise RuntimeError(why)
-        if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
+        if route.uses_projection(obj) and route.has_projection(obj):
             from ..camera_project import core as cp
-            if cp.get_modifier(obj) is not None and not cp.keep_mode(obj):
+            if not cp.keep_mode(obj):
                 # a blank Mode projects nothing - Cycles would only say "no UV map"
                 raise RuntimeError("projection Mode is blank - pick Sharp / Smooth / Combined "
                                    "in 05 Projection Painting, then bake again")
-        if engine.needs_source_bake(obj):
-            yield jobs.Step("Bake from Source", 0.0)
-            yield from engine.bake_from_source_steps(context, obj)
-            if log:
-                log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
+        if engine.needs_source_bake(obj) and log:
+            log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
         yield jobs.Step("Albedo", 0.1)
         yield from engine.bake_albedo_steps(context, obj)
     if with_normal:
@@ -199,8 +196,8 @@ class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
-    """04 Bake from Source: the Bake Source's colors into BA_ and its surface into BN_, on
-    uv_normal at the scene's resolution (Selected to Active, Cage). Packed in the .blend, under
+    """04 Bake from Source: the Bake Source's colors into BAo_ and its surface into BNo_, on
+    uv_normal at the scene's resolution (Selected to Active, Cage). Files in the bake folder, under
     the projection - not the final textures (06 Bake Final makes those)"""
     bl_idname = "multicamproject.bake_from_source"
     bl_label = "Bake from Source"
@@ -261,7 +258,7 @@ class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
-    """Bake the Processing material (BA_ + projection) into ALB_<name> on uv_normal and
+    """Bake the Processing material (BAo_ + projection, by the Bake Route) into ALB_<name> on uv_normal and
     build MAT_. Each object then switches to Final"""
     bl_idname = "multicamproject.bake_albedo"
     bl_label = "Bake Albedo"
@@ -432,9 +429,14 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
             if why:
                 cls.poll_message_set(f"{o.name}: {why}")
                 return False
+        for o in objs:
+            why = route.problem(o)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
         s = common.settings(context.scene)
         if s.bake_what in {'ALBEDO', 'BOTH'}:
-            missing = [o.name for o in objs if not common.has_uv_normal(o)]
+            missing =[o.name for o in objs if not common.has_uv_normal(o)]
             if missing:
                 cls.poll_message_set(f"No '{common.UV_NORMAL}' UV map on {', '.join(missing[:3])}")
                 return False
@@ -470,7 +472,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
-    """The resolution of every baked texture (ALB_, NOR_, BA_, BN_) of the objects set to A"""
+    """The resolution of every baked texture (ALB_, NOR_ and the work textures BAo_/BNo_/BAp_/BNp_) of the objects set to A"""
     bl_idname = "multicamproject.bake_resolution"
     bl_label = "Bake Resolution"
     bl_options = {'REGISTER', 'UNDO', 'INTERNAL'}
@@ -479,7 +481,7 @@ class MULTICAMPROJECT_OT_BakeResolution(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, props):
-        return (f"Bake ALB_, NOR_, BA_ and BN_ at {props.size} x {props.size} px (the whole "
+        return (f"Bake ALB_, NOR_ and the work textures at {props.size} x {props.size} px (the whole "
                 "scene). Textures baked at another size count as outdated")
 
     def execute(self, context):

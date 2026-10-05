@@ -37,7 +37,7 @@ def plan(scene):
         d = common.data(o)
         if (o in make_uv or d.alb_image is None or d.nor_image is None or d.material is None
                 or codes & {'FILE', 'TEXTURE'} or fingerprint.is_outdated(o)
-                or fingerprint.ba_outdated(o)):
+                or fingerprint.original_outdated(o) or fingerprint.projection_outdated(o)):
             bake.append(o)
         for i in issues:
             if i.code in {'SHARED_MESH', 'UV_BAD', 'MESH', 'UV_EXTRA', 'COLOR'}:
@@ -70,7 +70,7 @@ def object_steps(obj, issues):
     d = common.data(obj)
     bake = (make_uv or d.alb_image is None or d.nor_image is None or d.material is None
             or bool(codes & {'FILE', 'TEXTURE', 'NOT_BAKED'}) or fingerprint.is_outdated(obj)
-            or fingerprint.ba_outdated(obj))
+            or fingerprint.original_outdated(obj) or fingerprint.projection_outdated(obj))
     if bake and not obj.material_slots and common.cp_modifier(obj) is None:
         bake = False                    # nothing to bake from
     return Steps(decimate, rename, 'TRANSFORM' in codes, make_uv, bake)

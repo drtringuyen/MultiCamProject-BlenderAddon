@@ -118,12 +118,18 @@ def _checksum(attr, field, alpha=None):
     return f"{float(buf.sum(dtype=np.float64)):.4f}/{float(np.dot(buf, w)):.1f}"
 
 
+# MCP_ nodes that are not inputs of ALB_: the route's work textures (covered by their own
+# stamps) and the route switch (the route is a part of its own)
+_NOT_INPUTS = {cp.BAKED_ALBEDO, cp.BAKED_NORMAL, cp.GENERATED_NORMAL, cp.USE_ORIGINAL,
+               cp.USE_PROJECTION}
+
+
 def _material_images(mat):
     if mat is None or not mat.node_tree:
         return []
     out = []
     for n in mat.node_tree.nodes:
-        if n.name == cp.GENERATED_NORMAL:       # NOR_ preview in MCP_: a result, not an input
+        if n.name in _NOT_INPUTS:
             continue
         if n.type == 'TEX_IMAGE' and n.image:
             out.append((n.name, n.image.name, n.image.filepath))
@@ -148,34 +154,65 @@ def _checksums(obj):
     return out
 
 
-def compute(obj, cached=False):
-    """`cached`: reuse the mesh checksums (panel redraws). Everything else - modifier
-    inputs, cameras, images - is read live: changing an input of a disabled modifier
-    (the projection while Final is on) triggers no depsgraph update."""
-    me = obj.data
-    parts = [obj.name, me.name, common.data(obj).ba_fingerprint]
-    parts += cache.get(obj, "checksums", _checksums) if cached else _checksums(obj)
+def _projection_parts(obj, cached=False):
+    """What the projection shows: uv_normal, the VCMix layers (RGB and alpha), the slot
+    cameras and their photos, the modifier's inputs and MCP_'s images."""
+    parts = list(cache.get(obj, "checksums", _checksums) if cached else _checksums(obj))
     mod = common.cp_modifier(obj)
-    if (mod is not None and mod.node_group is not None
-            and hasattr(bpy.types.Object, "multicamproject_cam")):     # camera_project on
-        d = cp.data(obj)
-        n = cp.slot_count(d)
-        parts.append(n)
-        for i, cam in enumerate(cp.get_slots(d), 1):
-            img = cp.cam_image(cam) if cam else None
-            parts.append((cam.name if cam else "", img.filepath if img else ""))
-        for k in ("Mode", "Previous Bake") + tuple(f"UV Shift Cam{i}" for i in range(1, n + 1)):
-            try:
-                v = cp.get_input(mod, k)
-            except (KeyError, AttributeError):
-                v = None
-            parts.append((k, tuple(round(x, 5) for x in v) if hasattr(v, "__len__")
-                           and not isinstance(v, str) else v))
-        parts.append(_material_images(d.material))     # photos, BA_ / BN_
-    else:
-        # the add-on's own MAT_ (slot 2 once baked) is the result, not an input
-        parts += [_material_images(s.material) for s in obj.material_slots
-                  if not (s.material and s.material.get(cp.BAKED_TAG))]
+    if (mod is None or mod.node_group is None
+            or not hasattr(bpy.types.Object, "multicamproject_cam")):     # camera_project off
+        return parts + ["no projection"]
+    d = cp.data(obj)
+    n = cp.slot_count(d)
+    parts.append(n)
+    for i, cam in enumerate(cp.get_slots(d), 1):
+        img = cp.cam_image(cam) if cam else None
+        parts.append((cam.name if cam else "", img.filepath if img else ""))
+    for k in ("Mode", "Previous Bake") + tuple(f"UV Shift Cam{i}" for i in range(1, n + 1)):
+        try:
+            v = cp.get_input(mod, k)
+        except (KeyError, AttributeError):
+            v = None
+        parts.append((k, tuple(round(x, 5) for x in v) if hasattr(v, "__len__")
+                       and not isinstance(v, str) else v))
+    parts.append(_material_images(d.material))     # the photos
+    return parts
+
+
+def projection_state(obj, cached=False):
+    """Hash of what the projection shows (BAp_ and Mixed's ALB_ depend on it)."""
+    return hashlib.sha1(repr(_projection_parts(obj, cached)).encode()).hexdigest()
+
+
+def stamp_projection(obj):
+    """What a BAp_ render stores: the state + when (so ALB_ sees every new BAp_)."""
+    return f"{projection_state(obj)}:{time.time():.0f}"
+
+
+def bp_outdated(obj):
+    """BAp_ exists but the projection changed since, or it is at another resolution."""
+    d = common.data(obj)
+    if not d.bp_fingerprint:
+        return False
+    if d.bp_size and d.bp_size != common.resolution(obj):
+        return True
+    return d.bp_fingerprint.split(":")[0] != projection_state(obj, cached=True)
+
+
+def compute(obj, cached=False):
+    """The state ALB_ / NOR_ were baked from, by the object's Bake Route: the route itself,
+    From Original BAo_'s stamp, From Projection what the projection shows, Mixed both.
+    `cached`: reuse the mesh checksums (panel redraws). Everything else - modifier inputs,
+    cameras, images - is read live: changing an input of a disabled modifier (the
+    projection while Final is on) triggers no depsgraph update."""
+    from . import route
+    d = common.data(obj)
+    r = route.get(obj)
+    parts = [obj.name, obj.data.name, r]
+    if r in {route.ORIGINAL, route.MIXED}:
+        parts.append(d.ba_fingerprint)
+    if r in {route.PROJECTION, route.MIXED}:
+        parts += _projection_parts(obj, cached)
     return hashlib.sha1(repr(parts).encode()).hexdigest()
 
 
@@ -187,3 +224,17 @@ def current(obj):
 def is_outdated(obj):
     d = common.data(obj)
     return bool(d.fingerprint) and d.fingerprint != current(obj)
+
+
+def original_outdated(obj):
+    """The route uses the Original and BAo_ is missing or outdated."""
+    from . import route
+    d = common.data(obj)
+    return (route.uses_original(obj) and d.bake_source is not None
+            and (d.ba_image is None or ba_outdated(obj)))
+
+
+def projection_outdated(obj):
+    """The route uses the Projection and BAp_ is outdated (a missing BAp_ is just made)."""
+    from . import route
+    return route.uses_projection(obj) and bp_outdated(obj)

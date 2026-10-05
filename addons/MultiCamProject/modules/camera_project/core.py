@@ -1,5 +1,6 @@
 """Camera projection logic: material, modifier wiring, camera scoring, images, slots."""
 import os
+from contextlib import contextmanager
 
 import bpy
 import numpy as np
@@ -218,16 +219,19 @@ def scene_cameras(scene):
 
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
-MAT_VERSION = 7         # bump when the material's node setup changes
+MAT_VERSION = 8         # bump when the material's node setup changes
 LAYOUT_VERSION = 6      # from here on nodes have stable names: a rebuild keeps their spots
 PREFIX = "MCP_"
 OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
 BAKED_TAG = "multicamproject_baked"     # MAT_<name> built by the baking module
 LEGACY_PREFIX = "MATMCP_"           # material of the removed Convert Material button
-BAKED_ALBEDO = "Baked Albedo"       # the BA_ Image Texture node
-BAKED_NORMAL = "Baked Normal"       # the BN_ Image Texture node
-GENERATED_NORMAL = "Generated Normal"   # the NOR_ Image Texture node (preview, not an input)
-NO_BAKE = "No Bake"                 # the grey RGB node while there is no BA_
+BAKED_ALBEDO = "Baked Albedo"       # the BAo_ Image Texture node (from the Original)
+BAKED_NORMAL = "Baked Normal"       # the BNo_ Image Texture node
+GENERATED_NORMAL = "Generated Normal"   # the BNp_ Image Texture node (from the Projection)
+NO_BAKE = "No Bake"                 # the grey RGB node while there is no BAo_
+USE_ORIGINAL = "Use Original"       # ROUTE: the Value nodes the object's Bake Route sets
+USE_PROJECTION = "Use Projection"
+ROUTE_VALUES = {'ORIGINAL': (1.0, 0.0), 'PROJECTION': (0.0, 1.0), 'MIXED': (1.0, 1.0)}
 UV_INDEX = "uv_index"               # face attribute: the face's material slot
 UV_NORMAL = "uv_normal"             # the user's non-overlapping bake UV (never touched here)
 
@@ -299,51 +303,134 @@ def baked_images(obj):
 
 
 def generated_normal(obj):
-    """NOR_ of the object, shown where projected - only next to BA_ and BN_."""
+    """BNp_ of the object (the normal generated from the projection's BAp_)."""
     d = getattr(obj, "multicamproject_bake", None)
-    ba, bn = baked_images(obj)
-    return getattr(d, "nor_image", None) if ba is not None and bn is not None else None
+    return getattr(d, "bnp_image", None)
 
 
-def _build_normal_mix(b, baked_normal, nor, mask):
-    """BN_ where baked, NOR_ (BN_ + the albedo's detail) where projected - by the same blend
-    mask as the colors, so painting VCMix alpha shows both. NOR_ is the last Bake Final's."""
+def _route_of(obj):
+    d = getattr(obj, "multicamproject_bake", None)
+    return getattr(d, "route", 'MIXED')
+
+
+def _build_normal_mix(b, baked_normal, bnp, mask):
+    """BNo_ where the mask is 0, BNp_ where it is 1 (a plain mix, as Bake Final makes NOR_),
+    so painting VCMix alpha shows the normals too. A missing one is the surface's own."""
     f = b.t.nodes["BAKED"]
-    tex = _named(b.n("ShaderNodeTexImage", (400, -636), f, image=nor), GENERATED_NORMAL)
-    tex.label = "NOR (Generated Normal)"
-    b.link(b.t.nodes["Baked UV"].outputs["UV"], tex.inputs["Vector"])
-    nm = _named(b.n("ShaderNodeNormalMap", (700, -636), f, space='TANGENT', uv_map=UV_NORMAL),
-                "Generated Normal Map")
-    b.link(tex.outputs["Color"], nm.inputs["Color"])
+    geo = None
+    if baked_normal is None or bnp is None:
+        geo = _named(b.n("ShaderNodeNewGeometry", (700, -936), f),
+                     "Surface Normal").outputs["Normal"]
+    gen = geo
+    if bnp is not None:
+        uv = b.t.nodes.get("Baked UV") or _named(
+            b.n("ShaderNodeUVMap", (29, -300), f, uv_map=UV_NORMAL), "Baked UV")
+        tex = _named(b.n("ShaderNodeTexImage", (400, -636), f, image=bnp), GENERATED_NORMAL)
+        tex.label = "BNp (Projection Normal)"
+        b.link(uv.outputs["UV"], tex.inputs["Vector"])
+        nm = _named(b.n("ShaderNodeNormalMap", (700, -636), f, space='TANGENT', uv_map=UV_NORMAL),
+                    "Generated Normal Map")
+        b.link(tex.outputs["Color"], nm.inputs["Color"])
+        gen = nm.outputs["Normal"]
     f = b.t.nodes["BLEND"]
     mix = _named(b.n("ShaderNodeMix", (620, -300), f, data_type="VECTOR"), "Normal Mix")
     b.link(mask, mix.inputs[0])
-    b.link(baked_normal, gn_builder._sock(mix.inputs, "A"))
-    b.link(nm.outputs["Normal"], gn_builder._sock(mix.inputs, "B"))
+    b.link(baked_normal if baked_normal is not None else geo, gn_builder._sock(mix.inputs, "A"))
+    b.link(gen, gn_builder._sock(mix.inputs, "B"))
     norm = _named(b.vmath("NORMALIZE", gn_builder._sock(mix.outputs, "Result"), None,
                           (800, -300), f), "Normal Mix Normalize")
     return norm.outputs["Vector"]
 
 
+def _build_route(b, obj, baked, cover, vcmask):
+    """ROUTE frame: the object's Bake Route as two Values (set_route), o = Use Original,
+    p = Use Projection. Returns (BAKED color, color mask, normal mask):
+        color mask  = p x (o ? VCMix mask : camera cover)
+                      Original 0 / Projection: where a camera sees it / Mixed: VCMix alpha
+        BAKED color = o ? BAo_ : grey (From Projection ignores the original)
+        normal mask = o ? color mask : 1 (BNo_ -> BNp_; From Projection: BNp_ alone)"""
+    f = _named(b.frame("ROUTE", (-150, 900)), "ROUTE")
+    o_val, p_val = ROUTE_VALUES.get(_route_of(obj), (1.0, 1.0))
+    o = _named(b.n("ShaderNodeValue", (0, 0), f), USE_ORIGINAL)
+    o.label = "Use Original (Bake Route)"
+    o.outputs[0].default_value = o_val
+    p = _named(b.n("ShaderNodeValue", (0, -120), f), USE_PROJECTION)
+    p.label = "Use Projection (Bake Route)"
+    p.outputs[0].default_value = p_val
+    sel = _named(b.n("ShaderNodeMix", (200, 0), f, data_type="FLOAT"), "Route Mask Select")
+    sel.label = "cover / VCMix mask"
+    b.link(o.outputs[0], sel.inputs[0])
+    b.link(cover, gn_builder._sock(sel.inputs, "A"))
+    b.link(vcmask, gn_builder._sock(sel.inputs, "B"))
+    mask = _named_math(b, "Route Mask", "MULTIPLY", gn_builder._sock(sel.outputs, "Result"),
+                       p.outputs[0], (400, 0), "Route Mask", f)
+    grey = _named(b.n("ShaderNodeRGB", (200, -250), f), "Original Off")
+    grey.label = "Original off (grey)"
+    grey.outputs[0].default_value = (0.5, 0.5, 0.5, 1.0)
+    col = _named(b.n("ShaderNodeMix", (400, -250), f, data_type="RGBA"), "Route Original")
+    b.link(o.outputs[0], col.inputs[0])
+    b.link(grey.outputs[0], gn_builder._sock(col.inputs, "A"))
+    b.link(baked, gn_builder._sock(col.inputs, "B"))
+    nmask = _named(b.n("ShaderNodeMix", (600, 0), f, data_type="FLOAT"), "Route Normal Mask")
+    b.link(o.outputs[0], nmask.inputs[0])
+    gn_builder._sock(nmask.inputs, "A").default_value = 1.0
+    b.link(mask, gn_builder._sock(nmask.inputs, "B"))
+    return (gn_builder._sock(col.outputs, "Result"), mask,
+            gn_builder._sock(nmask.outputs, "Result"))
+
+
+def set_route(obj):
+    """MCP_ follows the object's Bake Route (its two ROUTE Values) - no rebuild."""
+    mat = data(obj).material if hasattr(obj, "multicamproject_cam") else None
+    if mat is None or mat.node_tree is None:
+        return
+    for name, v in zip((USE_ORIGINAL, USE_PROJECTION),
+                       ROUTE_VALUES.get(_route_of(obj), (1.0, 1.0))):
+        n = mat.node_tree.nodes.get(name)
+        if n is not None and abs(n.outputs[0].default_value - v) > 1e-6:
+            n.outputs[0].default_value = v
+
+
+@contextmanager
+def route_override(obj, route):
+    """MCP_ shows `route` for a moment (BAp_ is rendered as From Projection)."""
+    mat = data(obj).material if hasattr(obj, "multicamproject_cam") else None
+    nodes = mat.node_tree.nodes if mat is not None and mat.node_tree else None
+    saved = []
+    try:
+        if nodes is not None:
+            for name, v in zip((USE_ORIGINAL, USE_PROJECTION), ROUTE_VALUES[route]):
+                n = nodes.get(name)
+                if n is not None:
+                    saved.append((n, n.outputs[0].default_value))
+                    n.outputs[0].default_value = v
+        yield
+    finally:
+        for n, v in saved:
+            n.outputs[0].default_value = v
+
+
 def _build_baked(b, ba, bn):
-    """BAKED frame: BA_ (the albedo baked from the Bake Source) on uv_normal, flat grey
-    before a bake. Returns (color, normal or None) - BN_ through a tangent Normal Map."""
+    """BAKED frame: BAo_ (the albedo baked from the Original) on uv_normal, flat grey
+    before a bake. Returns (color, normal or None) - BNo_ through a tangent Normal Map."""
     f = _named(b.frame("BAKED", (-1730, 411)), "BAKED")
+    uv = None
+    if ba is not None or bn is not None:
+        uv = _named(b.n("ShaderNodeUVMap", (29, -300), f, uv_map=UV_NORMAL), "Baked UV")
     if ba is None:
         rgb = _named(b.n("ShaderNodeRGB", (851, -36), f, label="Not baked from a source"), NO_BAKE)
         rgb.outputs[0].default_value = (0.5, 0.5, 0.5, 1.0)
         col = rgb.outputs[0]
     else:
-        uv = _named(b.n("ShaderNodeUVMap", (29, -300), f, uv_map=UV_NORMAL), "Baked UV")
         tex = _named(b.n("ShaderNodeTexImage", (400, -36), f, image=ba), BAKED_ALBEDO)
-        tex.label = "BA (Baked Albedo)"
+        tex.label = "BAo (Original Albedo)"
         b.link(uv.outputs["UV"], tex.inputs["Vector"])
         col = tex.outputs["Color"]
-    if bn is None or ba is None:
+    if bn is None:
         return col, None
     tex = _named(b.n("ShaderNodeTexImage", (400, -336), f, image=bn), BAKED_NORMAL)
-    tex.label = "BN (Baked Normal)"
-    b.link(b.t.nodes["Baked UV"].outputs["UV"], tex.inputs["Vector"])
+    tex.label = "BNo (Original Normal)"
+    b.link(uv.outputs["UV"], tex.inputs["Vector"])
     nm = _named(b.n("ShaderNodeNormalMap", (700, -336), f, space='TANGENT', uv_map=UV_NORMAL),
                 "Baked Normal Map")
     b.link(tex.outputs["Color"], nm.inputs["Color"])
@@ -388,7 +475,7 @@ def _build_projection(b, n):
     (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
     mask = VCMix alpha x VCMix2 alpha x (s1 + w2): erasing either alpha, or no camera
     covering the face, shows the scan.
-    Returns (color, blend mask)."""
+    Returns (color, blend mask, camera cover)."""
     f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
     texs = []
     for i in range(1, n + 1):
@@ -419,22 +506,24 @@ def _build_projection(b, n):
         layers.append((col, vc, ws))
     color, vc1, ws1 = layers[0]
     mask = vc1.outputs["Alpha"]
+
+    def layer_sum(ws, y, label):
+        a = _named_math(b, f"{label} A", "ADD", ws[0], ws[1], (2700, y), parent=f)
+        t = _named_math(b, label, "ADD", a, ws[2], (2850, y), label, f)
+        t.node.use_clamp = True
+        return t
+
+    s1 = layer_sum(ws1, -1200, "1-3 Cover")
+    cover = s1                  # where the cameras see the face (From Projection's mask)
     if len(layers) > 1:
         col2, vc2, ws2 = layers[1]
-
-        def layer_sum(ws, y, label):
-            a = _named_math(b, f"{label} A", "ADD", ws[0], ws[1], (2700, y), parent=f)
-            t = _named_math(b, label, "ADD", a, ws[2], (2850, y), label, f)
-            t.node.use_clamp = True
-            return t
-
-        s1 = layer_sum(ws1, -1200, "1-3 Cover")
         s2 = layer_sum(ws2, -1400, "4-6 Weight")
         free = _named_math(b, "1-3 Uncovered", "SUBTRACT", 1.0, s1, (3050, -1300), parent=f)
         w2 = _named_math(b, "4-6 Share", "MULTIPLY", s2, free, (3200, -1400),
                          "4-6 Share (1-3 on top)", f)
         both = _named_math(b, "Cameras Cover", "ADD", s1, w2, (3350, -1300), "Cameras Cover", f)
         both.node.use_clamp = True
+        cover = both
         safe = _named_math(b, "Cameras Cover Max", "MAXIMUM", both, 1e-6, (3500, -1300), parent=f)
         share = _named_math(b, "4-6 Fraction", "DIVIDE", w2, safe, (3650, -1300), "4-6 Fraction", f)
         mx = _named(b.n("ShaderNodeMix", (3800, -450), f, data_type="RGBA"), "VCMix on top")
@@ -447,7 +536,7 @@ def _build_projection(b, n):
         alphas = _named_math(b, "Both Alphas", "MULTIPLY", mask, vc2.outputs["Alpha"],
                              (3650, -1100), "VCMix a x VCMix2 a", f)
         mask = _named_math(b, "Blend Mask", "MULTIPLY", alphas, both, (3800, -1200), "Blend Mask", f)
-    return color, mask
+    return color, mask, cover
 
 
 def _place(nt, kept):
@@ -481,7 +570,8 @@ def build_material(obj, warnings=None):
     b.link(bsdf.outputs[0], out.inputs["Surface"])
 
     baked, normal = _build_baked(b, *baked_images(obj))
-    projected, mask = _build_projection(b, slot_count(data(obj)))
+    projected, vcmask, cover = _build_projection(b, slot_count(data(obj)))
+    baked, mask, nmask = _build_route(b, obj, baked, cover, vcmask)
 
     # 0 = baked, 1 = projected
     f = _named(b.frame("BLEND", (-150, 250)), "BLEND")
@@ -490,11 +580,9 @@ def build_material(obj, warnings=None):
     b.link(baked, gn_builder._sock(mix.inputs, "A"))
     b.link(projected, gn_builder._sock(mix.inputs, "B"))
     b.link(gn_builder._sock(mix.outputs, "Result"), bsdf.inputs["Base Color"])
-    if normal is not None:
-        nor = generated_normal(obj)
-        if nor is not None:
-            normal = _build_normal_mix(b, normal, nor, mask)
-        b.link(normal, bsdf.inputs["Normal"])
+    bnp = generated_normal(obj)
+    if normal is not None or bnp is not None:
+        b.link(_build_normal_mix(b, normal, bnp, nmask), bsdf.inputs["Normal"])
     # the slot cameras' photos right away: a rebuild (e.g. after Bake from Source) must
     # not wait for apply_slots
     fill_cam_images(obj, mat)

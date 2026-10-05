@@ -121,7 +121,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.label(text="Snap to Source (vg_Snap)", icon='MOD_SHRINKWRAP')
             row.operator("multicamproject.remesh_snap", text="", icon='X').on = False
 
-        # 04: BA_ / BN_ from the Bake Source (the baking module's settings)
+        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings)
         if not baking:
             return
         from ..baking import common, fingerprint, jobs, operators as bake_ops
@@ -153,7 +153,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         if d.ba_image is not None:
             info = box.row()
             info.active = False
-            info.label(text=f"BA_ + BN_ {_res(d.ba_size)} (packed, not final) · "
+            info.label(text=f"BAo_ + BNo_ {_res(d.ba_size)} (files, not final) · "
                             f"{d.last_ba_seconds:.1f} s", icon='IMAGE_RGB')
             why = fingerprint.ba_why(obj)
             if why:

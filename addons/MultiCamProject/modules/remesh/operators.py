@@ -655,6 +655,9 @@ class MULTICAMPROJECT_OT_RemeshUseExisting(bpy.types.Operator):
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         high.select_set(False)
+        if module_manager.is_loaded("baking"):
+            from ..baking import route
+            route.after_step(low, 'ORIGINAL')
         self.report({'INFO'}, f"'{low.name}' bakes from '{high.name}'")
         return {'FINISHED'}
 
@@ -720,13 +723,81 @@ class MULTICAMPROJECT_OT_ResetObject(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_RemoveProjection(bpy.types.Operator):
+    """Remove 0A/0B from the active mesh only: projection modifier, UV_camN, VCMix, camera
+    slots, MCP_ and BAp_/BNp_. The cameras stay in the scene; the original's bake, ALB_/NOR_
+    and MAT_ stay. The Bake Route becomes From Original (with a Bake Source)"""
+    bl_idname = "multicamproject.remove_projection"
+    bl_label = "Remove Projection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        why = wf.reset_problem(obj)
+        if not why and not (hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup):
+            why = "No camera projection (0B) on it"
+        if why:
+            cls.poll_message_set(why)
+        return not why
+
+    def invoke(self, context, event):
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Remove the projection from '{context.active_object.name}'?",
+            message="Its VCMix paint and camera slots go (the cameras stay in the scene). "
+                    "Ctrl+Z undoes it.", confirm_text="Remove", icon='WARNING')
+
+    def execute(self, context):
+        obj = context.active_object
+        done = wf.remove_projection(obj)
+        for line in done:
+            print(f"[MultiCamProject] remove projection {obj.name}: {line}")
+        self.report({'INFO'}, f"Projection removed from '{obj.name}' ({len(done)} item(s), "
+                              "list in the console)")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_UnlinkOriginal(bpy.types.Operator):
+    """Remove 0C/0D's link from the active mesh: no Bake Source, BAo_/BNo_ unlinked (their
+    files stay until Check Textures). The low poly and the hidden original stay. The Bake
+    Route becomes From Projection"""
+    bl_idname = "multicamproject.unlink_original"
+    bl_label = "Unlink Original"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        why = wf.reset_problem(obj)
+        if not why and obj.multicamproject_bake.bake_source is None:
+            why = "No Bake Source (original) on it"
+        if why:
+            cls.poll_message_set(why)
+        return not why
+
+    def invoke(self, context, event):
+        src = context.active_object.multicamproject_bake.bake_source
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Unlink '{src.name}' from '{context.active_object.name}'?",
+            message="It no longer bakes from the original (BAo_/BNo_). The low poly and the "
+                    "original stay. Ctrl+Z undoes it.", confirm_text="Unlink", icon='WARNING')
+
+    def execute(self, context):
+        obj = context.active_object
+        done = wf.unlink_original(obj)
+        self.report({'INFO'}, f"'{obj.name}' no longer bakes from the original: "
+                              f"{', '.join(done) or 'nothing linked'}")
+        return {'FINISHED'}
+
+
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
             MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
             MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap,
             MULTICAMPROJECT_OT_ResetObject, MULTICAMPROJECT_OT_RetopoEmpty,
-            MULTICAMPROJECT_OT_RetopoFocus)
+            MULTICAMPROJECT_OT_RetopoFocus, MULTICAMPROJECT_OT_RemoveProjection,
+            MULTICAMPROJECT_OT_UnlinkOriginal)
 
 
 def _face_menu(self, context):

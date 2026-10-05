@@ -50,14 +50,27 @@ class MULTICAMPROJECT_OT_Setup(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
+        was_setup = core.data(obj).is_setup
         warnings = core.setup(obj, context.scene)
         _report_warnings(self, warnings)
+        if not was_setup:
+            _route_after(obj)
         n = len(core.data(obj).cameras)
         if n == 0:
             self.report({'WARNING'}, "No camera sees this object")
         else:
             self.report({'INFO'}, f"{n} camera(s) see '{obj.name}'")
         return {'FINISHED'}
+
+
+def _route_after(obj):
+    """0B added the projection: the Bake Route follows (baking module)."""
+    try:
+        from ..baking import route
+    except ImportError:
+        return
+    if hasattr(obj, "multicamproject_bake"):
+        route.after_step(obj, 'PROJECTION')
 
 
 class MULTICAMPROJECT_OT_ReloadAll(bpy.types.Operator):

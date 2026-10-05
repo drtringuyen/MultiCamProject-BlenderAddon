@@ -1,4 +1,4 @@
-"""The ALB_ / NOR_ files this .blend has used or written - the only ones a clean-up may
+"""The ALB_ / NOR_ (and BAo_/BNo_/BAp_/BNp_ work) files this .blend has used or written - the only ones a clean-up may
 remove. Bake folders and export folders are often shared by several .blend files (a
 team's Drive folder); "no image of this .blend uses it" alone once sent another file's
 bakes to the Recycle Bin.
@@ -17,7 +17,7 @@ from bpy.app.handlers import persistent
 
 from . import common
 
-OWN = ("ALB_", "NOR_")
+OWN = common.OWN_PREFIXES
 
 
 def _name(path):
@@ -37,7 +37,7 @@ def is_own(scene, path, own=None):
 
 
 def add(scene, files):
-    """Record `files` (absolute or // paths) - only ALB_/NOR_ PNGs."""
+    """Record `files` (absolute or // paths) - only the add-on's own PNGs (OWN)."""
     new = {_name(f) for f in files if f and os.path.basename(bpy.path.abspath(f)).startswith(OWN)}
     have = names(scene)
     if new <= have:
@@ -46,7 +46,7 @@ def add(scene, files):
 
 
 def used_now():
-    """ALB_/NOR_ files the images of this .blend point at."""
+    """The add-on's files (OWN) the images of this .blend point at."""
     return [common.image_file(i) for i in bpy.data.images
             if i.source == 'FILE' and i.filepath and not i.library
             and os.path.basename(common.image_file(i)).startswith(OWN)]

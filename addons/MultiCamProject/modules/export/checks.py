@@ -95,7 +95,7 @@ def used_files():
             for i in bpy.data.images if i.source in {'FILE', 'SEQUENCE', 'TILED'} and i.filepath}
 
 
-OWN = ("ALB_", "NOR_")     # the add-on's own textures - the only files a clean-up touches
+OWN = common.OWN_PREFIXES     # the add-on's own textures - the only files a clean-up touches
 
 
 def pngs(folder, fresh=True):
@@ -360,11 +360,20 @@ def check_state(obj):
     if live_decimate(obj):
         out.append(Issue(obj.name, 'DECIMATE', "Decimate not applied (03) - left out of the FBX",
                          ERROR))
-    if fingerprint.ba_outdated(obj):
-        out.append(Issue(obj.name, 'OUTDATED', f"BA_ outdated - {fingerprint.ba_why(obj)}",
+    from ..baking import route
+    why = route.problem(obj) if not common.data(obj).handmade else ""
+    if why:
+        out.append(Issue(obj.name, 'ROUTE', f"{why} - change the Bake Route (06)", ERROR))
+    elif fingerprint.original_outdated(obj) and common.data(obj).ba_image is not None:
+        out.append(Issue(obj.name, 'OUTDATED', f"BAo_ outdated - {fingerprint.ba_why(obj)}",
                          WARNING))
+    elif fingerprint.projection_outdated(obj):
+        out.append(Issue(obj.name, 'OUTDATED', "BAp_ outdated - the projection changed since "
+                         "the bake", WARNING))
     elif fingerprint.is_outdated(obj):
-        out.append(Issue(obj.name, 'OUTDATED', "outdated - the projection changed since the bake",
+        what = {route.ORIGINAL: "BAo_ / the route", route.PROJECTION: "the projection / the route",
+                route.MIXED: "the projection or BAo_"}[route.get(obj)]
+        out.append(Issue(obj.name, 'OUTDATED', f"outdated - {what} changed since the bake",
                          WARNING))
     return out
 

@@ -99,6 +99,11 @@ def rename_object(obj, new, fresh=None, mcp=None):
         _rename_file(d.alb_image, common.alb_name(obj), keep)
     if d.nor_image is not None:
         _rename_file(d.nor_image, common.nor_name(obj), keep)
+    # the route's work textures follow (files in the bake folder, this object's alone)
+    for img, name in ((d.ba_image, common.ba_name(obj)), (d.bn_image, common.bn_name(obj)),
+                      (d.bap_image, common.bap_name(obj)), (d.bnp_image, common.bnp_name(obj))):
+        if img is not None and img.name != name:
+            _rename_file(img, name)
     if fresh:       # same bake, new names: still up to date
         d.fingerprint = fingerprint.compute(obj)
     return new

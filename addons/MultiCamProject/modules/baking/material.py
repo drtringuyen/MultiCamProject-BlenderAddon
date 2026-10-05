@@ -33,12 +33,13 @@ def place(obj):
 
 
 def release(obj):
-    """A duplicate lets go of the original's bake (MAT_, ALB_, NOR_, BA_, BN_): it gets
+    """A duplicate lets go of the original's bake (MAT_, ALB_, NOR_ and the work textures): it gets
     baked on its own."""
     d = common.data(obj)
     d.material = d.alb_image = d.nor_image = d.ba_image = d.bn_image = None
-    d.fingerprint = d.ba_fingerprint = ""
-    d.alb_size = d.nor_size = d.ba_size = 0
+    d.bap_image = d.bnp_image = None
+    d.fingerprint = d.ba_fingerprint = d.bp_fingerprint = d.bnp_fingerprint = ""
+    d.alb_size = d.nor_size = d.ba_size = d.bp_size = 0
 
 
 def build(obj, scene, place_slots=True):

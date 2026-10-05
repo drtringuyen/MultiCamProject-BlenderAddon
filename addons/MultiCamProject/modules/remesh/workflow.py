@@ -254,14 +254,15 @@ def repair_original(obj):
 
 
 def release_materials(obj):
-    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_ / BA_ / BN_: they belong to the copy
+    """The original lets go of MCP_ / MAT_ / ALB_ / NOR_ and the work textures: they belong to the copy
     now (the copy takes the original's name). make_copy then drops them from its slots."""
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.material = None
     d = obj.multicamproject_bake
     d.material = d.alb_image = d.nor_image = d.ba_image = d.bn_image = None
-    d.fingerprint = d.ba_fingerprint = ""
-    d.alb_size = d.nor_size = d.ba_size = 0
+    d.bap_image = d.bnp_image = None
+    d.fingerprint = d.ba_fingerprint = d.bp_fingerprint = d.bnp_fingerprint = ""
+    d.alb_size = d.nor_size = d.ba_size = d.bp_size = 0
 
 
 def repair_originals():
@@ -361,6 +362,83 @@ def reset_object(obj):
                 d.source = None
                 out.append(f"{o.name}: no longer its Remesh copy")
     me.update()
+    return out
+
+
+# ---------------------------------------------------------------- Remove one workflow
+
+def remove_projection(obj):
+    """Remove 0A/0B from `obj` only: the projection modifier and its drivers, UV_camN,
+    VCMix / VCMix2, the camera slots, MCP_ (its slot; the material goes with matsync) and
+    BAp_ / BNp_. A raw scan's faces go back to their scan material. The cameras stay in
+    the scene (other objects use them); the original's bake, ALB_ / NOR_ and MAT_ stay.
+    The Bake Route becomes From Original when there is a Bake Source. Returns text lines."""
+    out = []
+    me = obj.data
+    n = _free_projection_faces(obj)         # while MCP_ still has its slot
+    if n:
+        out.append(f"{n:,} faces back on their scan material")
+    for mod in list(obj.modifiers):
+        group = mod.node_group.name if mod.type == 'NODES' and mod.node_group else ""
+        if mod.type == 'NODES' and any(group.startswith(g) for g in
+                                       ("GN-CameraProject", "GN-CamProject", "MCP")):
+            cp.remove_drivers(obj, mod)
+            out.append(f"modifier {mod.name}")
+            obj.modifiers.remove(mod)
+    for uv in [u for u in me.uv_layers if u.name.startswith("UV_cam")]:
+        out.append(f"UV {uv.name}")
+        me.uv_layers.remove(uv)
+    from ..camera_project import gn_builder
+    for name in gn_builder.LAYERS + (gn_builder.MASK2_STASH,):
+        attr = me.attributes.get(name)
+        if attr is not None:
+            out.append(f"attribute {name}")
+            me.attributes.remove(attr)
+    if hasattr(obj, "multicamproject_cam"):
+        obj.property_unset("multicamproject_cam")       # slots, cameras, MCP_ pointer
+        out.append("camera slots and MCP_")
+    d = obj.multicamproject_bake
+    d.bap_image = d.bnp_image = None
+    d.bp_fingerprint = d.bnp_fingerprint = ""
+    d.bp_size = 0
+    d.route_prompt = ""
+    if module_manager.is_loaded("baking"):
+        from ..baking import material, route
+        if d.material is not None:
+            material.place(obj)
+        else:
+            cp.arrange_slots(obj, [])
+        if route.has_original(obj):
+            route.set_route(obj, route.ORIGINAL)
+    else:
+        cp.arrange_slots(obj, [d.material] if d.material else [])
+    me.update()
+    return out
+
+
+def unlink_original(obj):
+    """Remove 0C/0D's link from `obj`: no Bake Source, BAo_ / BNo_ unlinked (their files
+    stay in the bake folder - Check Textures removes them). The low poly, its Remesh link
+    (Cutting & Modelling, Snap) and the hidden original stay; picking a Bake Source again
+    brings the route back. The Bake Route becomes From Projection. Returns text lines."""
+    d = obj.multicamproject_bake
+    out = []
+    if d.bake_source is not None:
+        out.append(f"Bake Source {d.bake_source.name}")
+    for img in (d.ba_image, d.bn_image):
+        if img is not None:
+            out.append(img.name)
+    d.bake_source = None
+    d.ba_image = d.bn_image = None
+    d.ba_fingerprint = d.ba_parts = ""
+    d.ba_size = 0
+    d.ba_far_share = d.ba_far_max = d.ba_fit_cage = 0.0
+    d.route_prompt = ""
+    if module_manager.is_loaded("baking"):
+        from ..baking import route
+        route.set_route(obj, route.PROJECTION)
+    if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
+        cp.ensure_material(obj)         # the BAKED frame: grey now
     return out
 
 
@@ -469,4 +547,6 @@ def make_copy(context, obj, retopo=False):
         from ..baking import gn_final
         if gn_final.get_modifier(copy) is not None:
             gn_final.ensure_modifier(copy)      # its own wrapper, last in the stack
+        from ..baking import route
+        route.after_step(copy, 'RETOPO' if retopo else 'ORIGINAL')
     return copy, warnings

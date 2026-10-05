@@ -53,8 +53,12 @@ class MULTICAMPROJECT_OT_ProjectSides(bpy.types.Operator):
         else:
             self.report({'INFO'}, f"{len(cams)} sides cameras reset in '{core.COLLECTION}'")
         obj = context.active_object             # then 0B on the object
-        warnings = (cp.refresh(obj, context.scene) if cp.data(obj).is_setup
+        was_setup = cp.data(obj).is_setup
+        warnings = (cp.refresh(obj, context.scene) if was_setup
                     else cp.setup(obj, context.scene))
+        if not was_setup:
+            from ..camera_project.operators import _route_after
+            _route_after(obj)
         for w in warnings:
             self.report({'WARNING'}, w)
         return {'FINISHED'}

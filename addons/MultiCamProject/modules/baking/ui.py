@@ -1,6 +1,11 @@
 import bpy
 
-from . import common, fingerprint, gn_final, matsync, normal, operators
+from . import common, fingerprint, gn_final, matsync, normal, operators, route
+
+
+def props_route_items():
+    from .props import ROUTE_ITEMS
+    return ROUTE_ITEMS
 
 
 def _res(n):
@@ -85,6 +90,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         if d.handmade:
             self._draw_handmade(context, layout, top, obj)
             return
+        if d.route_prompt:
+            route.draw_prompt(top, obj)
         if not common.has_uv_normal(obj):
             box = top.box()
             box.alert = True
@@ -99,25 +106,19 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             box.alert = True
             box.label(text="Bake is outdated - the projection changed", icon='ERROR')
 
-        # what to bake (+ the normal map's options behind the gear) and what was baked last
+        # [route v] what to bake (+ the normal map's options behind the gear), what was
+        # baked last
         box = top.box().column()
         row = box.row(align=True)
+        sub = row.row(align=True)
+        sub.ui_units_x = 2.2
+        icon = {key: ic for key, _l, _d, ic, _n in props_route_items()}[d.route]
+        sub.prop(d, "route", text="", icon=icon, icon_only=True)
         row.prop_enum(s, "bake_what", 'ALBEDO')
         row.prop_enum(s, "bake_what", 'NORMAL')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
         row.prop_enum(s, "bake_what", 'BOTH')
-        if s.bake_what != 'NORMAL' and d.bake_source is not None:
-            # BA_ comes from 04 (Cutting & Modelling); Bake Final redoes it when outdated
-            row = box.row()
-            row.active = False
-            if d.ba_image is None:
-                row.label(text=f"No BA_ yet: bakes from {d.bake_source.name} first", icon='INFO')
-            elif fingerprint.ba_outdated(obj):
-                row.label(text=f"BA_ outdated ({fingerprint.ba_why(obj)}): bakes from the "
-                               "source again first", icon='INFO')
-            else:
-                row.label(text=f"Over BA_ {_res(d.ba_size)} from {d.bake_source.name}",
-                          icon='LINKED')
+        self._draw_route(box, obj)
         info = box.column(align=True)
         if d.alb_size:
             info.label(text=f"ALB {_res(d.alb_size)}  ·  {d.last_bake_seconds:.1f} s",
@@ -151,6 +152,43 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             layout.label(text=why, icon='ERROR')      # the popover is mostly closed
 
     @staticmethod
+    def _draw_route(box, obj):
+        """What the route bakes from, and what it bakes first (grey), or what it lacks (red)."""
+        d = common.data(obj)
+        col = box.column(align=True)
+        why = route.problem(obj)
+        if why:
+            col.alert = True
+            col.label(text=why, icon='ERROR')
+            return
+        col.active = False
+        r = route.get(obj)
+        if r in {route.ORIGINAL, route.MIXED}:
+            if d.ba_image is None or not common.file_ok(d.ba_image):
+                col.label(text=f"No BAo_ / BNo_ yet: bakes from {d.bake_source.name} first",
+                          icon='INFO')
+            elif fingerprint.ba_outdated(obj):
+                col.label(text=f"BAo_ outdated ({fingerprint.ba_why(obj)}): bakes from the "
+                               "source again first", icon='INFO')
+            else:
+                col.label(text=f"BAo_ / BNo_ {_res(d.ba_size)} from {d.bake_source.name}",
+                          icon='MESH_DATA')
+        if r in {route.PROJECTION, route.MIXED}:
+            if d.bap_image is None or not common.file_ok(d.bap_image):
+                col.label(text="No BAp_ yet: renders the projection first", icon='INFO')
+            elif fingerprint.bp_outdated(obj):
+                col.label(text="BAp_ outdated (the projection changed): renders it again first",
+                          icon='INFO')
+            else:
+                bnp = " / BNp_" if d.bnp_image is not None else ""
+                col.label(text=f"BAp_{bnp} {_res(d.bp_size)} from the projection",
+                          icon='CAMERA_DATA')
+        col.label(text={route.ORIGINAL: "ALB_ / NOR_ = copies of BAo_ / BNo_",
+                        route.PROJECTION: "ALB_ / NOR_ = copies of BAp_ / BNp_",
+                        route.MIXED: "VCMix alpha: BAo_ -> projection, BNo_ -> BNp_"}[r],
+                  icon='FORWARD')
+
+    @staticmethod
     def _draw_materials(layout, obj):
         """[MCP_ picker] [MAT_ picker] [Refresh]: which projection / final material the
         object is linked to; Refresh checks and fixes both. Problems and what the last
@@ -171,6 +209,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         b.alert = 'SLOTS' in kinds
         b.operator("multicamproject.material_refresh", text="",
                    icon='FILE_REFRESH').scope = 'SELECTED'
+        row.operator("multicamproject.check_textures", text="", icon='TRASH')
         if probs:
             col = layout.column(align=True)
             col.alert = True
@@ -259,14 +298,13 @@ class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
             row.prop(s, "nor_radius", text="Radius")
             opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
         d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
-        has_bn = d is not None and d.bn_image
-        if has_bn:
-            row = col.row(align=True)
-            row.prop(s, "nor_projected", text="Projected: BN_ + detail <> generated", slider=True)
         note = col.row()
         note.active = False
-        note.label(text="Where baked (VCMix alpha 0): BN_ alone" if has_bn
-                   else "No BN_: this detail alone", icon='INFO')
+        if d is not None:
+            note.label(text={route.ORIGINAL: "From Original: NOR_ = BNo_ (this is not used)",
+                             route.PROJECTION: "BNp_ from BAp_ with this; NOR_ = BNp_",
+                             route.MIXED: "BNp_ from BAp_ with this; NOR_ = BNo_ -> BNp_"}[
+                                 route.get(obj)], icon='INFO')
         if obj is not None and obj.type == 'MESH':
             why = normal.problem(obj, context.scene, src)
             if why and not (s.bake_what == 'BOTH' and why == "Bake the albedo first"):

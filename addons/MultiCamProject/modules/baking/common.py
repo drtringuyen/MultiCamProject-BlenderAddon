@@ -49,14 +49,37 @@ def nor_name(obj):
     return typed_name("NOR", obj)
 
 
+# the add-on's texture files in the bake folder: the final ALB_/NOR_ and the work textures
+# of the two routes - BAo_/BNo_ baked from the Original (Bake from Source), BAp_/BNp_ from
+# the Projection. Only files with these prefixes are ever cleaned up
+FINAL_PREFIXES = ("ALB_", "NOR_")
+WORK_PREFIXES = ("BAo_", "BNo_", "BAp_", "BNp_")
+OWN_PREFIXES = FINAL_PREFIXES + WORK_PREFIXES
+LEGACY_PREFIXES = ("BA_", "BN_")        # packed BA_/BN_ before 2026-10-05 (now BAo_/BNo_)
+
+
 def ba_name(obj):
+    """BAo_<name>: the albedo baked from the Original (Bake Source)."""
     from .naming import typed_name
-    return typed_name("BA", obj)
+    return typed_name("BAo", obj)
 
 
 def bn_name(obj):
+    """BNo_<name>: the normal baked from the Original (Bake Source)."""
     from .naming import typed_name
-    return typed_name("BN", obj)
+    return typed_name("BNo", obj)
+
+
+def bap_name(obj):
+    """BAp_<name>: the albedo rendered from the Projection."""
+    from .naming import typed_name
+    return typed_name("BAp", obj)
+
+
+def bnp_name(obj):
+    """BNp_<name>: the normal generated from BAp_."""
+    from .naming import typed_name
+    return typed_name("BNp", obj)
 
 
 def mat_name(obj):

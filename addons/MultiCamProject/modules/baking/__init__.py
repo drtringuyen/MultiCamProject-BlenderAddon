@@ -4,7 +4,7 @@ Works without camera_project: any mesh with uv_normal can be baked."""
 import bpy
 from bpy.app.handlers import persistent
 
-from . import cache, jobs, matsync, owned, props, operators, ui
+from . import cache, cleanup, jobs, matsync, owned, props, operators, route, ui
 
 
 _SOURCE_KEY = "bake_source_migrated"
@@ -58,6 +58,8 @@ def _migrate():
         gn_final.migrate_wrappers()
         _migrate_bake_source()
         _migrate_cage()
+        from . import migrate_route
+        migrate_route.migrate()
     except Exception as e:  # never block addon startup or a file load
         print(f"[MultiCamProject] Baking migration skipped: {e}")
     return None
@@ -72,6 +74,8 @@ def register():
     props.register()
     jobs.register()
     operators.register()
+    route.register()
+    cleanup.register()
     ui.register()
     cache.register()
     matsync.register()
@@ -87,6 +91,8 @@ def unregister():
     matsync.unregister()
     cache.unregister()
     ui.unregister()
+    cleanup.unregister()
+    route.unregister()
     operators.unregister()
     jobs.unregister()
     props.unregister()
