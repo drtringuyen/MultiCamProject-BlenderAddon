@@ -216,10 +216,18 @@ def shown(context, objs):
                 lc.exclude = False
         for c in colls:
             _layer_coll(vl, c).hide_viewport = False
+        # a collection shown only for this: the rest of it stays out of sight (e.g. every
+        # other scan in "Original Mesh" - only the object and its original show)
+        opened = [c for c, exc, hid in saved_c if exc or hid]
+        for c in opened:
+            for o in c.all_objects:
+                if o not in objs and o not in hidden and vl.objects.get(o.name) == o:
+                    hidden[o] = o.hide_get(view_layer=vl)
+                    o.hide_set(True, view_layer=vl)
         for o in objs:
             o.hide_viewport = o.hide_render = False
             if vl.objects.get(o.name) == o:
-                hidden[o] = o.hide_get(view_layer=vl)
+                hidden.setdefault(o, o.hide_get(view_layer=vl))
                 o.hide_set(False, view_layer=vl)
         vl.update()
         yield

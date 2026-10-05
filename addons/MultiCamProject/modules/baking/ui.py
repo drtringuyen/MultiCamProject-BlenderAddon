@@ -3,11 +3,6 @@ import bpy
 from . import common, fingerprint, gn_final, matsync, normal, operators, route
 
 
-def props_route_items():
-    from .props import ROUTE_ITEMS
-    return ROUTE_ITEMS
-
-
 def _res(n):
     return f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
 
@@ -109,11 +104,9 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         # [route v] what to bake (+ the normal map's options behind the gear), what was
         # baked last
         box = top.box().column()
-        row = box.row(align=True)
-        sub = row.row(align=True)
-        sub.ui_units_x = 2.2
-        icon = {key: ic for key, _l, _d, ic, _n in props_route_items()}[d.route]
-        sub.prop(d, "route", text="", icon=icon, icon_only=True)
+        split = box.split(factor=0.36, align=True)      # the route's full name always fits
+        split.prop(d, "route", text="")
+        row = split.row(align=True)
         row.prop_enum(s, "bake_what", 'ALBEDO')
         row.prop_enum(s, "bake_what", 'NORMAL')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
