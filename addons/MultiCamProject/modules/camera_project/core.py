@@ -152,6 +152,23 @@ def resolve_cam_image(cam, folder, listing):
 
 # ---------------------------------------------------------------- scoring
 
+def world_matrix(obj):
+    """obj's world matrix, also when Blender has not evaluated it: objects in an excluded
+    collection (the CAMERAS collection is often excluded) or hidden keep a stale
+    matrix_world - zeros after a file load - and every such camera would see nothing. Then it
+    comes from the parent chain (location / rotation / scale; the add-on's cameras have no
+    constraints)."""
+    vl = bpy.context.view_layer
+    if vl is not None and vl.objects.get(obj.name) == obj and obj.visible_get(view_layer=vl):
+        return obj.matrix_world.copy()
+    m = obj.matrix_basis.copy()
+    if obj.parent is not None and obj.parent_type == 'OBJECT':
+        m = world_matrix(obj.parent) @ obj.matrix_parent_inverse @ m
+    elif obj.parent is not None:        # bone / vertex parents need the evaluated matrix
+        return obj.matrix_world.copy()
+    return m
+
+
 def _object_samples(obj):
     me = obj.data
     n = len(me.vertices)
@@ -164,9 +181,10 @@ def _object_samples(obj):
     co, nr = co.reshape(n, 3), nr.reshape(n, 3)
     step = max(1, n // MAX_SAMPLES)
     co, nr = co[::step], nr[::step]
-    mw = np.array(obj.matrix_world, dtype=np.float32)
+    m = world_matrix(obj)
+    mw = np.array(m, dtype=np.float32)
     co_w = co @ mw[:3, :3].T + mw[:3, 3]
-    nmat = np.array(obj.matrix_world.to_3x3().inverted_safe().transposed(), dtype=np.float32)
+    nmat = np.array(m.to_3x3().inverted_safe().transposed(), dtype=np.float32)
     nr_w = nr @ nmat.T
     nr_w /= np.maximum(np.linalg.norm(nr_w, axis=1, keepdims=True), 1e-9)
     return co_w, nr_w
@@ -179,7 +197,8 @@ def score_camera(cam, co_w, nr_w, scene):
     if cd.type not in {'PERSP', 'ORTHO'}:
         return 0.0, 0.0
     ortho = cd.type == 'ORTHO'
-    cmi = np.array(cam.matrix_world.inverted_safe(), dtype=np.float32)
+    cm = world_matrix(cam)
+    cmi = np.array(cm.inverted_safe(), dtype=np.float32)
     p = co_w @ cmi[:3, :3].T + cmi[:3, 3]
     depth = -p[:, 2]
     front = depth > 1e-6
@@ -194,10 +213,10 @@ def score_camera(cam, co_w, nr_w, scene):
     if not inside.any():
         return 0.0, 0.0
     if ortho:       # every point looks along the camera's back axis
-        back = np.array(cam.matrix_world.to_3x3().col[2], dtype=np.float32)
+        back = np.array(cm.to_3x3().col[2], dtype=np.float32)
         to_cam = np.broadcast_to(back / max(np.linalg.norm(back), 1e-9), (int(inside.sum()), 3))
     else:
-        to_cam = np.array(cam.matrix_world.translation, dtype=np.float32) - co_w[inside]
+        to_cam = np.array(cm.translation, dtype=np.float32) - co_w[inside]
         to_cam /= np.maximum(np.linalg.norm(to_cam, axis=1, keepdims=True), 1e-9)
     facing = np.clip((nr_w[inside] * to_cam).sum(axis=1), 0.0, None).mean()
     coverage = float(inside.mean())
@@ -1278,7 +1297,7 @@ def display_order(obj):
 
 def view_axis(cam):
     """Unit direction the camera looks along (world)."""
-    v = -cam.matrix_world.to_3x3().col[2]
+    v = -world_matrix(cam).to_3x3().col[2]
     return v.normalized() if v.length else v
 
 
