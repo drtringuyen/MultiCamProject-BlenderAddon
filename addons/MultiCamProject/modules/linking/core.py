@@ -458,11 +458,14 @@ def _swap_mesh(obj, me):
 
 
 def _take_modifiers(obj, man):
-    """Modifiers the window applied or removed go here too; Decimate / Snap take its values."""
+    """Modifiers the window applied or removed go here too, a Snap it added comes too;
+    Decimate / Snap take its values."""
     kept = set(man["modifiers"])
     for m in [m for m in obj.modifiers if m.type != 'NODES' and m.name not in kept]:
         obj.modifiers.remove(m)
     dec, snap = wf.decimate_modifier(obj), wf.snap_modifier(obj)
+    if snap is None and "snap" in man and wf.bake_source_of(obj) is not None:
+        snap = wf.set_snap(obj, True)       # switched on in the window: the same result here
     if dec is not None and "decimate" in man:
         dec.ratio = man["decimate"]["ratio"]
         dec.show_viewport = man["decimate"]["show_viewport"]
