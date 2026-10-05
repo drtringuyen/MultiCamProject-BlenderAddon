@@ -44,7 +44,7 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                     "(one material, one UV), never baked by the add-on")
     tex_size: EnumProperty(
         name="Texture Size", default='AUTO', update=_on_tex_size,
-        items=(('AUTO', "A", "Auto: the scene's resolution, set in front of Export", 0),
+        items=(('AUTO', "Auto Resolution", "Auto: the scene's resolution, set in front of Export", 0),
                ('1024', "1K", "ALB_, NOR_ and the work textures of this object at 1024 x 1024", 1),
                ('2048', "2K", "ALB_, NOR_ and the work textures of this object at 2048 x 2048", 2),
                ('4096', "4K", "ALB_, NOR_ and the work textures of this object at 4096 x 4096", 3),

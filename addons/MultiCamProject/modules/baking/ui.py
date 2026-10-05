@@ -16,10 +16,10 @@ def draw_resolution(layout, s):
 
 
 def draw_object_size(layout, obj):
-    """[A v]: the object's own texture size - the same field as in the EXPORT list
-    (A = the scene's resolution, set in front of Export)."""
+    """[Auto Resolution v]: the object's own texture size - the same field as in the EXPORT
+    list (Auto = the scene's resolution, set in front of Export)."""
     sizes = layout.row(align=True)
-    sizes.ui_units_x = 3
+    sizes.ui_units_x = 6
     sizes.prop(common.data(obj), "tex_size", text="")
 
 
@@ -124,7 +124,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                 info.label(text="ALB and NOR sizes differ - bake again", icon='INFO')
         res = common.resolution(obj, context.scene)
         if d.tex_size == 'AUTO':
-            info.label(text=f"Size A = {_res(res)} (the scene's, set in front of Export)",
+            info.label(text=f"Auto Resolution = {_res(res)} (the scene's, set in front of Export)",
                        icon='TEXTURE')
         if d.alb_size and d.alb_size != res:
             info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(res)}",
@@ -193,6 +193,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         for kind, data, ok_icon, enabled in (
                 ('MCP', cam, 'NODE_MATERIAL', matsync.is_projection(obj)),
                 ('MAT', common.data(obj), 'SHADING_TEXTURE', True)):
+            if kind == 'MCP' and not enabled:
+                # no projection: the original it bakes from (Bake Source) instead
+                b = row.row(align=True)
+                b.prop(common.data(obj), "bake_source", text="", icon='OUTLINER_OB_MESH')
+                continue
             b = row.row(align=True)
             b.enabled = enabled and data is not None
             b.alert = kind in kinds

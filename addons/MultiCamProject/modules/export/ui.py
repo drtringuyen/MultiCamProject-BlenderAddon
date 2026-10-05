@@ -94,7 +94,10 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         tris.label(text=tri_text(checks.mesh_counts(item)[0], unit=False))
         size = right.row(align=True)
         size.ui_units_x = 2.2
-        size.prop(bake, "tex_size", text="")
+        # narrow column: "A" for Auto Resolution (the menu lists the full names)
+        size.prop_menu_enum(bake, "tex_size",
+                            text={'AUTO': "A", '1024': "1K", '2048': "2K", '4096': "4K",
+                                  '8192': "8K"}.get(bake.tex_size, bake.tex_size))
         # the fix column: one button per object that is not ready
         fix = right.row(align=True)
         fix.ui_units_x = 1.1
