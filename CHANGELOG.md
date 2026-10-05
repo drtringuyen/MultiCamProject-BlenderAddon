@@ -11,9 +11,10 @@
     Nothing about the original is checked.
   - **Mixed:** VCMix / VCMix2 RGB pick the cameras, their alpha blends BAo_ -> projection
     (ALB_) and BNo_ -> BNp_ (NOR_, a plain mix). The "Projected" slider is gone.
-- **From Original, Normal Map gear:** a dropdown per object - *Bake Normal from Original*
-  (NOR_ = BNo_) or *Generate from High-pass* (NOR_ made from BAo_ with the engine below,
-  High-pass or AI). The engine settings are greyed out while BNo_ is used.
+- **Normal Map (the gear at the end of Bake), per object, From Original and Mixed:**
+  Original = *From Original's Surface* (BNo_) or *Generated from Albedo High-pass* (from
+  BAo_ with the engine below). Projection is always generated from BAp_. Mixed blends the
+  two by the VCMix mask.
 - **Nothing is packed any more.** BAo_ / BNo_ / BAp_ / BNp_ are PNG files in the bake folder
   (normals 16-bit). Once per file the old packed BA_ / BN_ become the files BAo_ / BNo_
   (they were baked from the original), each object gets the route it baked with so far

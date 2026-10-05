@@ -1,10 +1,10 @@
 """NOR_<name>: 16-bit, Non-Color, OpenGL (Y+), always <output dir>/NOR_<name>.png, by the
 object's Bake Route:
 
-    From Original    a copy of BNo_ (baked from the Bake Source), or generated from BAo_
-                     (High-pass / AI) when the object's Normal from Original says so
+    From Original    a copy of BNo_ (the original's surface), or generated from BAo_
+                     (High-pass / AI) when the object's Original Normal says so
     From Projection  a copy of BNp_ - generated from BAp_ (the projection's albedo)
-    Mixed            BNo_ -> BNp_ by the VCMix mask (a plain mix)
+    Mixed            the original's side (as above) -> BNp_ by the VCMix mask (a plain mix)
 
 BNp_ comes from BAp_: High-pass (Lite) or the AI model (Full build, onnxruntime). It is
 made again only when BAp_ or the normal settings changed."""
@@ -62,12 +62,13 @@ def compose(context, obj, detail, size):
     return jobs.run_sync(compose_steps(context, obj, detail, size))
 
 
-def compose_steps(context, obj, size):
-    """Mixed: BNo_ -> BNp_ by the VCMix mask (MCP_'s Blend Mix factor), renormalized.
-    A generator (jobs); returns RGB (size, size, 3)."""
+def compose_steps(context, obj, size, base=None):
+    """Mixed: the original's normal (`base`, else BNo_) -> BNp_ by the VCMix mask (MCP_'s
+    Blend Mix factor), renormalized. A generator (jobs); returns RGB (size, size, 3)."""
     import numpy as np
     d = common.data(obj)
-    base = _read_resized(d.bn_image, size)
+    if base is None:
+        base = _read_resized(d.bn_image, size)
     mask = yield from engine.bake_mask_steps(context, obj, size)
     yield jobs.Step("Normal: BNo_ -> BNp_ by the mask")
     top = _read_resized(d.bnp_image, size)
@@ -162,7 +163,8 @@ def generate_steps(context, obj, source):
         yield from engine.bake_projection_steps(context, obj)
     if r in {route.PROJECTION, route.MIXED}:
         yield from bnp_steps(context, obj, source)
-    generated = r == route.ORIGINAL and d.original_normal == 'GENERATED'
+    # the original's side: its surface (BNo_) or generated from its colors (BAo_)
+    generated = r in {route.ORIGINAL, route.MIXED} and d.original_normal == 'GENERATED'
     if r == route.ORIGINAL and not generated:
         yield jobs.Step(f"Normal: copying BNo_ to {os.path.basename(path)}")
         d.nor_image = engine.copy_file(scene, d.bn_image, name, d.nor_image, normal=True)
@@ -170,14 +172,17 @@ def generate_steps(context, obj, source):
         yield jobs.Step(f"Normal: copying BNp_ to {os.path.basename(path)}")
         d.nor_image = engine.copy_file(scene, d.bnp_image, name, d.nor_image, normal=True)
     else:
-        if generated:           # From Original, generated from the original's colors
+        base = None
+        if generated:           # the original's side, generated from its colors
             yield jobs.Step(f"Normal: {LABELS[source]} from BAo_")
-            rgb = (ai.generate(d.ba_image, size) if source == 'AI'
-                   else highpass.generate(d.ba_image, size, s))
+            base = (ai.generate(d.ba_image, size) if source == 'AI'
+                    else highpass.generate(d.ba_image, size, s))
+        if r == route.ORIGINAL:
+            rgb = base
         else:
             was_final = final.is_final(obj)
             try:
-                rgb = yield from compose_steps(context, obj, size)
+                rgb = yield from compose_steps(context, obj, size, base)
             finally:
                 if final.is_final(obj) != was_final:
                     final.set_final(obj, scene, was_final)

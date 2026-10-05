@@ -290,12 +290,20 @@ def _draw_normal_settings(layout, context):
     ai = src == 'AI'
     d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
     baked = False
-    if d is not None and not d.handmade and route.get(obj) == route.ORIGINAL:
-        # From Original: BNo_ itself, or generated from BAo_ with the engine below
+    r = route.get(obj) if d is not None and not d.handmade else None
+    if r in {route.ORIGINAL, route.MIXED}:
+        # the original's side: BNo_ (its surface), or generated from BAo_ with the engine
         split = col.split(factor=0.34, align=True)
-        split.label(text="From Original")
+        split.label(text="Original")
         split.prop(d, "original_normal", text="")
-        baked = d.original_normal == 'BAKED'
+        baked = d.original_normal == 'BAKED' and r == route.ORIGINAL
+    if r in {route.PROJECTION, route.MIXED}:
+        # the projection's side: always generated from BAp_
+        split = col.split(factor=0.34, align=True)
+        split.label(text="Projection")
+        sub = split.row()
+        sub.active = False
+        sub.label(text="Generated from BAp_ High-pass", icon='IMAGE_RGB')
     engine_col = col.column()
     engine_col.active = not baked
     col = engine_col
@@ -318,10 +326,12 @@ def _draw_normal_settings(layout, context):
     note = col.row()
     note.active = False
     if d is not None:
-        note.label(text={route.ORIGINAL: ("NOR_ = BNo_ (the engine is not used)" if baked else
-                                          "NOR_ generated from BAo_ with this"),
+        gen = d.original_normal == 'GENERATED'
+        note.label(text={route.ORIGINAL: ("NOR_ generated from BAo_ with this" if gen else
+                                          "NOR_ = BNo_ (the engine is not used)"),
                          route.PROJECTION: "BNp_ from BAp_ with this; NOR_ = BNp_",
-                         route.MIXED: "BNp_ from BAp_ with this; NOR_ = BNo_ -> BNp_"}[
+                         route.MIXED: ("NOR_ = BAo_ generated -> BNp_ (both with this)" if gen
+                                       else "NOR_ = BNo_ -> BNp_ (BNp_ with this)")}[
                              route.get(obj)], icon='INFO')
     if obj is not None and obj.type == 'MESH':
         why = normal.problem(obj, context.scene, src)
