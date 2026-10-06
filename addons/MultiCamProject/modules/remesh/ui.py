@@ -22,6 +22,19 @@ def _faces_text(context, obj):
     return f"{after:,} / {before:,} faces"
 
 
+def _draw_amount_row(row, context, obj, dec, label, scale=1.0):
+    """[eye] [amount] [after / before faces] [Apply] on one row."""
+    row.scale_y = scale
+    row.prop(dec, "show_viewport", text="", emboss=False)
+    split = row.split(factor=0.34, align=True)
+    split.prop(dec, "ratio", text=label)
+    split = split.split(factor=0.68, align=True)
+    faces = split.row(align=True)
+    faces.alignment = 'CENTER'
+    faces.label(text=_faces_text(context, obj).replace(" faces", ""))
+    split.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
+
+
 def _draw_decide(layout, context, obj):
     """0C's first step: the Decimate amount is decided and applied before anything else (the
     GN modifiers are muted meanwhile, 02 Protect still works)."""
@@ -34,16 +47,7 @@ def _draw_decide(layout, context, obj):
     for r in wf.DECIMATE_PRESETS:
         row.operator("multicamproject.remesh_decimate_ratio", text=f"{r:g}",
                      depress=abs(dec.ratio - r) < 1e-6).ratio = r
-    row = box.row(align=True)
-    row.prop(dec, "show_viewport", text="", emboss=False)
-    row.prop(dec, "ratio", text="Amount")
-    info = box.row()
-    info.active = False
-    info.label(text=_faces_text(context, obj), icon='INFO')
-    row = box.row(align=True)
-    row.scale_y = 1.4
-    row.operator("multicamproject.remesh_apply_decimate", text="Apply Decimate",
-                 icon='CHECKMARK')
+    _draw_amount_row(box.row(align=True), context, obj, dec, "", 1.4)
     hint = box.row()
     hint.active = False
     hint.label(text="02 Protect keeps parts · Ctrl+Z undoes 0C", icon='LOCKED')
@@ -163,11 +167,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             box.label(text=f"03. Retopo: {len(obj.data.polygons):,} faces (no Decimate)",
                       icon='MESH_PLANE')
         elif dec is not None:
-            row = box.row(align=True)
-            row.prop(dec, "show_viewport", text="", emboss=False)
-            row.prop(dec, "ratio", text="03. Decimate amount")
-            row.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
-            box.label(text=_faces_text(context, obj), icon='INFO')
+            _draw_amount_row(box.row(align=True), context, obj, dec, "03.")
         elif obj.get(wf.APPLIED_KEY):
             box.label(text=f"03. Decimate applied: {len(obj.data.polygons):,} faces",
                       icon='CHECKMARK')
