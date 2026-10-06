@@ -377,7 +377,9 @@ def _picked_changed():
         _picked.clear()
         for name in names:
             obj = bpy.data.objects.get(name)
-            if obj is not None and in_scope(obj) and problems(obj):
+            # SOURCE (the Bake Source's scan materials) is only fixed by the full Refresh: a
+            # sync here can't clear it, and its own writes would schedule this again forever
+            if obj is not None and in_scope(obj) and any(k != 'SOURCE' for k, _t in problems(obj)):
                 for t in sync(obj, scene):
                     _msg(f"{obj.name}: {t}")
                 for t in sync_names():
