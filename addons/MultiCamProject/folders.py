@@ -477,23 +477,25 @@ def detect(scene, view_layer, role):
 
 
 def wire_scan_materials(scene, view_layer):
-    """Setup File IO: every scan material of the Objects (and Original Mesh) objects shows
-    its image through a Principled BSDF - image -> Base Color -> Output - instead of an
-    unlit Emission (left in the tree, disconnected). The add-on's own materials and linked
-    ones are skipped. Returns the names wired."""
+    """Setup File IO, the first step: every material of the file that shows an image goes
+    image -> Principled BSDF Base Color -> Output (source_mats.wire), instead of e.g. an
+    unlit Emission (left in the tree, disconnected). Skipped: the add-on's own MCP_ / MAT_,
+    linked materials, and materials without an Image Texture (their shading is kept).
+    Returns the names wired."""
     try:
         from .modules.baking import source_mats
         from .modules.camera_project import core as cp
     except ImportError:
         return []
-    mats = []
-    for role in ('OBJECTS', 'ORIGINALS'):
-        for obj in _role_objects(scene, view_layer, role):
-            for slot in getattr(obj, "material_slots", ()):
-                m = slot.material
-                if m is not None and not m.library and not cp._is_ours(m) and m not in mats:
-                    mats.append(m)
-    return [m.name for m in mats if source_mats.wire(m)]
+    out = []
+    for m in bpy.data.materials:
+        if m.library or cp._is_ours(m) or not m.use_nodes or m.node_tree is None:
+            continue
+        if not any(n.type == 'TEX_IMAGE' and n.image for n in m.node_tree.nodes):
+            continue
+        if source_mats.wire(m):
+            out.append(m.name)
+    return out
 
 
 def auto_fill(scene, view_layer):
