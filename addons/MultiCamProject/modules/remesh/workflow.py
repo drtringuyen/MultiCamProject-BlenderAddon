@@ -8,6 +8,8 @@ Stack of the copy:
   -> GN-CameraProject -> GN-Final
 The Decimate is applied (03) before uv_normal is unwrapped: it collapses across UV seams.
 """
+from contextlib import contextmanager
+
 import bpy
 import numpy as np
 
@@ -65,9 +67,38 @@ def is_low_poly(obj):
 # ---------------------------------------------------------------- the stack
 
 def _move(obj, mod, index):
-    if list(obj.modifiers).index(mod) != index:
-        with bpy.context.temp_override(object=obj, active_object=obj):
-            bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=index)
+    """Reorder through the data API: the operator re-evaluates the scan (~6 s at 388k)."""
+    cur = list(obj.modifiers).index(mod)
+    if cur != index:
+        obj.modifiers.move(cur, index)
+
+
+@contextmanager
+def quiet(obj):
+    """obj's modifiers off in the viewport meanwhile: steps that update the view layer (the
+    0B wrappers) then don't evaluate the scan's Decimate / GN (seconds each)."""
+    shown = [(m, m.show_viewport) for m in obj.modifiers]
+    for m, _on in shown:
+        m.show_viewport = False
+    try:
+        yield
+    finally:
+        for m, on in shown:
+            if m.name in obj.modifiers:
+                m.show_viewport = on
+
+
+def setup_projection(obj, scene):
+    """0B on a fresh low poly, quietly (see quiet). Returns 0B's warnings."""
+    with quiet(obj):
+        warnings = cp.setup(obj, scene)
+    try:
+        from ..baking import route
+        if hasattr(obj, "multicamproject_bake"):
+            route.after_step(obj, 'PROJECTION')
+    except ImportError:
+        pass
+    return warnings
 
 
 def decimate_modifier(obj):
@@ -138,10 +169,15 @@ def clear_custom_normals(obj):
     Mode. Returns True when there were some."""
     if obj.type != 'MESH' or not obj.data.has_custom_normals or obj.mode != 'OBJECT':
         return False
-    with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj],
-                                   selected_editable_objects=[obj]):
-        bpy.ops.mesh.customdata_custom_splitnormals_clear()
-    return not obj.data.has_custom_normals
+    me = obj.data
+    attr = me.attributes.get("custom_normal")      # Blender 5: an attribute - no operator,
+    if attr is not None:                            # no re-evaluation (~3 s on a scan)
+        me.attributes.remove(attr)
+    if me.has_custom_normals:
+        with bpy.context.temp_override(object=obj, active_object=obj, selected_objects=[obj],
+                                       selected_editable_objects=[obj]):
+            bpy.ops.mesh.customdata_custom_splitnormals_clear()
+    return not me.has_custom_normals
 
 
 def apply_decimate(context, obj):
@@ -588,7 +624,8 @@ def make_copy(context, obj, retopo=False):
         ensure_stack(copy)
         clear_custom_normals(copy)
     if module_manager.is_loaded("camera_project") and was_setup:
-        warnings += cp.setup(copy, scene)       # 0B came first: the copy projects too
+        with quiet(copy):
+            warnings += cp.setup(copy, scene)   # 0B came first: the copy projects too
     if module_manager.is_loaded("baking"):
         from ..baking import gn_final
         if gn_final.get_modifier(copy) is not None:

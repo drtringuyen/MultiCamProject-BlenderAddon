@@ -423,13 +423,13 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         name, mesh_name = obj.name, obj.data.name
-        # 0B: through its operator (warnings, Bake Route) - only when not set up yet
+        # 0B only on the new object (after the copy): on the scan it would be scored once
+        # more and undone right away by the copy (~3 s on a scan with 500 cameras)
         cp = getattr(obj, "multicamproject_cam", None)
-        if cp is not None and not cp.is_setup:
-            if any(o.type == 'CAMERA' for o in context.scene.objects):
-                bpy.ops.multicamproject.setup()
-            else:
-                self.report({'WARNING'}, "No camera in the scene: 0B skipped")
+        need_setup = cp is not None and not cp.is_setup
+        if need_setup and not any(o.type == 'CAMERA' for o in context.scene.objects):
+            self.report({'WARNING'}, "No camera in the scene: 0B skipped")
+            need_setup = False
         copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO')
         for w in warnings:
             self.report({'WARNING'}, w)
@@ -442,6 +442,11 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         obj.name = name
         if obj.data.users == 1:
             obj.data.name = mesh_name
+        if need_setup:          # 0B on the copy, called directly (bpy.ops would evaluate
+            for w in wf.setup_projection(copy, scene):   # the whole scan first)
+                self.report({'WARNING'}, w)
+            if wf.decimate_pending(copy):
+                wf.set_gn(copy, False)      # its GN waits for the Decimate as after 0C
         if exists and self.existing == 'OPEN':
             return self._open_existing(copy, obj, path)
         try:
