@@ -276,7 +276,28 @@ class MULTICAMPROJECT_OT_CreateRoleCollection(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
+    """Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS) and set
+    every folder to the one holding most of its files - the default folder (or a folder in
+    it), else where the files are now. Missing bake / export folders are made"""
+    bl_idname = "multicamproject.auto_fill_folders"
+    bl_label = "Auto Detect and Fill Folders"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        if not bpy.data.filepath:
+            self.report({'WARNING'}, "Save the .blend first: the folders sit next to it")
+            return {'CANCELLED'}
+        for line in folders.auto_fill(context.scene, context.view_layer):
+            self.report({'INFO'}, line)
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)

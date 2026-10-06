@@ -102,6 +102,11 @@ def draw_roles(layout, context):
             hint.label(text=f"auto: {roles.auto_text(scene, vl, role)}")
         if role != roles.ORDER[-1]:
             box.separator(factor=0.6)
+    box.separator(factor=0.6)
+    row = box.row(align=True)
+    row.scale_y = 1.2
+    row.operator(ops.MULTICAMPROJECT_OT_AutoFillFolders.bl_idname,
+                 text="Auto Detect and Fill Folders", icon='VIEWZOOM')
 
 
 def _draw_picker(row, scene, vl, props, role, attr):

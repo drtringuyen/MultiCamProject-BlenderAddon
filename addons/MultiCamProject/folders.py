@@ -314,6 +314,111 @@ def reload(scene, view_layer, role):
     return f"{reloaded} texture(s) reloaded, {relinked} relinked to {top}", warnings
 
 
+# ---------------------------------------------------------------- auto detect
+
+DEFAULTS = {'OBJECTS': "//00.Scan/01.FBX/", 'ORIGINALS': "//01.Bake/", 'EXPORT': "//Export/",
+            'CAMERAS': "//00.Scan/00.Photos/"}
+SEARCH_DEPTH = 2        # sub-folders of the default looked into (e.g. 01.FBX/textures_2k)
+
+
+def _wanted(scene, view_layer, role):
+    """[set of lower-case file names] per image the role's folder should hold."""
+    if role == 'OBJECTS':
+        return [{n.lower() for n in _candidates(i)} for i in scan_images(scene, view_layer)]
+    if role == 'ORIGINALS':
+        return [{n.lower() for n in _candidates(i)} for i in bake_images() if _relinkable(i)]
+    if role == 'CAMERAS':
+        out = []
+        for cam in _cameras(scene, view_layer):
+            bgs = cam.data.background_images
+            img = bgs[0].image if len(bgs) else None
+            names = {n.lower() for n in _candidates(img)} if img is not None else set()
+            out.append(names | {(cam.name + e).lower() for e in IMAGE_EXTS})
+        return out
+    return []
+
+
+def _subfolders(top, depth):
+    out = []
+    if depth <= 0:
+        return out
+    try:
+        entries = [e for e in os.scandir(top) if e.is_dir() and not e.name.startswith(".")]
+    except OSError:
+        return out
+    for e in entries:
+        out.append(e.path)
+        out += _subfolders(e.path, depth - 1)
+    return out
+
+
+def _current_dirs(scene, view_layer, role):
+    """The folders the role's files are in now (existing files only)."""
+    if role == 'OBJECTS':
+        imgs = scan_images(scene, view_layer)
+    elif role == 'ORIGINALS':
+        imgs = bake_images()
+    elif role == 'CAMERAS':
+        imgs = [c.data.background_images[0].image for c in _cameras(scene, view_layer)
+                if len(c.data.background_images) and c.data.background_images[0].image]
+    else:
+        return []
+    dirs = set()
+    for img in imgs:
+        if _relinkable(img) and img.filepath:
+            path = bpy.path.abspath(img.filepath)
+            if os.path.isfile(path):
+                dirs.add(os.path.normpath(os.path.dirname(path)))
+    return sorted(dirs)
+
+
+def detect(scene, view_layer, role):
+    """The folder holding most of the role's files: the default folder (and its sub-folders)
+    or where the files are now. Nothing to match (or no match): the default.
+    Returns (value for the setting, files matched, files wanted)."""
+    default = DEFAULTS[role]
+    wanted = _wanted(scene, view_layer, role)
+    if not wanted or not bpy.data.filepath:
+        return default, 0, len(wanted)
+    top = os.path.normpath(bpy.path.abspath(default))
+    places = ([top] + _subfolders(top, SEARCH_DEPTH)) if os.path.isdir(top) else []
+    places += [d for d in _current_dirs(scene, view_layer, role) if d not in places]
+    best, best_n = None, 0
+    for place in places:        # the default first: it wins a tie
+        listing = _listing(place)
+        n = sum(1 for names in wanted if names & listing.keys())
+        if n > best_n:
+            best, best_n = place, n
+    if best is None:
+        return default, 0, len(wanted)
+    if _norm(best) == _norm(top):
+        return default, best_n, len(wanted)
+    return os.path.join(_rel(best), ""), best_n, len(wanted)
+
+
+def auto_fill(scene, view_layer):
+    """Auto Detect and Fill: empty collection pickers, then every role's folder (missing bake
+    / export folders are made). Returns report lines."""
+    lines = []
+    filled = roles.autofill(scene)
+    if filled:
+        lines.append("Collections: " + ", ".join(roles.ROLES[r][1] for r in filled))
+    for role in roles.ORDER:
+        pg, attr = holder(scene, role)
+        if pg is None:
+            lines.append(f"{LABELS[role]}: {attr}")
+            continue
+        value, n, total = detect(scene, view_layer, role)
+        if getattr(pg, attr) != value:
+            setattr(pg, attr, value)
+        if role in MADE:
+            make_dir(scene, role)
+        found = f" ({n}/{total} files)" if total else ""
+        lines.append(f"{LABELS[role]}: {value}{found}")
+    _DIRS.clear()
+    return lines
+
+
 # ---------------------------------------------------------------- old files keep their folders
 
 def _pin_old():
