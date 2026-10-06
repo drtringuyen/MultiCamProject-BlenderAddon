@@ -2,6 +2,64 @@
 
 ## Unreleased
 
+### Bake Route per object: From Original / From Projection / Mixed (2026-10-05)
+- **Dropdown at the start of 06's Albedo / Normal / Both row**, each object its own:
+  - **From Original:** BAo_ / BNo_ baked from the Bake Source (Cycles); ALB_ / NOR_ are file
+    copies of them. Nothing about the projection is checked.
+  - **From Projection:** BAp_ rendered from the projection (EEVEE, grey where no camera sees
+    the face), BNp_ generated from it (High-pass / AI); ALB_ / NOR_ are their copies.
+    Nothing about the original is checked.
+  - **Mixed:** VCMix / VCMix2 RGB pick the cameras, their alpha blends BAo_ -> projection
+    (ALB_) and BNo_ -> BNp_ (NOR_, a plain mix). The "Projected" slider is gone.
+- **Normal Map (the gear at the end of Bake), per object, From Original and Mixed:**
+  Original = *From Original's Surface* (BNo_) or *Generated from Albedo High-pass* (from
+  BAo_ with the engine below). Projection is always generated from BAp_. Mixed blends the
+  two by the VCMix mask.
+- **Processing shows the generated normal too:** the original's side generated from BAo_ is
+  kept as BNoG_ (a 16-bit file, made again only when BAo_ or the settings change) and MCP_
+  shows it when Original = Generated.
+- **EXPORT list: normal map toggle** next to the hand - flat normals in the viewport (MAT_ and
+  MCP_) while off. Viewing only: the FBX export always writes the normal map.
+- **Solo (EXPORT row eye):** after the object and its original are soloed, only the object
+  stays selected and active.
+- **Nothing is packed any more.** BAo_ / BNo_ / BAp_ / BNp_ are PNG files in the bake folder
+  (normals 16-bit). Once per file the old packed BA_ / BN_ become the files BAo_ / BNo_
+  (they were baked from the original), each object gets the route it baked with so far
+  (projection + Bake Source = Mixed), and ALB_ that was up to date stays up to date.
+- **One Processing material (MCP_) holds all three:** a ROUTE frame with two Values (Use
+  Original / Use Projection) picks the mask - no rebuild, no second material. Its normal
+  shows BNo_ -> BNp_ by the same mask.
+- **The route follows Setup:** 0B alone -> From Projection, 0C alone -> From Original, 0D ->
+  From Projection plus a prompt. Adding a second workflow keeps the route and shows a
+  prompt row in 06 (From Original / From Projection / Mixed / keep). Mixed is only picked
+  by hand.
+- **Remove one workflow:** X next to 0B removes the projection from the active mesh only
+  (modifier, UV_camN, VCMix, camera slots, MCP_, BAp_ / BNp_; the cameras stay; route ->
+  From Original). X next to 0C unlinks the original (Bake Source, BAo_ / BNo_; the low poly
+  and the hidden original stay; route -> From Projection). Reset still removes everything.
+- **Check Textures** (trash next to the material Refresh): lists unused images, stale copies,
+  old BA_ / BN_ and this .blend's files nothing uses (optionally the work textures of routes
+  not in use); after a confirm the images go and the files go to the Recycle Bin.
+- Export checks and Update outdated follow the route; renaming an object renames its work
+  texture files too.
+- Tested on the LivingRoom file (not saved): migration, From Original (ALB_/NOR_ = BAo_/BNo_
+  byte for byte), From Projection (= BAp_/BNp_), Mixed (ALB_ = BAo_ where the mask is 0 and
+  BAp_ where it is 1, NOR_ likewise), auto route, both removals, Check Textures.
+
+### Cage per object, normals follow VCMix in Processing (2026-10-05)
+- **Cage per object.** The Cage next to the Bake Source (and in Bake Settings) is the active
+  object's own; changing it outdates only that object's BA_. **Fit Cage** sets the active
+  object to its fit and grows (never shrinks) the other selected ones. Once per file, every
+  object gets the Cage its BA_ was baked with (else the old scene Cage).
+- **Processing material (MCP_) mixes the normals by the blend mask:** BN_ where baked, NOR_
+  where projected - painting VCMix alpha now changes the shading too. NOR_ is the last Bake
+  Final's; without NOR_ it is BN_ alone as before. Not an input of ALB_ (no outdated).
+- **BA_ outdated says why:** each Bake from Source now records what it depended on, and
+  04, Bake Final and the Export check name what changed (vertex / face count, mesh shape,
+  uv_normal, Bake Source, Cage, size). BA_s baked before cannot say.
+- **Normal Map > Projected** slider: where projected, 0 = BN_ + the generated detail (as
+  before), 1 = the generated normal alone (against a noisy or wrong BN_).
+
 ### Handmade: new UVs, rebaked on itself (2026-10-01)
 - **Edit UV / Rebake from uv_old / Finish** under the EXPORT list for a handmade object (no
   Remesh copy; 0C Remesh is blocked on handmade objects). Edit UV keeps the painted layout as

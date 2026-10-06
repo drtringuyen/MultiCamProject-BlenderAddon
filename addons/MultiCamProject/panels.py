@@ -109,6 +109,8 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.enabled = cams
             row.operator("multicamproject.setup", text="0B. Setup Camera Projection",
                          icon='CHECKMARK' if setup else 'CAMERA_DATA')
+            if setup and mm.is_loaded("remesh"):
+                row.operator("multicamproject.remove_projection", text="", icon='X')
 
         low = False
         if mm.is_loaded("remesh"):
@@ -118,6 +120,8 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.operator("multicamproject.remesh", text="0C. Remesh",
                          icon='CHECKMARK' if low else 'MOD_REMESH')
             row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
+            if mesh and mm.is_loaded("baking") and obj.multicamproject_bake.bake_source is not None:
+                row.operator("multicamproject.unlink_original", text="", icon='X')
             row.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
             retopo = low and wf.is_retopo(obj)
             row = col.row(align=True)
@@ -167,7 +171,7 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             parts.append(f"source: {src.name}" if src else "no Bake Source")
         if hasattr(obj, "multicamproject_bake"):
             d = obj.multicamproject_bake
-            parts.append("BA_ baked" if d.ba_image else "no BA_")
+            parts.append("BAo_ baked" if d.ba_image else "no BAo_")
         if parts:
             info.label(text="  ·  ".join(parts), icon='OBJECT_DATA')
 

@@ -172,6 +172,17 @@ class MULTICAMPROJECT_OT_ToggleImageEditor(bpy.types.Operator):
         module_manager.toggle("image_editor")
         return {'FINISHED'}
 
+
+class MULTICAMPROJECT_OT_ToggleLinking(bpy.types.Operator):
+    """Toggle Linking module on/off"""
+    bl_idname = "multicamproject.toggle_linking"
+    bl_label = "Linking"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("linking")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
@@ -184,9 +195,11 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleExport)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleRemesh)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleImageEditor)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleLinking)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleLinking)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleImageEditor)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleRemesh)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleExport)

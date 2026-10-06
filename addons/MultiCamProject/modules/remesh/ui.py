@@ -32,6 +32,12 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         d = obj.multicamproject_bake
         baking = module_manager.is_loaded("baking")
         s = context.scene.multicamproject_bake_settings if baking else None
+        if module_manager.is_loaded("linking"):        # Send Out / Receive, Send Back
+            from ..linking import core as link, ui as link_ui
+            if link.is_work_window(context.scene):
+                link_ui.draw_work(layout, context)
+            else:
+                link_ui.draw_main(layout, context, obj)
 
         # the high poly this low poly bakes from (only 04 uses it)
         row = layout.row(align=True)
@@ -39,7 +45,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         if s is not None:
             cage = row.row(align=True)
             cage.ui_units_x = 4.5
-            cage.prop(s, "cage_extrusion", text="Cage")
+            cage.prop(d, "cage", text="Cage")
 
         retopo = wf.is_retopo(obj)
         if retopo:
@@ -121,7 +127,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.label(text="Snap to Source (vg_Snap)", icon='MOD_SHRINKWRAP')
             row.operator("multicamproject.remesh_snap", text="", icon='X').on = False
 
-        # 04: BA_ / BN_ from the Bake Source (the baking module's settings)
+        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings)
         if not baking:
             return
         from ..baking import common, fingerprint, jobs, operators as bake_ops
@@ -153,17 +159,19 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         if d.ba_image is not None:
             info = box.row()
             info.active = False
-            info.label(text=f"BA_ + BN_ {_res(d.ba_size)} (packed, not final) · "
+            info.label(text=f"BAo_ + BNo_ {_res(d.ba_size)} (files, not final) · "
                             f"{d.last_ba_seconds:.1f} s", icon='IMAGE_RGB')
-            if fingerprint.ba_outdated(obj):
+            why = fingerprint.ba_why(obj)
+            if why:
                 warn = box.row()
                 warn.alert = True
-                warn.label(text="Mesh or uv_normal changed - bake from source again", icon='ERROR')
-            if d.ba_far_share > 0.02 and d.ba_fit_cage > s.cage_extrusion:
+                warn.label(text=f"{why[:1].upper()}{why[1:]} - bake from source again", icon='ERROR')
+            if d.ba_far_share > 0.02 and d.ba_fit_cage > d.cage:
                 row = box.row(align=True)
-                row.alert = True
-                row.label(text=f"{d.ba_far_share:.0%} beyond the Cage (up to {d.ba_far_max:.2f} m)",
-                          icon='ERROR')
+                warn = row.row(align=True)
+                warn.alert = True
+                warn.label(text=f"{d.ba_far_share:.0%} beyond the Cage (up to {d.ba_far_max:.2f} m)",
+                           icon='ERROR')
                 row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
 
 

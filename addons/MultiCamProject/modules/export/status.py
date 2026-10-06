@@ -37,7 +37,7 @@ def stage_of(obj, issues):
         return 'PROJECTION'
     if not alb:
         return 'READY_TO_BAKE'
-    if fingerprint.is_outdated(obj) or fingerprint.ba_outdated(obj):
+    if fingerprint.is_outdated(obj) or fingerprint.original_outdated(obj) or fingerprint.projection_outdated(obj):
         return 'OUTDATED'
     if not nor or d.material is None:
         return 'BAKED'

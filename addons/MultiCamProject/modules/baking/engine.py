@@ -1,5 +1,6 @@
-"""Bakes: BA_ / BN_ from the Bake Source (04, Cycles), ALB_ and the blend mask from the
-object's own Processing material (06, EEVEE).
+"""Bakes: BAo_ / BNo_ from the Bake Source (04, Cycles), BAp_, ALB_ and the blend mask from
+the object's own Processing material (06, EEVEE). Work textures are PNG files in the bake
+folder (store_work), never packed.
 
 Only Bake from Source needs Cycles: it casts rays from the low poly onto the high poly. What
 the object shows on its own uv_normal needs no rays - EEVEE renders a copy of the evaluated
@@ -165,6 +166,9 @@ def link_file(img, path):
         rel = path
     img.source = 'FILE'
     img.filepath = rel
+    if img.packed_file is not None:     # a packed BA_/BN_ of before 2026-10-05: the file wins
+        img.unpack(method='REMOVE')
+        img.filepath = rel
     img.reload()
 
 
@@ -233,27 +237,71 @@ def _uv_restore(obj, prev):
         uvs.active = uvs[prev]
 
 
-def _work_image(name, size, colorspace):
-    """A fresh generated image to bake a work texture into (a packed image keeps its old
-    packed pixels when packed again, so a re-bake never goes into the old one)."""
-    img = bpy.data.images.new(name + "_MCP_TMP", size, size, alpha=False, float_buffer=False)
+def _work_image(name, size, colorspace, is_float=False):
+    """A fresh generated image to bake a work texture into (the work texture itself keeps
+    showing its file until the new one is written)."""
+    img = bpy.data.images.new(name + "_MCP_TMP", size, size, alpha=False, float_buffer=is_float)
     img.colorspace_settings.name = colorspace
     return img
 
 
-def _pack_as(img, old, name):
-    """Pack the baked `img` (PNG) and let it take `old`'s place: every user (MCP_'s node,
-    the object's pointer) moves over, `old` goes, `img` gets the name - the same BA_/BN_
-    name every time, never a .001."""
-    img.file_format = 'PNG'
-    img.pack()
-    if old is not None and old != img:
-        old.user_remap(img)
-        bpy.data.images.remove(old)
-    other = bpy.data.images.get(name)
-    if other is not None and other != img:
-        other.name = name + "_stale"
-    img.name = name
+def store_work(scene, tmp, old, name, normal=False):
+    """A work texture (BAo_/BNo_/BAp_/BNp_) into <bake folder>/<name>.png - never packed:
+    an albedo as an 8-bit sRGB PNG, a normal (`normal`, `tmp` a float image or an RGB array
+    (h, w, 3) rows bottom-up) as a 16-bit PNG of raw values. The same image every time
+    (`old`, else by name), pointed at the file. `tmp` (an image) is removed. Returns it."""
+    from .normal import highpass, pngio
+    path = common.texture_path(scene, name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if normal:
+        rgb = tmp if isinstance(tmp, np.ndarray) else highpass.read_pixels(tmp)
+        pngio.write_rgb16(path, np.ascontiguousarray(rgb, dtype=np.float32),
+                          common.settings(scene).png_compression)
+        del rgb
+    else:
+        tmp.filepath_raw = path
+        tmp.file_format = 'PNG'
+        tmp.save(filepath=path)
+    if isinstance(tmp, bpy.types.Image):
+        bpy.data.images.remove(tmp)
+    img = old or bpy.data.images.get(name)
+    if img is None:
+        img = bpy.data.images.load(path, check_existing=False)
+    if img.name != name:
+        other = bpy.data.images.get(name)
+        if other is not None and other != img:
+            other.name = name + "_stale"
+        img.name = name
+    img.colorspace_settings.name = 'Non-Color' if normal else 'sRGB'
+    link_file(img, path)
+    try:
+        from . import owned
+        owned.add(scene, [path])
+    except ImportError:
+        pass
+    return img
+
+
+def copy_file(scene, src_img, dst_name, current, normal=False):
+    """A final texture (ALB_ / NOR_) as a copy of a work texture's file (From Original /
+    From Projection: no second bake). Returns the image, pointed at the copy."""
+    import shutil
+    src = common.image_file(src_img)
+    if not src or not os.path.isfile(src):
+        raise RuntimeError(f"'{src_img.name}' has no file - bake it again")
+    path = common.texture_path(scene, dst_name)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(path)):
+        shutil.copyfile(src, path)
+    img = current or bpy.data.images.get(dst_name)
+    if img is None:
+        img = bpy.data.images.load(path, check_existing=False)
+    if img.is_float and not normal:
+        img.buffers_free()
+    if img.name != dst_name and not bpy.data.images.get(dst_name):
+        img.name = dst_name
+    img.colorspace_settings.name = 'Non-Color' if normal else 'sRGB'
+    link_file(img, path)
     return img
 
 
@@ -508,9 +556,9 @@ def bake_from_source(context, obj):
 
 
 def bake_from_source_steps(context, obj):
-    """BA_ (the source's colors) and BN_ (its surface, tangent normals) onto obj's
-    uv_normal - Selected to Active from the Bake Source, at the scene's resolution. Both stay
-    packed in the .blend and are overwritten on the next bake; MCP_ shows them under the
+    """BAo_ (the source's colors) and BNo_ (its surface, tangent normals) onto obj's
+    uv_normal - Selected to Active from the Bake Source, at the object's resolution. Both are
+    files in the bake folder, overwritten on the next bake; MCP_ shows them under the
     projection. The low poly and its source are shown for the whole time (a Remesh original
     usually sits in an excluded collection). A generator (jobs); returns the seconds."""
     why = source_problem(obj, context) or common.uv_collapsed_text(obj)
@@ -539,7 +587,7 @@ def _bake_from_source(context, obj):
     d.ba_far_share, d.ba_far_max, d.ba_fit_cage = source_distance(obj, src)
     was_final = gn_final.is_final(obj)
     ba = _work_image(common.ba_name(obj), size, 'sRGB')
-    bn = _work_image(common.bn_name(obj), size, 'Non-Color')
+    bn = _work_image(common.bn_name(obj), size, 'Non-Color', is_float=True)     # 16-bit PNG
     prev = _uv_normal_active(obj)
     try:
         with render_state(scene), \
@@ -547,9 +595,9 @@ def _bake_from_source(context, obj):
             # the source's colors as Emission (lit or unlit scan alike), baked as EMIT
             with source_colors(src), target_nodes(obj, ba):
                 configure(scene, 'EMIT')
-                yield jobs.Step("Bake from Source: colors (BA_)")
+                yield jobs.Step("Bake from Source: colors (BAo_)")
                 yield from _bake(context, obj, [obj, src], 'EMIT', size, ba,
-                                 use_selected_to_active=True, cage_extrusion=s.cage_extrusion)
+                                 use_selected_to_active=True, cage_extrusion=common.cage(obj))
             with mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
                 configure(scene, 'NORMAL')
                 b = scene.render.bake
@@ -557,26 +605,25 @@ def _bake_from_source(context, obj):
                 b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
                 sel = [obj, hp]
                 hp.select_set(True)
-                yield jobs.Step("Bake from Source: surface (BN_)")
+                yield jobs.Step("Bake from Source: surface (BNo_)")
                 yield from _bake(context, obj, sel, 'NORMAL', size, bn, use_selected_to_active=True,
-                                 cage_extrusion=s.cage_extrusion, normal_space='TANGENT')
+                                 cage_extrusion=common.cage(obj), normal_space='TANGENT')
     except Exception:
-        bpy.data.images.remove(ba)      # the old BA_ / BN_ stay as they were
+        bpy.data.images.remove(ba)      # the old BAo_ / BNo_ stay as they were
         bpy.data.images.remove(bn)
         raise
     finally:
         _uv_restore(obj, prev)
         if gn_final.is_final(obj) != was_final:
             gn_final.set_final(obj, scene, was_final)
-    old_ba = d.ba_image or bpy.data.images.get(common.ba_name(obj))
-    old_bn = d.bn_image or bpy.data.images.get(common.bn_name(obj))
-    d.ba_image = _pack_as(ba, old_ba, common.ba_name(obj))
-    d.bn_image = _pack_as(bn, old_bn, common.bn_name(obj))
+    yield jobs.Step("Bake from Source: writing BAo_ / BNo_")
+    d.ba_image = store_work(scene, ba, d.ba_image, common.ba_name(obj))
+    d.bn_image = store_work(scene, bn, d.bn_image, common.bn_name(obj), normal=True)
     d.ba_size = size
     d.ba_fingerprint = fingerprint.stamp_source(obj)
     d.last_ba_seconds = time.perf_counter() - t0
     if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
-        cp.build_material(obj)          # the BAKED frame shows the new BA_ / BN_
+        cp.ensure_material(obj)         # the BAKED frame shows the new BAo_ / BNo_
     return d.last_ba_seconds
 
 
@@ -585,13 +632,13 @@ def source_distance(obj, src, samples=4000):
     low poly's vertices to the source's surface. Rays start Cage outside the low poly: a
     part farther away than that misses the source (black in BA_) or hits the wrong side."""
     from mathutils.bvhtree import BVHTree
-    s = common.settings(bpy.context.scene)
+    cage = common.cage(obj)
     dg = bpy.context.evaluated_depsgraph_get()
     tree = BVHTree.FromObject(src.evaluated_get(dg), dg)
     me = obj.data
     n = len(me.vertices)
     if not n:
-        return 0.0, 0.0, s.cage_extrusion
+        return 0.0, 0.0, cage
     co = np.empty(n * 3, np.float32)
     me.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)[np.linspace(0, n - 1, min(samples, n)).astype(int)]
@@ -601,14 +648,88 @@ def source_distance(obj, src, samples=4000):
                      for p in co.tolist()], np.float32)
     scale = max(src.matrix_world.to_scale())        # the source's local units -> world
     dist *= scale
-    return (float((dist > s.cage_extrusion).mean()), float(dist.max()),
+    return (float((dist > cage).mean()), float(dist.max()),
             float(np.percentile(dist, 99)) * 1.1)
 
 
 def needs_source_bake(obj):
-    """A Bake Source without a current BA_: Bake Final bakes from the source first."""
+    """A route that uses the Original, a Bake Source and no current BAo_: Bake Final bakes
+    from the source first."""
+    from . import route
     d = common.data(obj)
-    return d.bake_source is not None and (d.ba_image is None or fingerprint.ba_outdated(obj))
+    return (route.uses_original(obj) and d.bake_source is not None
+            and (d.ba_image is None or not common.file_ok(d.ba_image)
+                 or fingerprint.ba_outdated(obj)))
+
+
+def needs_projection_bake(obj):
+    """A route that uses the Projection and no current BAp_: Bake Final renders it first."""
+    from . import route
+    d = common.data(obj)
+    return (route.uses_projection(obj) and route.has_projection(obj)
+            and (d.bap_image is None or not common.file_ok(d.bap_image)
+                 or fingerprint.bp_outdated(obj)))
+
+
+# ---------------------------------------------------------------- 06: BAp_ from the Projection
+
+def _render_albedo(context, obj, size, route_view=None):
+    """MCP_ rendered by EEVEE on uv_normal (as `route_view` shows it, else as the object's
+    route does) with a temporary subdivision against sliding photos, margin filled:
+    (size, size, 4) sRGB-encoded floats. A generator (jobs)."""
+    s = common.settings(context.scene)
+    missing = cp.fill_cam_images(obj)       # never bake an empty (pink) Cam texture
+    if missing:
+        raise RuntimeError(f"Camera slot(s) {', '.join(map(str, missing))} have no "
+                           "image - it would bake pink (Reload All / pick the photo)")
+    cp.ensure_material(obj)
+    gn_final.set_final(obj, context.scene, False)
+    context.view_layer.update()
+    with subdivided(context, obj), (cp.route_override(obj, route_view) if route_view
+                                    else _nothing()):
+        px = uv_render(context, obj, size)
+    yield jobs.Step("Albedo: margin")
+    covered = px[..., 3] > 0.0
+    px[..., 3] = 1.0
+    to_srgb(px[..., :3])
+    extend_margin(px, covered, common.margin_px(s, size))
+    return px
+
+
+@contextmanager
+def _nothing():
+    yield
+
+
+def bake_projection_steps(context, obj):
+    """BAp_<name>: MCP_ as From Projection shows it (the cameras where they see the face,
+    grey elsewhere) - a file in the bake folder. A generator (jobs); returns the seconds."""
+    from . import route
+    scene = context.scene
+    d = common.data(obj)
+    if not route.has_projection(obj):
+        raise RuntimeError("No camera projection (0B)")
+    size = common.resolution(obj, scene)
+    t0 = time.perf_counter()
+    was_final = gn_final.is_final(obj)
+    tmp = _work_image(common.bap_name(obj), size, 'sRGB')
+    try:
+        yield jobs.Step("Projection: EEVEE render (BAp_)")
+        px = yield from _render_albedo(context, obj, size, route_view=route.PROJECTION)
+        tmp.pixels.foreach_set(px.ravel())
+        del px
+    except Exception:
+        bpy.data.images.remove(tmp)
+        raise
+    finally:
+        if gn_final.is_final(obj) != was_final:
+            gn_final.set_final(obj, scene, was_final)
+    yield jobs.Step("Projection: writing BAp_")
+    d.bap_image = store_work(scene, tmp, d.bap_image, common.bap_name(obj))
+    d.bp_size = size
+    d.bp_fingerprint = fingerprint.stamp_projection(obj)
+    d.last_bp_seconds = time.perf_counter() - t0
+    return d.last_bp_seconds
 
 
 # ---------------------------------------------------------------- 06 Bake Final
@@ -638,57 +759,49 @@ def bake_albedo(context, obj):
 
 
 def bake_albedo_steps(context, obj):
-    """ALB_<name>: the Processing material (MCP_: BA_ and the projection, by the mask)
-    rendered by EEVEE on uv_normal (uv_render), with a temporary subdivision against
-    sliding photos.
-    Without a projection ALB_ is BA_ at the final resolution. Builds MAT_, stores the
-    fingerprint; the object ends up in Final. A generator (jobs); returns the seconds."""
+    """ALB_<name> by the object's Bake Route:
+        From Original    a copy of BAo_ (baked from the source first when needed)
+        From Projection  a copy of BAp_ (rendered first when needed)
+        Mixed            MCP_ (BAo_ and the projection by the VCMix mask) rendered by EEVEE
+                         on uv_normal; BAp_ is rendered too (BNp_ is made from it)
+    Builds MAT_, stores the fingerprint; the object ends up in Final. A generator (jobs);
+    returns the seconds."""
+    from . import route
     scene = context.scene
-    s = common.settings(scene)
     d = common.data(obj)
+    why = route.problem(obj)
+    if why:
+        raise RuntimeError(why)
     size = common.resolution(obj, scene)
     t0 = time.perf_counter()
     name = common.alb_name(obj)
     path = common.texture_path(scene, name)
-    # bake into a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
-    # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves as 16-bit
-    tmp = bpy.data.images.new(TMP_IMAGE, size, size, alpha=False,
-                              float_buffer=False)
-    tmp.colorspace_settings.name = 'sRGB'
-    try:
-        if common.cp_modifier(obj) is None:
-            if d.ba_image is None:
-                raise RuntimeError("Nothing to bake: no projection and no Bake from Source")
-            src = d.ba_image.copy()
-            try:
-                src.scale(size, size)
-                buf = np.empty(size * size * 4, dtype=np.float32)
-                src.pixels.foreach_get(buf)
-                tmp.pixels.foreach_set(buf)
-            finally:
-                bpy.data.images.remove(src)
-        else:
-            missing = cp.fill_cam_images(obj)       # never bake an empty (pink) Cam texture
-            if missing:
-                raise RuntimeError(f"Camera slot(s) {', '.join(map(str, missing))} have no "
-                                   "image - it would bake pink (Reload All / pick the photo)")
-            gn_final.set_final(obj, scene, False)
-            context.view_layer.update()
-            yield jobs.Step("Albedo: EEVEE render")
-            with subdivided(context, obj):
-                px = uv_render(context, obj, size)
-            yield jobs.Step("Albedo: margin")
-            covered = px[..., 3] > 0.0
-            px[..., 3] = 1.0
-            to_srgb(px[..., :3])
-            extend_margin(px, covered, common.margin_px(s, size))
-            del covered
+    r = route.get(obj)
+    if needs_source_bake(obj):
+        yield jobs.Step("Bake from Source", 0.0)
+        yield from bake_from_source_steps(context, obj)
+    if needs_projection_bake(obj):
+        yield from bake_projection_steps(context, obj)
+    if r == route.ORIGINAL:
+        yield jobs.Step(f"Albedo: copying BAo_ to {os.path.basename(path)}")
+        d.alb_image = copy_file(scene, d.ba_image, name, d.alb_image)
+    elif r == route.PROJECTION:
+        yield jobs.Step(f"Albedo: copying BAp_ to {os.path.basename(path)}")
+        d.alb_image = copy_file(scene, d.bap_image, name, d.alb_image)
+    else:
+        # a fresh 8-bit image nothing else uses: the ALB image itself may hold a float
+        # buffer (GN-Final samples it for "Sampled from ALB"), and a float buffer saves 16-bit
+        tmp = bpy.data.images.new(TMP_IMAGE, size, size, alpha=False, float_buffer=False)
+        tmp.colorspace_settings.name = 'sRGB'
+        try:
+            yield jobs.Step("Albedo: EEVEE render (Mixed)")
+            px = yield from _render_albedo(context, obj, size)
             tmp.pixels.foreach_set(px.ravel())
             del px
-        yield jobs.Step(f"Albedo: writing {os.path.basename(path)}")
-        _save_albedo(obj, scene, tmp, path)
-    finally:
-        bpy.data.images.remove(tmp)
+            yield jobs.Step(f"Albedo: writing {os.path.basename(path)}")
+            _save_albedo(obj, scene, tmp, path)
+        finally:
+            bpy.data.images.remove(tmp)
     d.alb_size = size
     material.build(obj, scene)
     d.fingerprint = fingerprint.compute(obj)

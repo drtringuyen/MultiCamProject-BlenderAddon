@@ -84,9 +84,15 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         else:
             row.prop(item, "name", text="", emboss=False)
         right = layout.row(align=True)
+        if module_manager.is_loaded("linking"):
+            from ..linking import ui as link_ui
+            link_ui.draw_row_button(right, item)       # Send Out / Receive + X
         hand = right.row(align=True)
         hand.ui_units_x = 1.1
         hand.prop(bake, "handmade", text="", icon='VIEW_PAN', toggle=True)
+        nrm = right.row(align=True)
+        nrm.ui_units_x = 1.1
+        nrm.prop(bake, "show_normal", text="", icon='NORMALS_FACE', toggle=True)
         tris = right.row()
         tris.ui_units_x = 2.2
         tris.active = False
@@ -94,7 +100,10 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         tris.label(text=tri_text(checks.mesh_counts(item)[0], unit=False))
         size = right.row(align=True)
         size.ui_units_x = 2.2
-        size.prop(bake, "tex_size", text="")
+        # narrow column: "A" for Auto Resolution (the menu lists the full names)
+        size.prop_menu_enum(bake, "tex_size",
+                            text={'AUTO': "A", '1024': "1K", '2048': "2K", '4096': "4K",
+                                  '8192': "8K"}.get(bake.tex_size, bake.tex_size))
         # the fix column: one button per object that is not ready
         fix = right.row(align=True)
         fix.ui_units_x = 1.1
@@ -134,6 +143,10 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
     bl_order = 4
+
+    @classmethod
+    def poll(cls, context):
+        return not context.scene.get("multicamproject_work_of")     # a Work Window
 
     def draw_header(self, context):
         self.layout.label(icon='EXPORT')
@@ -253,6 +266,13 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
                     icon='COLLECTION_COLOR_03')
         right = split.row(align=True)
         right.alignment = 'RIGHT'
+        if module_manager.is_loaded("camera_project"):
+            from ..camera_project import core as cp
+            vl = bpy.context.view_layer
+            if cp.camera_collections(scene, vl):
+                shown = cp.cameras_shown(scene, vl)
+                right.operator("multicamproject.toggle_cameras", text="", depress=shown,
+                               icon='OUTLINER_OB_CAMERA')
         _scene_label(right, scene, es)
 
     def _draw_info(self, layout, scene, es, scene_row=True):

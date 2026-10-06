@@ -28,6 +28,11 @@ def resolution(obj, scene=None):
     return settings(scene or bpy.context.scene).resolution
 
 
+def cage(obj):
+    """`obj`'s Cage Extrusion for Bake from Source (one per object)."""
+    return obj.multicamproject_bake.cage
+
+
 def margin_px(s, size=None):
     """The bake margin at `size` (default: the scene's resolution); Margin is set at 8K."""
     size = size or s.resolution
@@ -44,14 +49,43 @@ def nor_name(obj):
     return typed_name("NOR", obj)
 
 
+# the add-on's texture files in the bake folder: the final ALB_/NOR_ and the work textures
+# of the two routes - BAo_/BNo_ baked from the Original (Bake from Source), BAp_/BNp_ from
+# the Projection. Only files with these prefixes are ever cleaned up
+FINAL_PREFIXES = ("ALB_", "NOR_")
+WORK_PREFIXES = ("BAo_", "BNo_", "BNoG_", "BAp_", "BNp_")
+OWN_PREFIXES = FINAL_PREFIXES + WORK_PREFIXES
+LEGACY_PREFIXES = ("BA_", "BN_")        # packed BA_/BN_ before 2026-10-05 (now BAo_/BNo_)
+
+
 def ba_name(obj):
+    """BAo_<name>: the albedo baked from the Original (Bake Source)."""
     from .naming import typed_name
-    return typed_name("BA", obj)
+    return typed_name("BAo", obj)
 
 
 def bn_name(obj):
+    """BNo_<name>: the normal baked from the Original (Bake Source)."""
     from .naming import typed_name
-    return typed_name("BN", obj)
+    return typed_name("BNo", obj)
+
+
+def bng_name(obj):
+    """BNoG_<name>: the original's side of the normal generated from BAo_ (High-pass / AI)."""
+    from .naming import typed_name
+    return typed_name("BNoG", obj)
+
+
+def bap_name(obj):
+    """BAp_<name>: the albedo rendered from the Projection."""
+    from .naming import typed_name
+    return typed_name("BAp", obj)
+
+
+def bnp_name(obj):
+    """BNp_<name>: the normal generated from BAp_."""
+    from .naming import typed_name
+    return typed_name("BNp", obj)
 
 
 def mat_name(obj):
@@ -112,6 +146,17 @@ def cp_modifier(obj):
 
 def mesh_objects(objs):
     return [o for o in objs if o.type == 'MESH']
+
+
+WORK_WINDOW_KEY = "multicamproject_work_of"     # scene of a Work Window: the main .blend
+
+
+def is_work_window(scene=None):
+    """A Work Window (linking module): an untitled Blender holding one object sent out of a
+    main file. Its texture links point at the main file's real bakes: nothing here may
+    delete or recycle files."""
+    scenes = [scene] if scene is not None else list(bpy.data.scenes)
+    return any(sc.get(WORK_WINDOW_KEY) for sc in scenes)
 
 
 def output_dir(scene):
@@ -188,10 +233,18 @@ def shown(context, objs):
                 lc.exclude = False
         for c in colls:
             _layer_coll(vl, c).hide_viewport = False
+        # a collection shown only for this: the rest of it stays out of sight (e.g. every
+        # other scan in "Original Mesh" - only the object and its original show)
+        opened = [c for c, exc, hid in saved_c if exc or hid]
+        for c in opened:
+            for o in c.all_objects:
+                if o not in objs and o not in hidden and vl.objects.get(o.name) == o:
+                    hidden[o] = o.hide_get(view_layer=vl)
+                    o.hide_set(True, view_layer=vl)
         for o in objs:
             o.hide_viewport = o.hide_render = False
             if vl.objects.get(o.name) == o:
-                hidden[o] = o.hide_get(view_layer=vl)
+                hidden.setdefault(o, o.hide_get(view_layer=vl))
                 o.hide_set(False, view_layer=vl)
         vl.update()
         yield

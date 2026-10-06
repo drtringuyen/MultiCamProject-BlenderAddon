@@ -187,18 +187,19 @@ def _facing(obj, cam):
     n = len(me.loops)
     nr = np.empty(n * 3, dtype=np.float32)
     me.corner_normals.foreach_get("vector", nr)
-    mw = np.array(obj.matrix_world, dtype=np.float32)
-    nmat = np.array(obj.matrix_world.to_3x3().inverted_safe().transposed(), dtype=np.float32)
+    om, cm = core.world_matrix(obj), core.world_matrix(cam)
+    mw = np.array(om, dtype=np.float32)
+    nmat = np.array(om.to_3x3().inverted_safe().transposed(), dtype=np.float32)
     nr = nr.reshape(n, 3) @ nmat.T
     if cam.data.type == 'ORTHO':
-        to_cam = np.array(cam.matrix_world.to_3x3().col[2], dtype=np.float32)
+        to_cam = np.array(cm.to_3x3().col[2], dtype=np.float32)
         return nr @ to_cam > 0.0
     vi = np.empty(n, dtype=np.int32)
     me.loops.foreach_get("vertex_index", vi)
     co = np.empty(len(me.vertices) * 3, dtype=np.float32)
     me.vertices.foreach_get("co", co)
     co = co.reshape(-1, 3)[vi] @ mw[:3, :3].T + mw[:3, 3]
-    to_cam = np.array(cam.matrix_world.translation, dtype=np.float32) - co
+    to_cam = np.array(cm.translation, dtype=np.float32) - co
     return (nr * to_cam).sum(axis=1) > 0.0
 
 

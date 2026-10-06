@@ -36,7 +36,7 @@ TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next t
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     """05 Projection Painting: go through the cameras and paint VCMix / VCMix2 - which
-    camera shows where, and (alpha) projection or BA_. Shown once 0B is done"""
+    camera shows where, and (alpha) projection or BAo_. Shown once 0B is done"""
     bl_label = "05. Projection Painting"
     bl_idname = "MULTICAMPROJECT_PT_camera_project"
     bl_space_type = 'VIEW_3D'
@@ -77,7 +77,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         row = layout.row(align=True)
         row.active = False
         if ba is not None:
-            row.label(text="Mix: projection over BA_ (by the mask)", icon='NODE_MATERIAL')
+            row.label(text="Mix: projection over BAo_ (by the mask, Bake Route Mixed)", icon='NODE_MATERIAL')
         else:
             row.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')
 

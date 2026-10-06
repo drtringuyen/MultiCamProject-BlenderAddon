@@ -50,14 +50,27 @@ class MULTICAMPROJECT_OT_Setup(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
+        was_setup = core.data(obj).is_setup
         warnings = core.setup(obj, context.scene)
         _report_warnings(self, warnings)
+        if not was_setup:
+            _route_after(obj)
         n = len(core.data(obj).cameras)
         if n == 0:
             self.report({'WARNING'}, "No camera sees this object")
         else:
             self.report({'INFO'}, f"{n} camera(s) see '{obj.name}'")
         return {'FINISHED'}
+
+
+def _route_after(obj):
+    """0B added the projection: the Bake Route follows (baking module)."""
+    try:
+        from ..baking import route
+    except ImportError:
+        return
+    if hasattr(obj, "multicamproject_bake"):
+        route.after_step(obj, 'PROJECTION')
 
 
 class MULTICAMPROJECT_OT_ReloadAll(bpy.types.Operator):
@@ -918,7 +931,50 @@ class MULTICAMPROJECT_OT_ToggleCameraFolder(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_ToggleCameras(bpy.types.Operator):
+    """Hide / show the camera collections (the eye; showing also includes an excluded one).
+    Hidden, the Outliners stop listing cameras, so the collection folds to one row. Hidden
+    cameras still project and are still scored"""
+    bl_idname = "multicamproject.toggle_cameras"
+    bl_label = "Hide / Show Cameras"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def description(cls, context, props):
+        colls = core.camera_collections(context.scene, context.view_layer)
+        if not colls:
+            return "No collection holds only cameras"
+        n = sum(len(c.objects) for c, _lc in colls)
+        names = ", ".join(c.name for c, _lc in colls)
+        verb = "Hide" if core.cameras_shown(context.scene, context.view_layer) else "Show"
+        return (f"{verb} {names} ({n} cameras). Hidden, the Outliner lists no cameras; they "
+                "still project and are scored")
+
+    @classmethod
+    def poll(cls, context):
+        return bool(core.camera_collections(context.scene, context.view_layer))
+
+    def execute(self, context):
+        colls = core.camera_collections(context.scene, context.view_layer)
+        show = not core.cameras_shown(context.scene, context.view_layer)
+        for _c, lc in colls:
+            if show:
+                lc.exclude = False
+            lc.hide_viewport = not show
+        # the Outliner can't fold one collection from Python: its camera filter folds every
+        # camera away (the collection stays as one row), in every workspace
+        for screen in bpy.data.screens:
+            for area in screen.areas:
+                for space in area.spaces:
+                    if space.type == 'OUTLINER':
+                        space.use_filter_object_camera = show
+        n = sum(len(c.objects) for c, _lc in colls)
+        self.report({'INFO'}, f"{'Shown' if show else 'Hidden'}: {n} cameras")
+        return {'FINISHED'}
+
+
 _classes = (
+    MULTICAMPROJECT_OT_ToggleCameras,
     MULTICAMPROJECT_OT_Setup,
     MULTICAMPROJECT_OT_MaskFill,
     MULTICAMPROJECT_OT_ResetCameraMix,

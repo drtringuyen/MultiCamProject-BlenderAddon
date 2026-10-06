@@ -202,7 +202,8 @@ def export_steps(context, fix_log=()):
         from ..baking import owned
         owned.add(scene, list(copies.values()))    # a later export may replace them
         yield jobs.Step("Evaluating the Final meshes", 0.4)
-        with common.shown(context, objs):
+        from ..baking import material as bake_material
+        with common.shown(context, objs), bake_material.normals_on(objs):
             made = make_copies(context, objs, copies, coll, temps)
         context.view_layer.update()
         originals = list(objs) + [o.data for o in objs]

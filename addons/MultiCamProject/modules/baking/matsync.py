@@ -28,8 +28,8 @@ _known = set()          # as_pointer() of the objects seen by the last pass
 _count = [-1]
 _pending_files = set()  # ALB_/NOR_ files of removed objects, recycled at the next save
 _baseline = set()       # materials already orphaned when the file loaded: left alone
-OWN_FILES = ("ALB_", "NOR_")
-OWN_WORK = ("BA_", "BN_")      # packed, baked from the Bake Source, used by MCP_
+OWN_FILES = common.FINAL_PREFIXES
+OWN_WORK = common.WORK_PREFIXES + common.LEGACY_PREFIXES     # MCP_'s BAo_/BNo_/BAp_/BNp_
 
 
 def _cp_on():
@@ -186,7 +186,7 @@ def problems(obj):
 # ---------------------------------------------------------------- the whole file
 
 def _work_owners():
-    """{BA_/BN_ image: (owner, name it should have)} - from the objects' pointers; a
+    """{BAo_/BNo_/BAp_/BNp_ image: (owner, name it should have)} - from the objects' pointers; a
     shared one goes to the object named after it, else the first by name."""
     skip = cp._originals()
     users = {}
@@ -194,7 +194,9 @@ def _work_owners():
         if o.type != 'MESH' or o.library or o in skip or not o.users_collection:
             continue
         d = common.data(o)
-        for img, fn in ((d.ba_image, common.ba_name), (d.bn_image, common.bn_name)):
+        for img, fn in ((d.ba_image, common.ba_name), (d.bn_image, common.bn_name),
+                        (d.bap_image, common.bap_name), (d.bnp_image, common.bnp_name),
+                        (d.bng_image, common.bng_name)):
             if img is not None and not img.library:
                 users.setdefault(img, []).append((o, fn))
     out = {}
@@ -205,7 +207,7 @@ def _work_owners():
 
 
 def sync_names():
-    """Rename pass: every owned MCP_ / MAT_ / BA_ / BN_ gets its owner's name. Cheap."""
+    """Rename pass: every owned MCP_ / MAT_ / work texture gets its owner's name. Cheap."""
     changed = []
     for img, (_o, want) in _work_owners().items():
         if img.name != want:
@@ -281,7 +283,8 @@ def remove_orphans(everything=False):
     for img, files in images:
         if img.users == 0 and img not in gone:
             path = common.image_file(img)
-            if files and path and os.path.basename(path).startswith(OWN_FILES):
+            if (files and path and os.path.basename(path).startswith(common.OWN_PREFIXES)
+                    and not common.is_work_window()):   # the main file's real bakes
                 _pending_files.add(os.path.normcase(os.path.abspath(path)))
             gone.append(img)
     _baseline.difference_update(removed)
@@ -333,6 +336,10 @@ def _objects_changed():
         scene = bpy.context.scene
         now = {o.as_pointer(): o for o in bpy.data.objects}
         new = [o for p, o in now.items() if p not in _known]
+        from ... import module_manager
+        if module_manager.is_loaded("linking"):
+            from ..linking import core as link
+            link.forget_copies(new)         # a Shift+D copy is not linked to the window
         _known.clear()
         _known.update(now)
         _count[0] = len(bpy.data.objects)
@@ -407,7 +414,7 @@ def _on_depsgraph(scene, depsgraph):
 @persistent
 def _on_save(_):
     """Recycle the queued ALB_/NOR_ files no image of the saved file uses."""
-    if not _pending_files:
+    if not _pending_files or common.is_work_window():
         return
     try:
         from ..export import checks, fixes

@@ -15,6 +15,36 @@ def _on_handmade(data, context):
     handmade.on_toggle(data)
 
 
+def _on_route(data, context):
+    from . import route
+    route.changed(data.id_data)
+
+
+ROUTE_ITEMS = (
+    ('ORIGINAL', "From Original", "Bake only from the original mesh (Bake Source): BAo_ / BNo_ "
+                                  "(Cycles), ALB_ / NOR_ are their copies. The projection is "
+                                  "ignored", 'MESH_DATA', 0),
+    ('PROJECTION', "From Projection", "Bake only from the camera projection: BAp_ (EEVEE) and "
+                                      "BNp_ generated from it, ALB_ / NOR_ are their copies. The "
+                                      "original is ignored", 'CAMERA_DATA', 1),
+    ('MIXED', "Mixed", "Both: VCMix / VCMix2 RGB pick the cameras, their alpha blends BAo_ -> "
+                       "projection (colors) and BNo_ -> BNp_ (normals)", 'MOD_MASK', 2))
+
+
+def _on_show_normal(data):
+    from . import material
+    material.apply_normal_visibility(data.id_data)
+
+
+def _on_original_normal(data):
+    """The Processing material shows the original's side as picked (BNo_ / BNoG_)."""
+    obj = data.id_data
+    cam = getattr(obj, "multicamproject_cam", None)
+    if cam is not None and cam.is_setup:
+        from ..camera_project import core as cp
+        cp.ensure_material(obj)
+
+
 def _on_tex_size(data, context):
     from . import cache
     cache.clear()
@@ -28,11 +58,11 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                     "(one material, one UV), never baked by the add-on")
     tex_size: EnumProperty(
         name="Texture Size", default='AUTO', update=_on_tex_size,
-        items=(('AUTO', "A", "Auto: the scene's resolution, set in front of Export", 0),
-               ('1024', "1K", "ALB_, NOR_, BA_ and BN_ of this object at 1024 x 1024", 1),
-               ('2048', "2K", "ALB_, NOR_, BA_ and BN_ of this object at 2048 x 2048", 2),
-               ('4096', "4K", "ALB_, NOR_, BA_ and BN_ of this object at 4096 x 4096", 3),
-               ('8192', "8K", "ALB_, NOR_, BA_ and BN_ of this object at 8192 x 8192", 4)),
+        items=(('AUTO', "Auto Resolution", "Auto: the scene's resolution, set in front of Export", 0),
+               ('1024', "1K", "ALB_, NOR_ and the work textures of this object at 1024 x 1024", 1),
+               ('2048', "2K", "ALB_, NOR_ and the work textures of this object at 2048 x 2048", 2),
+               ('4096', "4K", "ALB_, NOR_ and the work textures of this object at 4096 x 4096", 3),
+               ('8192', "8K", "ALB_, NOR_ and the work textures of this object at 8192 x 8192", 4)),
         description="This object's texture size. A = the scene's resolution. Textures baked at "
                     "another size are listed to bake again")
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
@@ -46,20 +76,58 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                                       "the _previous files back)")
     retopo: BoolProperty(description="Made by 0D Retopo Empty: modelled by hand on top of the "
                                      "original, no Decimate")
-    # baked from the Bake Source (04): packed work textures under the projection, never
-    # exported - BA_<name> (albedo) and BN_<name> (normal), overwritten on every bake
-    ba_image: PointerProperty(type=bpy.types.Image, name="Baked Albedo",
-                              description="BA_<name>: albedo baked from the Bake Source (packed)")
-    bn_image: PointerProperty(type=bpy.types.Image, name="Baked Normal",
-                              description="BN_<name>: normal baked from the Bake Source (packed)")
+    # where 06 Bake Final takes ALB_ / NOR_ from (each object its own)
+    route: EnumProperty(name="Bake Route", items=ROUTE_ITEMS, default='MIXED', update=_on_route,
+                        description="Where Bake Final takes ALB_ / NOR_ from")
+    original_normal: EnumProperty(
+        name="Original Normal", default='BAKED',
+        items=(('BAKED', "From Original's Surface",
+                "BNo_: the original's surface baked onto the low poly (Cycles)", 'MESH_DATA', 0),
+               ('GENERATED', "Generated from Albedo High-pass",
+                "Generated from BAo_ (the original's colors) with the engine below - "
+                "High-pass or AI", 'IMAGE_RGB', 1)),
+        update=lambda self, context: _on_original_normal(self),
+        description="From Original / Mixed: the normal on the original's side")
+    show_normal: BoolProperty(
+        name="Normal Map", default=True,
+        update=lambda self, context: _on_show_normal(self),
+        description="Show the normal map in the viewport (MAT_ and the Processing material). "
+                    "Viewing only: the export always writes it")
+    route_user: BoolProperty(description="The route was picked by hand (never changed by a "
+                                          "Setup step then)")
+    route_prompt: StringProperty(description="A Setup step added a workflow: shown in 06 until a "
+                                             "route is picked")
+    # work textures, PNG files in the bake folder (never exported, overwritten on every bake):
+    # from the Original (04 Bake from Source) BAo_<name> / BNo_<name>, from the Projection
+    # BAp_<name> / BNp_<name>
+    ba_image: PointerProperty(type=bpy.types.Image, name="Baked Albedo (Original)",
+                              description="BAo_<name>: albedo baked from the Bake Source")
+    bn_image: PointerProperty(type=bpy.types.Image, name="Baked Normal (Original)",
+                              description="BNo_<name>: normal baked from the Bake Source")
+    bap_image: PointerProperty(type=bpy.types.Image, name="Baked Albedo (Projection)",
+                               description="BAp_<name>: albedo rendered from the projection")
+    bnp_image: PointerProperty(type=bpy.types.Image, name="Baked Normal (Projection)",
+                               description="BNp_<name>: normal generated from BAp_")
+    bng_image: PointerProperty(type=bpy.types.Image, name="Generated Normal (Original)",
+                               description="BNoG_<name>: normal generated from BAo_")
+    bng_fingerprint: StringProperty(description="BAo_ state + normal settings at the last BNoG_")
+    bp_fingerprint: StringProperty(description="State of the projection at the last BAp_")
+    bp_size: IntProperty(description="Resolution of the last BAp_ (0 = never)")
+    bnp_fingerprint: StringProperty(description="BAp_ state + normal settings at the last BNp_")
+    last_bp_seconds: FloatProperty()
     ba_fingerprint: StringProperty(description="State of the mesh and uv_normal at the last "
                                                "Bake from Source")
+    ba_parts: StringProperty(description="JSON: what the last Bake from Source depended on, "
+                                         "readable (fingerprint.ba_why)")
     ba_size: IntProperty(description="Resolution of the last Bake from Source (0 = never)")
     ba_far_share: FloatProperty(description="Share of the low poly farther from the source "
                                             "than the Cage at the last Bake from Source")
     ba_far_max: FloatProperty(description="Largest low poly - source distance at the last "
                                           "Bake from Source", unit='LENGTH')
     ba_fit_cage: FloatProperty(description="Cage that reaches 99% of the low poly", unit='LENGTH')
+    cage: FloatProperty(name="Cage Extrusion", default=0.02, min=0.0, unit='LENGTH',
+                        description="Bake from Source: how far rays start outside this low "
+                                    "poly's surface to find the high poly (each object its own)")
     last_ba_seconds: FloatProperty()
     material: PointerProperty(
         type=bpy.types.Material, name="Final Material",
@@ -139,7 +207,7 @@ def _set_res_menu(self, value):
 class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
     resolution: IntProperty(
         name="Resolution", default=1024, min=1024, max=16384,
-        description="Width and height of every baked texture - ALB_, NOR_, BA_ and BN_ - in "
+        description="Width and height of every baked texture - ALB_, NOR_ and the work textures - in "
                     "pixels, for every object set to A (Auto) - the dropdown in front of Export")
     resolution_menu: EnumProperty(
         name="Resolution", items=RES_ITEMS, get=_get_res_menu, set=_set_res_menu,
@@ -180,9 +248,9 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
                                         "larger shading is ignored")
     nor_invert: BoolProperty(name="Invert", default=False,
                              description="Dark = raised instead of dark = recessed")
+    # before 2026-10-05 the Cage was scene-wide: only read once, to give each object its own
     cage_extrusion: FloatProperty(name="Cage Extrusion", default=0.02, min=0.0, unit='LENGTH',
-                                  description="Bake from Source: how far rays start outside the "
-                                              "low poly's surface to find the high poly")
+                                  options={'HIDDEN'})
     smooth_source: BoolProperty(name="Smooth Source", default=False,
                                 description="Bake from Source: BN_ from a smoothed temporary "
                                             "copy of the high poly (against scan noise)")
