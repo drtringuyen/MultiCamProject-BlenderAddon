@@ -20,10 +20,32 @@ SCENE_KEYS = {"main": "multicamproject_work_of", "object": "multicamproject_work
               "id": "multicamproject_work_id", "work_bakes": "multicamproject_work_bakes"}
 
 
+def _world(o):
+    """o's world matrix from its parent chain - no scene evaluation (a freshly loaded
+    object's matrix_world is stale; a view layer update would evaluate every modifier of
+    the scan, seconds). The add-on's objects have no constraints."""
+    m = o.matrix_basis.copy()
+    while o.parent is not None:
+        m = o.parent.matrix_basis @ o.matrix_parent_inverse @ m
+        o = o.parent
+    return m
+
+
+def _mute_pending(obj):
+    if obj is None:
+        return
+    try:
+        wf = importlib.import_module(f"{settings['addon']}.modules.remesh.workflow")
+        if wf.decimate_pending(obj):
+            wf.set_gn(obj, False)
+    except Exception as e:
+        print(f"[MultiCamProject] work window: GN mute skipped: {e}")
+
+
 def _apply_world(objs):
     """Unparent, keeping where everything is: meshes get their world transform applied
     (one mesh copy each), cameras keep their world matrix (their photos don't move)."""
-    world = {o: o.matrix_world.copy() for o in objs}
+    world = {o: _world(o) for o in objs}
     for o in objs:
         o.parent = None
         if o.type == 'MESH':
@@ -81,6 +103,18 @@ def _top_left(screen):
 
 ADDON_TAB = "MultiCamProject"      # the sidebar tab the window opens on
 _tab_tries = [0]
+_save_as = [""]     # the 0C / 0D buttons' work file: saved once the window is set up
+
+
+def _input(mod, name):
+    """A GN modifier's input value by its name (False when it has none)."""
+    for item in mod.node_group.interface.items_tree if mod.node_group else ():
+        if getattr(item, "in_out", "") == 'INPUT' and item.name == name:
+            try:
+                return mod[item.identifier]
+            except KeyError:
+                return False
+    return False
 
 
 def _addon_tab():
@@ -100,14 +134,12 @@ def _addon_tab():
                         pass
                     done = done and region.active_panel_category == ADDON_TAB
                     region.tag_redraw()
-    if done and bpy.data.filepath and not bpy.data.is_dirty:
-        try:                # the saved window reopens on the tab too (nothing else changed)
-            win = bpy.context.window_manager.windows[0]
-            with bpy.context.temp_override(window=win):
-                bpy.ops.wm.save_mainfile()
-        except Exception as e:
-            print(f"[MultiCamProject] work window: tab not saved: {e}")
-    return None if done or _tab_tries[0] >= 20 else 0.25
+    if done or _tab_tries[0] >= 20:
+        if _save_as[0]:             # one save, with the tab in it (reopens on it too)
+            _save(_save_as[0])
+            _save_as[0] = ""
+        return None
+    return 0.25
 
 
 def _layout():
@@ -127,8 +159,6 @@ def _layout():
         for area in views:
             with bpy.context.temp_override(window=win, screen=screen, area=area):
                 area.spaces.active.show_region_ui = True
-    _tab_tries[0] = 0
-    bpy.app.timers.register(_addon_tab, first_interval=0.3)
     for screen in bpy.data.screens:
         for area in screen.areas:
             for space in area.spaces:
@@ -160,7 +190,8 @@ def _build():
     for o in keep:              # straight into the scene (their collections are not)
         if scene.collection.objects.get(o.name) is None:
             scene.collection.objects.link(o)
-    bpy.context.view_layer.update()
+    obj = bpy.data.objects.get(settings["object"])
+    _mute_pending(obj)          # before anything evaluates: an undecided Decimate's GN is off
     _apply_world(keep)
     # the `transform` empty, other parents and anything else that came along: not needed
     bpy.data.batch_remove([o for o in objs if o not in keep])
@@ -180,7 +211,6 @@ def _build():
     orig = bpy.data.objects.get(settings["original"]) if settings["original"] else None
     if orig is not None and bpy.context.view_layer.objects.get(orig.name) is not None:
         orig.hide_set(True)     # as in the main file: the low poly is what you work on
-    obj = bpy.data.objects.get(settings["object"])
     if obj is not None:
         for o in bpy.context.view_layer.objects:
             o.select_set(False)
@@ -188,28 +218,29 @@ def _build():
         obj.select_set(True)
         try:                    # always open on the Processing material (painting, 04-06)
             gn_final = importlib.import_module(f"{settings['addon']}.modules.baking.gn_final")
-            gn_final.set_final(obj, scene, False)
+            mod = gn_final.get_modifier(obj)
+            # only when it shows Final: set_final rebuilds the wrappers with a full scene
+            # evaluation each (~5 s on a scan) - for nothing when it is on Processing already
+            if mod is not None and _input(mod, "Final"):
+                gn_final.set_final(obj, scene, False)
         except Exception as e:  # never stop the window over the view
             print(f"[MultiCamProject] work window: Processing view skipped: {e}")
+    try:
+        _layout()
+    except Exception as e:      # never stop the window over its layout
+        print(f"[MultiCamProject] work window: layout skipped: {e}")
+    _mute_pending(obj)          # (set_final may have switched GN on again)
+    if obj is not None:         # last: its evaluation is the one the first draw uses too
         for win in bpy.context.window_manager.windows:
             for area in win.screen.areas:
                 if area.type == 'VIEW_3D':
                     region = next(r for r in area.regions if r.type == 'WINDOW')
                     with bpy.context.temp_override(window=win, area=area, region=region):
                         bpy.ops.view3d.view_selected()
-    try:
-        _layout()
-    except Exception as e:      # never stop the window over its layout
-        print(f"[MultiCamProject] work window: layout skipped: {e}")
-    if obj is not None:         # an undecided Decimate: the GN modifiers stay muted here too
-        try:
-            wf = importlib.import_module(f"{settings['addon']}.modules.remesh.workflow")
-            if wf.decimate_pending(obj):
-                wf.set_gn(obj, False)
-        except Exception as e:
-            print(f"[MultiCamProject] work window: GN mute skipped: {e}")
     if obj is not None and settings.get("save_as"):
-        _save(settings["save_as"])
+        _save_as[0] = settings["save_as"]    # saved once, after the sidebar tab (_addon_tab)
+    _tab_tries[0] = 0           # the sidebar tab, then the save - also when the layout failed
+    bpy.app.timers.register(_addon_tab, first_interval=0.3)
     if obj is not None and settings.get("start"):
         _start(settings["start"])
     return None
