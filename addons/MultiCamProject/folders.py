@@ -97,9 +97,15 @@ def _inside(path, top):
 
 
 def _listing(top):
-    if not top or not os.path.isdir(top):
+    """{lower-case name: name} of the files in `top`. One directory read (scandir knows
+    file / folder without a stat per entry - every stat is slow on the network drive)."""
+    if not top:
         return {}
-    return {f.lower(): f for f in os.listdir(top) if os.path.isfile(os.path.join(top, f))}
+    try:
+        with os.scandir(top) as it:
+            return {e.name.lower(): e.name for e in it if e.is_file()}
+    except OSError:
+        return {}
 
 
 def _candidates(img):
@@ -134,16 +140,28 @@ def _relinkable(img):
             and not img.library)
 
 
-def relink(images, top):
+def _is_there(path, top, listing):
+    """`path` is a file in `top` or below: files right in `top` are looked up in its listing
+    (no stat), deeper ones (e.g. _work bakes) are stat'ed."""
+    if not path or not _inside(path, top):
+        return False
+    if _norm(os.path.dirname(path)) == _norm(top):
+        return os.path.basename(path).lower() in listing
+    return os.path.isfile(path)
+
+
+def relink(images, top, listing=None):
     """Point every image at its file in `top` (unless it is already in `top` or below), then
-    reload it. Returns (relinked, reloaded, [names not found])."""
-    listing = _listing(top)
+    reload it. `listing`: top's, when the caller already read it.
+    Returns (relinked, reloaded, [names not found])."""
+    if listing is None:
+        listing = _listing(top)
     relinked, reloaded, missing = 0, 0, []
     for img in images:
         if not _relinkable(img):
             continue
         cur = bpy.path.abspath(img.filepath) if img.filepath else ""
-        if not (cur and _inside(cur, top) and os.path.isfile(cur)):
+        if not _is_there(cur, top, listing):
             real = next((listing[n.lower()] for n in _candidates(img) if n.lower() in listing),
                         None)
             if real is None:
@@ -233,7 +251,7 @@ def relink_photos(scene, view_layer, top):
         bgs = cam.data.background_images
         img = bgs[0].image if len(bgs) else None
         if img is not None:
-            r, n, miss = relink([img], top)
+            r, n, miss = relink([img], top, listing)
             if miss:        # the image's own name failed: try the camera's
                 real = next((listing[(cam.name + e).lower()] for e in IMAGE_EXTS
                              if (cam.name + e).lower() in listing), None)
@@ -363,13 +381,12 @@ def _current_dirs(scene, view_layer, role):
                 if len(c.data.background_images) and c.data.background_images[0].image]
     else:
         return []
-    dirs = set()
+    by_dir = {}         # folder: file names in it (one listing per folder, no stat per file)
     for img in imgs:
         if _relinkable(img) and img.filepath:
-            path = bpy.path.abspath(img.filepath)
-            if os.path.isfile(path):
-                dirs.add(os.path.normpath(os.path.dirname(path)))
-    return sorted(dirs)
+            path = os.path.normpath(bpy.path.abspath(img.filepath))
+            by_dir.setdefault(os.path.dirname(path), set()).add(os.path.basename(path).lower())
+    return sorted(d for d, names in by_dir.items() if names & _listing(d).keys())
 
 
 def detect(scene, view_layer, role):
