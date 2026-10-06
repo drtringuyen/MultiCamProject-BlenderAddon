@@ -56,7 +56,9 @@ WIREFRAME_OPACITY = 0.262
 
 
 def _camera_collection(scene):
-    """Every camera into one "Cameras" collection (not the scene's top level)."""
+    """Every camera into one "Cameras" collection (not the scene's top level), excluded
+    from the view layer so no camera is in the way - as in the main file, the projection
+    and Solo work with it excluded."""
     cams = [o for o in scene.collection.objects if o.type == 'CAMERA']
     if not cams:
         return
@@ -65,6 +67,10 @@ def _camera_collection(scene):
     for o in cams:
         coll.objects.link(o)
         scene.collection.objects.unlink(o)
+    for vl in scene.view_layers:
+        lc = vl.layer_collection.children.get(coll.name)
+        if lc is not None:
+            lc.exclude = True
 
 
 def _top_left(screen):
