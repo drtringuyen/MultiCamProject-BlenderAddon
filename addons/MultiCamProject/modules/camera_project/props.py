@@ -129,7 +129,7 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
         description="MCP_<name>: the object's projection material (slot 1). Picking another "
                     "one takes it over - it is renamed after the object")
     image_folder: StringProperty(
-        name="Folder", subtype='DIR_PATH',
+        name="Folder", subtype='DIR_PATH', options={'PATH_SUPPORTS_BLEND_RELATIVE'},
         update=lambda self, context: _on_folder(self, context),
         description="Folder holding all camera photos, matched by file / camera name. "
                     "Picking it relinks every camera whose photo is missing")

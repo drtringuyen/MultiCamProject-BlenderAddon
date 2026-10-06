@@ -364,15 +364,27 @@ def make_dirs():
     """Bake + export folders of every scene that uses the add-on."""
     if not bpy.data.filepath:
         return None
+    made = False
     for scene in bpy.data.scenes:
         try:
             if _is_project(scene):
                 for role in MADE:
                     if holder(scene, role)[0] is not None:
-                        make_dir(scene, role)
+                        made = bool(make_dir(scene, role)) or made
         except Exception as e:      # never break a load / save over a folder
             print(f"[MultiCamProject] folders skipped: {e}")
+    if made:
+        _redraw()
     return None
+
+
+def _redraw():
+    """The sidebars drew the folder red before it was made, and nothing redraws them."""
+    wm = bpy.context.window_manager
+    for win in (wm.windows if wm else ()):
+        for area in win.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
 
 
 def _startup():
