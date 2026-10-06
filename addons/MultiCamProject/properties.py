@@ -1,5 +1,5 @@
 import bpy
-from bpy.props import BoolProperty, StringProperty, IntProperty
+from bpy.props import BoolProperty, StringProperty, IntProperty, PointerProperty
 
 
 class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
@@ -22,6 +22,22 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="Current addon version",
         default="0.0.1"
     )
+
+    # collection roles (roles.py): empty = found by the usual name
+    objects_collection: PointerProperty(
+        type=bpy.types.Collection, name="Objects",
+        description="The collection of the objects being worked on. Empty = the one named "
+                    "OBJECTS")
+    originals_collection: PointerProperty(
+        type=bpy.types.Collection, name="Original Mesh",
+        description="Where Remesh puts the originals (high polys). Empty = the one named "
+                    "Original Mesh")
+    export_collection: PointerProperty(
+        type=bpy.types.Collection, name="Export",
+        description="The collection 07 exports and lists. Empty = the one named EXPORT")
+    cameras_collection: PointerProperty(
+        type=bpy.types.Collection, name="Cameras",
+        description="The camera collection. Empty = every collection holding only cameras")
 
 
 def register():

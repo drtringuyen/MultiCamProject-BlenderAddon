@@ -4,6 +4,7 @@ import os
 
 import bpy
 
+from ... import roles
 from . import core, operators as ops
 
 
@@ -41,6 +42,7 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
         if core.is_work_window(context.scene):
             draw_work(layout, context)
             return
+        draw_roles(layout, context)
         obj = context.active_object
         if obj is not None and obj.type == 'MESH' and not obj.library and core.out_record(obj) is None:
             box = layout.box().column(align=True)
@@ -69,6 +71,25 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
             sub.active = bool(core.saved_window(o))
             sub.label(text=ftext, icon=ficon)
             draw_row_button(row, o, relink=True)
+
+
+def draw_roles(layout, context):
+    """Which collection plays which role (the EXPORT header's buttons, 07, Remesh): picked
+    here, or found by the usual name when empty."""
+    scene, vl = context.scene, context.view_layer
+    props = scene.multicamproject_props
+    box = layout.box().column(align=True)
+    box.label(text="Collections", icon='OUTLINER_COLLECTION')
+    for role in roles.ORDER:
+        attr, label, icon, _names = roles.ROLES[role]
+        row = box.row(align=True)
+        split = row.split(factor=0.38, align=True)
+        split.label(text=label, icon=icon)
+        split.prop(props, attr, text="")
+        if getattr(props, attr) is None:
+            hint = box.row()
+            hint.active = False
+            hint.label(text=f"auto: {roles.auto_text(scene, vl, role)}")
 
 
 # ---------------------------------------------------------------- pieces for other panels

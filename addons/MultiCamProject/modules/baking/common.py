@@ -275,8 +275,10 @@ def _in_scene(coll, root):
 
 
 def export_collection(scene):
-    """The EXPORT collection, only when it is part of `scene`."""
-    coll = bpy.data.collections.get(EXPORT)
+    """The EXPORT collection (picked in the Linking panel, else named EXPORT), only when it
+    is part of `scene`."""
+    from ... import roles
+    coll = roles.find(scene, 'EXPORT')
     if coll is None or not _in_scene(coll, scene.collection):
         return None
     return coll

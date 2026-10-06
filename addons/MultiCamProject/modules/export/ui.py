@@ -2,7 +2,7 @@
 rows - never in a popup."""
 import bpy
 
-from ... import module_manager
+from ... import module_manager, roles
 from ..baking import common, naming
 from ..baking.ui import draw_final_toggle, draw_resolution
 from . import checks, status
@@ -266,13 +266,12 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
                     icon='COLLECTION_COLOR_03')
         right = split.row(align=True)
         right.alignment = 'RIGHT'
-        if module_manager.is_loaded("camera_project"):
-            from ..camera_project import core as cp
-            vl = bpy.context.view_layer
-            if cp.camera_collections(scene, vl):
-                shown = cp.cameras_shown(scene, vl)
-                right.operator("multicamproject.toggle_cameras", text="", depress=shown,
-                               icon='OUTLINER_OB_CAMERA')
+        vl = bpy.context.view_layer
+        for role in roles.ORDER:            # Objects, Original Mesh, Export, Cameras
+            if roles.collections(scene, vl, role):
+                right.operator("multicamproject.toggle_collection", text="",
+                               depress=roles.shown(scene, vl, role),
+                               icon=roles.ROLES[role][2]).role = role
         _scene_label(right, scene, es)
 
     def _draw_info(self, layout, scene, es, scene_row=True):

@@ -185,12 +185,18 @@ def use_existing(context, low, high):
 # ---------------------------------------------------------------- the Remesh button
 
 def _original_collection(scene):
-    coll = bpy.data.collections.get(ORIGINAL_COLLECTION)
+    """The originals' collection: picked in the Linking panel, else "Original Mesh"."""
+    from ... import roles
+    coll = roles.find(scene, 'ORIGINALS')
     if coll is None:
         coll = bpy.data.collections.new(ORIGINAL_COLLECTION)
-    if coll.name not in scene.collection.children:
+    if not _in_scene(coll, scene.collection):
         scene.collection.children.link(coll)
     return coll
+
+
+def _in_scene(coll, root):
+    return coll == root or any(_in_scene(coll, c) for c in root.children)
 
 
 def _remove_gn(obj):

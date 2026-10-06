@@ -338,7 +338,8 @@ def delete_scene(target, keep):
 def ensure_export_collection(scene):
     coll = common.export_collection(scene)
     if coll is None:
-        coll = bpy.data.collections.get(common.EXPORT)
+        from ... import roles
+        coll = roles.find(scene, 'EXPORT')
         if coll is None:
             coll = bpy.data.collections.new(common.EXPORT)
         scene.collection.children.link(coll)

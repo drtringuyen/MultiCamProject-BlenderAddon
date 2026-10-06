@@ -3,6 +3,7 @@ import os
 import bpy
 from bpy.props import StringProperty
 
+from ... import roles
 from ..baking import cache, common, jobs
 from . import autofix, fbx, fixes, status
 
@@ -32,6 +33,41 @@ def select_and_frame_row(context, es):
                 with context.temp_override(area=area, region=region):
                     bpy.ops.view3d.view_selected()
             break
+
+
+class MULTICAMPROJECT_OT_ToggleCollection(bpy.types.Operator):
+    """Hide / show a collection role (the eye; showing also includes an excluded one).
+    Set which collection plays which role in the Linking panel"""
+    bl_idname = "multicamproject.toggle_collection"
+    bl_label = "Hide / Show Collection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    role: bpy.props.EnumProperty(items=[(k, v[1], "") for k, v in roles.ROLES.items()],
+                                 options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        colls = roles.collections(context.scene, context.view_layer, props.role)
+        label = roles.ROLES[props.role][1]
+        if not colls:
+            return f"No {label} collection (pick one in the Linking panel)"
+        names = ", ".join(c.name for c, _lc in colls)
+        verb = "Hide" if roles.shown(context.scene, context.view_layer, props.role) else "Show"
+        extra = (" (the Outliner folds the cameras; they still project and are scored)"
+                 if props.role == 'CAMERAS' else "")
+        return f"{verb} {label}: {names}{extra}"
+
+    def execute(self, context):
+        sc, vl = context.scene, context.view_layer
+        show = not roles.shown(sc, vl, self.role)
+        colls = roles.set_shown(sc, vl, self.role, show)
+        if not colls:
+            self.report({'WARNING'}, f"No {roles.ROLES[self.role][1]} collection - pick one "
+                                     "in the Linking panel")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{'Shown' if show else 'Hidden'}: "
+                              + ", ".join(c.name for c, _lc in colls))
+        return {'FINISHED'}
 
 
 class MULTICAMPROJECT_OT_ExportAdd(bpy.types.Operator):
@@ -684,6 +720,7 @@ class MULTICAMPROJECT_OT_ExportApplyDecimate(bpy.types.Operator):
 
 
 _classes = (MULTICAMPROJECT_OT_ExportFixObject, MULTICAMPROJECT_OT_ExportApplyDecimate,
+            MULTICAMPROJECT_OT_ToggleCollection,
             MULTICAMPROJECT_OT_ExportMakeUV, MULTICAMPROJECT_OT_ExportAdd, MULTICAMPROJECT_OT_ExportRemove,
             MULTICAMPROJECT_OT_ExportRename, MULTICAMPROJECT_OT_ExportFixTransforms,
             MULTICAMPROJECT_OT_ExportUpdateOutdated, MULTICAMPROJECT_OT_ExportBakeMissing,
