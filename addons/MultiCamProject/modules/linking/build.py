@@ -33,6 +33,18 @@ def _world(o):
     return m
 
 
+def _add_decimate(obj):
+    """The Decimate (first in the stack, preview on) on a 0C copy that came without one."""
+    if obj is None:
+        return
+    try:
+        wf = importlib.import_module(f"{settings['addon']}.modules.remesh.workflow")
+        if wf.decimate_in_window(obj):
+            wf.ensure_stack(obj)
+    except Exception as e:
+        print(f"[MultiCamProject] work window: Decimate not added: {e}")
+
+
 def _mute_pending(obj):
     if obj is None:
         return
@@ -187,6 +199,8 @@ def _build():
         if scene.collection.objects.get(o.name) is None:
             scene.collection.objects.link(o)
     obj = bpy.data.objects.get(settings["object"])
+    if settings.get("start") == 'REMESH':
+        _add_decimate(obj)      # 0C's window button: the Decimate lives only here
     _mute_pending(obj)          # before anything evaluates: an undecided Decimate's GN is off
     _apply_world(keep)
     # the `transform` empty, other parents and anything else that came along: not needed

@@ -194,6 +194,12 @@ class MULTICAMPROJECT_OT_WorkCancel(bpy.types.Operator):
         obj = _target(context, self.object_name)
         if obj is not None:
             core.cancel(obj)
+            try:        # a 0C window copy whose Decimate never came back: its GN show again
+                from ..remesh import workflow as wf
+                if wf.decimate_in_window(obj):
+                    wf.set_gn(obj, True)
+            except ImportError:
+                pass
         return {'FINISHED'}
 
 
@@ -430,7 +436,9 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         if need_setup and not any(o.type == 'CAMERA' for o in context.scene.objects):
             self.report({'WARNING'}, "No camera in the scene: 0B skipped")
             need_setup = False
-        copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO')
+        # no Decimate here: the window adds it, decides and applies it (it never comes back)
+        copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO',
+                                      decimate=self.mode != 'REMESH')
         for w in warnings:
             self.report({'WARNING'}, w)
         # the new object's own name (MCP_ / MAT_ / textures follow), into EXPORT; the
@@ -445,8 +453,8 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         if need_setup:          # 0B on the copy, called directly (bpy.ops would evaluate
             for w in wf.setup_projection(copy, scene):   # the whole scan first)
                 self.report({'WARNING'}, w)
-            if wf.decimate_pending(copy):
-                wf.set_gn(copy, False)      # its GN waits for the Decimate as after 0C
+            if self.mode == 'REMESH':
+                wf.set_gn(copy, False)      # its GN waits for the Decimate (in the window)
         if exists and self.existing == 'OPEN':
             return self._open_existing(copy, obj, path)
         try:

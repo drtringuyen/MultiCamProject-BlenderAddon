@@ -147,6 +147,13 @@ def ensure_stack(obj, applied_ok=True):
 APPLIED_KEY = "multicamproject_decimated"   # on the object: the Decimate was applied (03)
 
 
+def decimate_in_window(obj):
+    """A copy from 0C's window button: no Decimate here (the window has it), not applied
+    yet - its GN stay muted until Receive brings the decimated mesh."""
+    return (obj is not None and obj.type == 'MESH' and is_copy(obj) and not is_retopo(obj)
+            and decimate_modifier(obj) is None and not obj.get(APPLIED_KEY))
+
+
 def decimate_pending(obj):
     """A Remesh copy whose Decimate is not decided yet: the object is locked (only the
     Decimate, 02 Protect and the view) and its GN modifiers are muted until Apply."""
@@ -564,10 +571,11 @@ def is_retopo(obj):
     return bool(d is not None and d.retopo)
 
 
-def make_copy(context, obj, retopo=False):
+def make_copy(context, obj, retopo=False, decimate=True):
     """The Remesh button (0C), or with `retopo` 0D Retopo: the same, but the copy gets
     a plane - or nothing, per the 0D option (retopo_plane) - instead of the scan's mesh, and no Decimate. Returns (copy,
-    warnings). Object Mode only."""
+    warnings). Object Mode only. `decimate` False (0C's window button): no Decimate here -
+    the work window adds it and applies it, so the main file never evaluates it."""
     if is_handmade(obj):
         raise RuntimeError(HANDMADE_TEXT)
     scene = context.scene
@@ -620,8 +628,12 @@ def make_copy(context, obj, retopo=False):
         copy.vertex_groups.clear()      # the scan's groups: no weights on the plane
         for m in [m for m in copy.modifiers if m.type != 'NODES']:
             copy.modifiers.remove(m)    # Decimate / Snap / bake helpers: not for a retopo
-    else:
+    elif decimate:
         ensure_stack(copy)
+        clear_custom_normals(copy)
+    else:
+        if copy.vertex_groups.get(VG_PROTECT) is None:
+            copy.vertex_groups.new(name=VG_PROTECT)     # 02 Protect works here too
         clear_custom_normals(copy)
     if module_manager.is_loaded("camera_project") and was_setup:
         with quiet(copy):
@@ -632,6 +644,6 @@ def make_copy(context, obj, retopo=False):
             gn_final.ensure_modifier(copy)      # its own wrapper, last in the stack
         from ..baking import route
         route.after_step(copy, 'RETOPO' if retopo else 'ORIGINAL')
-    if not retopo and decimate_modifier(copy) is not None:
+    if not retopo and (decimate_modifier(copy) is not None or not decimate):
         set_gn(copy, False)             # the Decimate is decided first (decimate_pending)
     return copy, warnings
