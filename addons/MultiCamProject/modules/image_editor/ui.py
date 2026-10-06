@@ -1,6 +1,6 @@
 import bpy
 
-from . import props, session, tool
+from . import lasso_ops, props, session, tool
 
 
 def draw_brush(context, layout, header=False):
@@ -38,7 +38,8 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
         layout = self.layout
         s = session.active()
         if not tool.tool_active(context):
-            layout.operator("multicamproject.liquify_tool", icon='BRUSH_DATA')
+            layout.operator("multicamproject.liquify_tool", icon='BRUSH_DATA',
+                            text="Liquify Tool (L)")
         if s is None:
             self._draw_idle(context, layout)
             return
@@ -81,6 +82,9 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
         row = layout.row()
         row.scale_y = 1.4
         row.operator("multicamproject.liquify_start", icon='MOD_WARP')
+        row = layout.row(align=True)
+        row.label(text="Preview")
+        row.prop(props.settings(context), "preview_res", expand=True)
         cams = session.cameras_showing(img)
         if cams:
             col = layout.column(align=True)
@@ -94,9 +98,77 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
         draw_brush(context, layout)
 
 
+class MULTICAMPROJECT_PT_Lasso(bpy.types.Panel):
+    bl_label = "Lasso"
+    bl_idname = "MULTICAMPROJECT_PT_lasso"
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+
+    def draw_header(self, context):
+        self.layout.label(icon='SELECT_SET')
+
+    def draw(self, context):
+        layout = self.layout
+        row = layout.row()
+        row.scale_y = 1.4
+        row.operator("multicamproject.lasso", icon='SELECT_SET')
+        draw_lasso_settings(context, layout, context.space_data.image)
+        img = context.space_data.image
+        if img is not None and img.is_dirty:
+            layout.label(text="Unsaved pixels - Image > Save", icon='ERROR')
+
+
+def draw_lasso_settings(context, layout, img):
+    """Hole fill + Lasso Undo + key hints - Image Editor and 3D Viewport panels."""
+    st = props.lasso_settings(context)
+    row = layout.row(align=True)
+    row.prop(st, "fill", text="Hole")
+    sub = row.row(align=True)
+    sub.active = st.fill != 'TRANSPARENT'
+    sub.prop(st, "color", text="")
+    if st.fill == 'AUTO' and img is not None:
+        col = layout.column(align=True)
+        col.active = False
+        col.label(text=f"{img.name}: " + ("transparent hole" if lasso_ops.has_alpha(img)
+                                         else "no alpha - colour fill"))
+    n = lasso_ops.undo_steps()
+    layout.operator("multicamproject.lasso_undo", icon='LOOP_BACK',
+                    text=f"Lasso Undo ({n})" if n else "Lasso Undo")
+    col = layout.column(align=True)
+    col.active = False
+    col.label(text="K: lasso · click outside: apply, next")
+    col.label(text="G R S · Shift+D stamp · X delete · Ctrl+C/V")
+    col.label(text="Ctrl+Z undo · Enter apply · Esc revert all")
+
+
+class MULTICAMPROJECT_PT_LassoView3D(bpy.types.Panel):
+    """Lasso settings for the soloed camera's photo (K over the camera view)"""
+    bl_label = "Lasso"
+    bl_idname = "MULTICAMPROJECT_PT_lasso_view3d"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_options = {'DEFAULT_CLOSED'}
+
+    def draw_header(self, context):
+        self.layout.label(icon='SELECT_SET')
+
+    def draw(self, context):
+        cam = context.scene.camera
+        img = None
+        if cam is not None and cam.type == 'CAMERA' and len(cam.data.background_images):
+            img = cam.data.background_images[0].image
+        draw_lasso_settings(context, self.layout, img)
+
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_PT_Liquify)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_Lasso)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_LassoView3D)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_LassoView3D)
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_Lasso)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Liquify)

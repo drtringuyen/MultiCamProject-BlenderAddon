@@ -159,6 +159,28 @@ class MULTICAMPROJECT_OT_LiquifyTool(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_LiquifyKey(bpy.types.Operator):
+    """Liquify the photo in this editor: starts Liquify if needed and picks the tool (L)"""
+    bl_idname = "multicamproject.liquify_key"
+    bl_label = "Liquify"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        if not _in_image_editor(context):
+            return False
+        s = session.active()
+        if s is not None:
+            return _space_image(context) == s.preview
+        return session.can_start(_space_image(context)) is None
+
+    def execute(self, context):
+        if session.active() is None:
+            return bpy.ops.multicamproject.liquify_start()
+        _set_tool(context)
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_LiquifyHover(bpy.types.Operator):
     """Keeps the brush circle under the mouse"""
     bl_idname = "multicamproject.liquify_hover"
@@ -373,6 +395,7 @@ _classes = (
     MULTICAMPROJECT_OT_LiquifyUndo,
     MULTICAMPROJECT_OT_LiquifyRedo,
     MULTICAMPROJECT_OT_LiquifyTool,
+    MULTICAMPROJECT_OT_LiquifyKey,
     MULTICAMPROJECT_OT_LiquifyHover,
     MULTICAMPROJECT_OT_LiquifySize,
     MULTICAMPROJECT_OT_LiquifyResize,
@@ -386,14 +409,21 @@ _keymaps = []
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
-    # Enter bakes, Esc cancels - in any Image Editor, with any tool, while a session runs
-    # (their polls fail otherwise, so the keys keep their usual job)
+    # Enter bakes, Esc cancels, Ctrl+Z / Ctrl+Shift+Z undo / redo strokes - in any Image
+    # Editor, with any tool, while a session runs (their polls fail otherwise, so the keys
+    # keep their usual job). L starts Liquify on the shown photo / picks the tool.
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:
         km = kc.keymaps.new(name="Image", space_type='IMAGE_EDITOR')
         for key in ('RET', 'NUMPAD_ENTER'):
             _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_bake", key, 'PRESS')))
         _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_cancel", 'ESC', 'PRESS')))
+        _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_undo", 'Z', 'PRESS',
+                                                 ctrl=True, repeat=True)))
+        _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_redo", 'Z', 'PRESS',
+                                                 ctrl=True, shift=True, repeat=True)))
+        _keymaps.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_LiquifyKey.bl_idname,
+                                                 'L', 'PRESS')))
 
 
 def unregister():

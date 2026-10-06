@@ -1,8 +1,9 @@
 """Liquify in the 3D Viewport, through a soloed camera: the brush paints on the camera's
 background photo where you see it (camview maps the mouse onto the photo).
 
-Started from the Liquify button of a camera row (Camera Project panel): solos the camera if
-needed and starts (or joins) the Liquify session on its photo. Enter bakes, Esc cancels -
+Started from the Liquify button of a camera row (Camera Project panel), or L over a soloed
+camera view (K there starts the lasso, lasso_ops.py): solos the camera if needed and starts
+(or joins) the Liquify session on its photo. Enter bakes, Esc cancels -
 and so does leaving solo for any reason (another camera, leaving camera view or local view,
 another image on the camera, the area closing). Plain middle mouse is blocked: orbiting would
 leave the camera. Keys over the viewport: W R S P B brushes, F / [ ] size, Ctrl+Z /
@@ -15,8 +16,8 @@ from . import camview, props, session, tool
 from .operators import TICK, StrokeMixin
 
 _BRUSH_KEYS = {'W': 'WARP', 'R': 'RECONSTRUCT', 'S': 'SMOOTH', 'P': 'PUCKER', 'B': 'BLOAT'}
-_HEADER = ("Liquify {cam}: LMB paint (Alt: Pucker/Bloat) · W R S P B brush · F / [ ] size · "
-           "Ctrl+Z undo · Enter bake · Esc cancel")
+_HEADER = ("Liquify {cam} ({w}x{h} preview): LMB paint (Alt: Pucker/Bloat) · W R S P B brush · "
+           "F / [ ] size · Ctrl+Z undo · Enter bake · Esc cancel")
 
 running = None          # name of the camera being liquified, for the button's depressed look
 _cursor = {}            # {"area": pointer, "pos": (x, y), "radius": px} while running
@@ -163,7 +164,7 @@ class MULTICAMPROJECT_OT_LiquifyCamera(StrokeMixin, bpy.types.Operator):
         _cursor.update(area=self.area_ptr, pos=None, radius=0.0)
         self._timer = context.window_manager.event_timer_add(TICK, window=context.window)
         context.window_manager.modal_handler_add(self)
-        context.area.header_text_set(_HEADER.format(cam=cam.name))
+        context.area.header_text_set(_HEADER.format(cam=cam.name, w=s.lq.w, h=s.lq.h))
         session.redraw()
         return {'RUNNING_MODAL'}
 
@@ -310,20 +311,68 @@ class MULTICAMPROJECT_OT_LiquifyCamera(StrokeMixin, bpy.types.Operator):
         return {'RUNNING_MODAL'}
 
 
+class MULTICAMPROJECT_OT_CameraKey(bpy.types.Operator):
+    """L: Liquify, K: Lasso the soloed camera's photo"""
+    bl_idname = "multicamproject.camera_key"
+    bl_label = "Liquify / Lasso Soloed Camera"
+    bl_options = {'INTERNAL'}
+
+    tool: bpy.props.EnumProperty(items=[('LIQUIFY', "Liquify", ""), ('LASSO', "Lasso", "")])
+
+    @classmethod
+    def poll(cls, context):
+        # Only over a soloed camera view - anywhere else the key keeps its usual job
+        if context.area is None or context.area.type != 'VIEW_3D' \
+                or context.region is None or context.region.type != 'WINDOW':
+            return False
+        try:
+            _core, ops = _cam_core()
+        except ImportError:
+            return False
+        cam = context.scene.camera
+        return (cam is not None and ops.is_solo(context, cam)
+                and ops.MULTICAMPROJECT_OT_SoloCamera.poll(context))
+
+    def execute(self, context):
+        cam = context.scene.camera.name
+        op = (bpy.ops.multicamproject.liquify_camera if self.tool == 'LIQUIFY'
+              else bpy.ops.multicamproject.lasso_camera)
+        res = op('INVOKE_DEFAULT', camera=cam)
+        return {'FINISHED'} if res & {'RUNNING_MODAL', 'FINISHED'} else {'CANCELLED'}
+
+
 _draw_handle = None
+_keymaps = []
 
 
 def register():
     global _draw_handle
     bpy.utils.register_class(MULTICAMPROJECT_OT_LiquifyCamera)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_CameraKey)
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(_draw, (), 'WINDOW', 'POST_PIXEL')
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:      # None in background mode
+        # "Frames" is handled before the mode keymaps (Object Mode binds K), and its
+        # add-on items come first: the poll lets the keys through outside a solo view.
+        km = kc.keymaps.new(name="Frames")
+        for key, tool_name in (('L', 'LIQUIFY'), ('K', 'LASSO')):
+            kmi = km.keymap_items.new(MULTICAMPROJECT_OT_CameraKey.bl_idname, key, 'PRESS')
+            kmi.properties.tool = tool_name
+            _keymaps.append((km, kmi))
 
 
 def unregister():
     global _draw_handle, running
+    for km, kmi in _keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except (ReferenceError, RuntimeError):
+            pass
+    _keymaps.clear()
     if _draw_handle is not None:
         bpy.types.SpaceView3D.draw_handler_remove(_draw_handle, 'WINDOW')
         _draw_handle = None
     running = None
     _cursor.clear()
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_CameraKey)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_LiquifyCamera)

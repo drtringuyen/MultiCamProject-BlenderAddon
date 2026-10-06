@@ -32,6 +32,15 @@ class Placement:
         v = ry / self.h + 0.5
         return (1.0 - u if self.flip_x else u), (1.0 - v if self.flip_y else v)
 
+    def from_uv(self, u, v):
+        """Inverse of to_uv: region pixels of the photo point (u, v)."""
+        u = 1.0 - u if self.flip_x else u
+        v = 1.0 - v if self.flip_y else v
+        rx = (u - 0.5) * self.w
+        ry = (v - 0.5) * self.h
+        return (self.cx + rx * self.cos - ry * self.sin,
+                self.cy + rx * self.sin + ry * self.cos)
+
     def px_per_uv_x(self):
         return self.w
 

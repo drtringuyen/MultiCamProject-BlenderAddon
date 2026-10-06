@@ -6,13 +6,18 @@ from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
 
 
 def _draw_liquify(layout, cam):
-    """Liquify this camera's photo in solo view (image_editor module; hidden when it is off)."""
+    """Liquify / Lasso this camera's photo in solo view (image_editor module; hidden when it
+    is off)."""
     from ... import module_manager
     if not module_manager.is_loaded("image_editor"):
         return
     from ..image_editor import camera_op
     op = layout.operator("multicamproject.liquify_camera", text="", icon='MOD_WARP',
                          depress=camera_op.running == cam.name)
+    op.camera = cam.name
+    from ..image_editor import lasso_ops
+    op = layout.operator("multicamproject.lasso_camera", text="", icon='SELECT_SET',
+                         depress=lasso_ops.running_camera() == cam.name)
     op.camera = cam.name
 
 
