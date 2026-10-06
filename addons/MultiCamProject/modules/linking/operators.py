@@ -277,7 +277,8 @@ class MULTICAMPROJECT_OT_CreateRoleCollection(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
-    """Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS) and set
+    """Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS), create
+    Original Mesh / EXPORT when they are not in the scene, and set
     every folder to the one holding most of its files - the default folder (or a folder in
     it), else where the files are now. Missing bake / export folders are made"""
     bl_idname = "multicamproject.auto_fill_folders"

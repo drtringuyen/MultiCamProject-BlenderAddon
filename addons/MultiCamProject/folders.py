@@ -414,12 +414,19 @@ def detect(scene, view_layer, role):
 
 
 def auto_fill(scene, view_layer):
-    """Auto Detect and Fill: empty collection pickers, then every role's folder (missing bake
-    / export folders are made). Returns report lines."""
+    """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT made when they
+    are not in the scene, then every role's folder (missing bake / export folders are made).
+    Returns report lines."""
     lines = []
     filled = roles.autofill(scene)
     if filled:
         lines.append("Collections: " + ", ".join(roles.ROLES[r][1] for r in filled))
+    made = []
+    for role in roles.CREATABLE:       # Original Mesh / EXPORT: made when not in the scene
+        if not roles.collections(scene, view_layer, role):
+            made.append(roles.ensure(scene, role).name)
+    if made:
+        lines.append("Added to the scene: " + ", ".join(made))
     for role in roles.ORDER:
         pg, attr = holder(scene, role)
         if pg is None:
