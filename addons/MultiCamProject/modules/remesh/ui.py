@@ -8,6 +8,20 @@ def _res(n):
     return f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
 
 
+def _faces_text(context, obj):
+    """'38,180 / 763,610 faces': after the Decimate / the mesh now (the viewport's
+    evaluation, already there)."""
+    before = len(obj.data.polygons)
+    dec = wf.decimate_modifier(obj)
+    if dec is not None and not dec.show_viewport:     # no preview: the ratio's estimate
+        return f"~{int(before * dec.ratio):,} / {before:,} faces"
+    try:
+        after = len(obj.evaluated_get(context.evaluated_depsgraph_get()).data.polygons)
+    except Exception:
+        return f"{before:,} faces"
+    return f"{after:,} / {before:,} faces"
+
+
 def _draw_decide(layout, context, obj):
     """0C's first step: the Decimate amount is decided and applied before anything else (the
     GN modifiers are muted meanwhile, 02 Protect still works)."""
@@ -23,15 +37,9 @@ def _draw_decide(layout, context, obj):
     row = box.row(align=True)
     row.prop(dec, "show_viewport", text="", emboss=False)
     row.prop(dec, "ratio", text="Amount")
-    try:        # the preview's face count (already evaluated for the viewport)
-        ev = obj.evaluated_get(context.evaluated_depsgraph_get())
-        after = len(ev.data.polygons)
-    except Exception:
-        after = None
     info = box.row()
     info.active = False
-    info.label(text=f"{len(obj.data.polygons):,} -> {after:,} faces" if after is not None
-               else f"{len(obj.data.polygons):,} faces", icon='INFO')
+    info.label(text=_faces_text(context, obj), icon='INFO')
     row = box.row(align=True)
     row.scale_y = 1.4
     row.operator("multicamproject.remesh_apply_decimate", text="Apply Decimate",
@@ -159,8 +167,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.prop(dec, "show_viewport", text="", emboss=False)
             row.prop(dec, "ratio", text="03. Decimate amount")
             row.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
-            box.label(text=f"{len(obj.data.polygons):,} faces · vg_Protect stays · "
-                           "apply before the unwrap", icon='INFO')
+            box.label(text=_faces_text(context, obj), icon='INFO')
         elif obj.get(wf.APPLIED_KEY):
             box.label(text=f"03. Decimate applied: {len(obj.data.polygons):,} faces",
                       icon='CHECKMARK')
