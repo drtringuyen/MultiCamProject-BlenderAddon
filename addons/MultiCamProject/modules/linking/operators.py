@@ -476,17 +476,53 @@ def _next_index(sc):
     return max(found) + 1 if found else 0
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+class MULTICAMPROJECT_OT_WorkSave(bpy.types.Operator):
+    """Save this work window as the file the 0C / 0D button named (Bake Folder/<name>.blend)
+    - the main file can open it again from then on"""
+    bl_idname = "multicamproject.work_save"
+    bl_label = "Save Work Window"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return bool(core.save_target(context.scene))    # else Ctrl+S is Blender's own
+
+    def execute(self, context):
+        path = core.save_target(context.scene)
+        try:
+            os.makedirs(os.path.dirname(path), exist_ok=True)
+            bpy.ops.wm.save_as_mainfile(filepath=path, check_existing=False)
+        except Exception as e:
+            self.report({'ERROR'}, f"Not saved: {e}")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"Saved {os.path.basename(path)}")
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)
 
 
+_keymaps = []
+
+
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc:      # None in background mode
+        # Ctrl+S in an unsaved work window saves it where the 0C / 0D button said; the poll
+        # fails everywhere else, so Blender's own Save runs as usual
+        km = kc.keymaps.new(name="Window")
+        kmi = km.keymap_items.new(MULTICAMPROJECT_OT_WorkSave.bl_idname, 'S', 'PRESS', ctrl=True)
+        _keymaps.append((km, kmi))
 
 
 def unregister():
+    for km, kmi in _keymaps:
+        km.keymap_items.remove(kmi)
+    _keymaps.clear()
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

@@ -15,9 +15,11 @@ from mathutils import Matrix
 with open(sys.argv[sys.argv.index("--") + 1], encoding="utf-8") as _f:
     settings = json.load(_f)
 
-# core.WORK_KEY / WORK_OBJECT_KEY / WORK_ID_KEY / WORK_BAKES_KEY (this script runs outside the add-on)
+# core.WORK_KEY / WORK_OBJECT_KEY / WORK_ID_KEY / WORK_BAKES_KEY / WORK_SAVE_AS_KEY (this script
+# runs outside the add-on)
 SCENE_KEYS = {"main": "multicamproject_work_of", "object": "multicamproject_work_object",
-              "id": "multicamproject_work_id", "work_bakes": "multicamproject_work_bakes"}
+              "id": "multicamproject_work_id", "work_bakes": "multicamproject_work_bakes",
+              "save_as": "multicamproject_work_save_as"}
 
 
 def _world(o):
@@ -103,7 +105,6 @@ def _top_left(screen):
 
 ADDON_TAB = "MultiCamProject"      # the sidebar tab the window opens on
 _tab_tries = [0]
-_save_as = [""]     # the 0C / 0D buttons' work file: saved once the window is set up
 
 
 def _input(mod, name):
@@ -134,12 +135,7 @@ def _addon_tab():
                         pass
                     done = done and region.active_panel_category == ADDON_TAB
                     region.tag_redraw()
-    if done or _tab_tries[0] >= 20:
-        if _save_as[0]:             # one save, with the tab in it (reopens on it too)
-            _save(_save_as[0])
-            _save_as[0] = ""
-        return None
-    return 0.25
+    return None if done or _tab_tries[0] >= 20 else 0.25
 
 
 def _layout():
@@ -198,7 +194,7 @@ def _build():
     bpy.data.batch_remove(list(bpy.data.collections))
     bpy.data.orphans_purge(do_recursive=True)
     for k, key in SCENE_KEYS.items():
-        scene[key] = settings[k]
+        scene[key] = settings.get(k, "")
     _scene_settings(scene)
     r = scene.render
     r.resolution_x, r.resolution_y, r.pixel_aspect_x, r.pixel_aspect_y = settings["render"]
@@ -237,24 +233,13 @@ def _build():
                     region = next(r for r in area.regions if r.type == 'WINDOW')
                     with bpy.context.temp_override(window=win, area=area, region=region):
                         bpy.ops.view3d.view_selected()
-    if obj is not None and settings.get("save_as"):
-        _save_as[0] = settings["save_as"]    # saved once, after the sidebar tab (_addon_tab)
-    _tab_tries[0] = 0           # the sidebar tab, then the save - also when the layout failed
+    # the 0C / 0D buttons' file is not written now (~5 s for a scan): Ctrl+S / Save saves
+    # it there (scene key save_as, core.save_target)
+    _tab_tries[0] = 0           # the sidebar tab - also when the layout failed
     bpy.app.timers.register(_addon_tab, first_interval=0.3)
     if obj is not None and settings.get("start"):
         _start(settings["start"])
     return None
-
-
-def _save(path):
-    """The window buttons of 0C / 0D: the window is saved at once (Bake Folder/<typed name>.blend),
-    so the main file can open it again - its save handlers record it as a saved window."""
-    try:
-        win = bpy.context.window_manager.windows[0]
-        with bpy.context.temp_override(window=win):
-            bpy.ops.wm.save_as_mainfile(filepath=path, check_existing=False)
-    except Exception as e:  # never stop the window over the save
-        print(f"[MultiCamProject] work window: not saved as {path}: {e}")
 
 
 def _start(start):

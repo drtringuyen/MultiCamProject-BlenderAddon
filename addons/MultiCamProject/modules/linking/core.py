@@ -37,6 +37,7 @@ OUT_KEY = "multicamproject_out"             # main object: the send-out record (
 WORK_KEY = "multicamproject_work_of"        # work window scene: the main .blend
 WORK_OBJECT_KEY = "multicamproject_work_object"     # work window scene: the object's name
 WORK_ID_KEY = "multicamproject_work_id"     # work window scene: the send-out id
+WORK_SAVE_AS_KEY = "multicamproject_work_save_as"   # work window scene: where Ctrl+S saves it
 WORK_BAKES_KEY = "multicamproject_work_bakes"   # work window scene: main bake folder/_work/<obj>
 WINDOW_FILE = "window.json"     # the saved work file's path, written by the window
 WORK_SUBDIR = "_work"           # in the main bake folder: saved work windows' bakes
@@ -337,6 +338,13 @@ def cancel(obj):
 
 
 # ---------------------------------------------------------------- work window: Send Back
+
+def save_target(scene):
+    """Where an unsaved work window saves on Ctrl+S / Save ('' = Blender's own Save As)."""
+    if bpy.data.filepath or not is_work_window(scene):
+        return ""
+    return scene.get(WORK_SAVE_AS_KEY, "")
+
 
 def work_object(scene):
     obj = bpy.data.objects.get(scene.get(WORK_OBJECT_KEY, ""))

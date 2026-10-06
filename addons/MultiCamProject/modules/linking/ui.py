@@ -210,9 +210,16 @@ def draw_work(layout, context):
     info.active = False
     info.label(text="Mesh, painting, cameras + bakes made here · Send Back any time",
                icon='INFO')
+    target = core.save_target(scene)
+    if target:      # the 0C / 0D button's file: saved on Ctrl+S / here, not on opening
+        row = box.row(align=True)
+        row.operator(ops.MULTICAMPROJECT_OT_WorkSave.bl_idname,
+                     text=f"Save as {os.path.basename(target)} (Ctrl+S)", icon='FILE_TICK')
     if bpy.data.filepath:
         info.label(text=f"Saved: {os.path.basename(bpy.data.filepath)} (main file can open it)",
                    icon='FILE_BLEND')
+    elif target:
+        info.label(text="Not saved yet - Send Back works without it", icon='WINDOW')
     else:
         info.label(text="Unsaved · saving keeps it linked (bakes -> bake folder/_work)",
                    icon='WINDOW')
