@@ -631,13 +631,6 @@ class MULTICAMPROJECT_OT_RemeshApplyDecimate(bpy.types.Operator):
             return False
         return True
 
-    def invoke(self, context, event):
-        dec = wf.decimate_modifier(context.active_object)
-        return context.window_manager.invoke_confirm(
-            self, event, title="Apply Decimate",
-            message=f"Apply the Decimate (ratio {dec.ratio:.2f}) into the mesh? "
-                    "Unwrap uv_normal after this.", confirm_text="Apply")
-
     def execute(self, context):
         try:
             before, after = wf.apply_decimate(context, context.active_object)
