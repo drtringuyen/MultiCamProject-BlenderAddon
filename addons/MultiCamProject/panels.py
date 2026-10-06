@@ -77,7 +77,7 @@ def _new_name(row, context):
     cell = row.row(align=True)
     cell.ui_units_x = 5
     cell.alert = not props.new_object_name.strip()
-    cell.prop(props, "new_object_name", text="", placeholder="New name")
+    cell.prop(props, "new_object_name", text="", placeholder="Object name")
 
 
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
