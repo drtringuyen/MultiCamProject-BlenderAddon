@@ -476,6 +476,26 @@ def detect(scene, view_layer, role):
     return os.path.join(_rel(best), ""), best_n, len(wanted)
 
 
+def wire_scan_materials(scene, view_layer):
+    """Setup File IO: every scan material of the Objects (and Original Mesh) objects shows
+    its image through a Principled BSDF - image -> Base Color -> Output - instead of an
+    unlit Emission (left in the tree, disconnected). The add-on's own materials and linked
+    ones are skipped. Returns the names wired."""
+    try:
+        from .modules.baking import source_mats
+        from .modules.camera_project import core as cp
+    except ImportError:
+        return []
+    mats = []
+    for role in ('OBJECTS', 'ORIGINALS'):
+        for obj in _role_objects(scene, view_layer, role):
+            for slot in getattr(obj, "material_slots", ()):
+                m = slot.material
+                if m is not None and not m.library and not cp._is_ours(m) and m not in mats:
+                    mats.append(m)
+    return [m.name for m in mats if source_mats.wire(m)]
+
+
 def auto_fill(scene, view_layer):
     """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT made when they
     are not in the scene, then every role's folder (missing bake / export folders are made).
@@ -503,6 +523,10 @@ def auto_fill(scene, view_layer):
         found = f" ({n}/{total} files)" if total else ""
         lines.append(f"{LABELS[role]}: {value}{found}")
     _DIRS.clear()
+    wired = wire_scan_materials(scene, view_layer)
+    if wired:
+        lines.append(f"{len(wired)} material(s) wired to the Principled BSDF: "
+                     + ", ".join(wired[:5]) + (" ..." if len(wired) > 5 else ""))
     n = relink_missing(scene)
     if n:
         lines.append(f"{n} missing texture(s) / photo(s) relinked")
