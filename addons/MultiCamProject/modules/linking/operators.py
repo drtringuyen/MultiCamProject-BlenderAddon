@@ -308,7 +308,7 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
     """One click: 0B Setup Camera Projection (when not done yet), 0C Remesh / 0D Retopo,
     the new low poly named ENV_<prefix>.<next ##>_<New Object Name> (the original keeps its
     name), then Send Out - a work window opens with it, its original (the Bake Source) and
-    its cameras, in the PolyCut tool / on the retopo, saved as Bake Folder/<name>.blend.
+    its cameras, in the PolyCut tool / on the retopo, saved as Bake Folder/<typed name>.blend.
     Receive it back here"""
     bl_idname = "multicamproject.work_remesh_out"
     bl_label = "Remesh + Send Out"
@@ -370,7 +370,9 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         bake_dir = folders.folder(scene, 'ORIGINALS')
         if not bake_dir or not os.path.isdir(bake_dir):
             return None, f"Bake Folder not found: {bake_dir or '(empty)'}"
-        return new_name, os.path.join(bake_dir, new_name + ".blend")
+        # the file is named by the typed name only (Wall_Window.blend), not the ENV_ name
+        short = naming.clean_name(scene.multicamproject_props.new_object_name)
+        return new_name, os.path.join(bake_dir, short + ".blend")
 
     def invoke(self, context, event):
         new_name, path = self._target(context)

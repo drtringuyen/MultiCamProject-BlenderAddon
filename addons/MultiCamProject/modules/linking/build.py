@@ -164,7 +164,7 @@ def _build():
 
 
 def _save(path):
-    """The window buttons of 0C / 0D: the window is saved at once (Bake Folder/<object>.blend),
+    """The window buttons of 0C / 0D: the window is saved at once (Bake Folder/<typed name>.blend),
     so the main file can open it again - its save handlers record it as a saved window."""
     try:
         win = bpy.context.window_manager.windows[0]
