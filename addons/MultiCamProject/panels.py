@@ -86,16 +86,15 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
         self.layout.label(icon='SETTINGS')
 
     def draw(self, context):
-        from . import module_manager as mm
+        from . import module_manager as mm, gate
         layout = self.layout
         obj = context.active_object
         mesh = obj is not None and obj.type == 'MESH'
-        if mm.is_loaded("linking"):
-            # the IO Folders & Collections panel's Auto Detect and Fill Folders
-            row = layout.row(align=True)
-            row.scale_y = 1.3
-            row.operator("multicamproject.auto_fill_folders", text="Setup File IO",
-                         icon='VIEWZOOM')
+        if not gate.ready(context.scene):
+            # locked: [Name Prefix] [Setup File IO] first, everything else greyed out
+            gate.draw_start(layout, context)
+            layout = layout.column()
+            layout.enabled = False
         if not mesh:
             layout.label(text="Select a mesh", icon='INFO')
         cams = any(o.type == 'CAMERA' for o in context.scene.objects)

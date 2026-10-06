@@ -1,6 +1,6 @@
 import bpy
 
-from ... import module_manager
+from ... import gate, module_manager
 from . import tool, workflow as wf
 
 
@@ -27,6 +27,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         self.layout.label(icon='MOD_REMESH')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         obj = context.active_object
         d = obj.multicamproject_bake

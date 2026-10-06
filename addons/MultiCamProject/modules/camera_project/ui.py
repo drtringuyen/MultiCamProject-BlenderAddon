@@ -1,6 +1,7 @@
 import bpy
 from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
+from ... import gate
 from . import core
 from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
 
@@ -54,6 +55,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         self.layout.label(icon='BRUSH_DATA')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         obj = context.active_object
         d = core.data(obj)

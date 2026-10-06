@@ -4,7 +4,7 @@ import os
 
 import bpy
 
-from ... import folders, roles
+from ... import folders, gate, roles
 from . import core, operators as ops
 
 
@@ -39,6 +39,7 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
         self.layout.label(icon='LINKED')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         if core.is_work_window(context.scene):
             draw_work(layout, context)

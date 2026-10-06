@@ -1,5 +1,6 @@
 import bpy
 
+from ... import gate
 from . import common, fingerprint, gn_final, matsync, normal, operators, route
 
 
@@ -76,6 +77,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         self.layout.label(icon='RENDER_STILL')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         from . import jobs
         if jobs.busy():

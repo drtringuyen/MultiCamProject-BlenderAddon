@@ -287,6 +287,10 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
+        from ... import gate
+        if not gate.prefix_ok(context.scene):
+            cls.poll_message_set("Fill in the Name Prefix first")
+            return False
         return context.mode == 'OBJECT'
 
     def execute(self, context):
@@ -295,6 +299,7 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
             return {'CANCELLED'}
         for line in folders.auto_fill(context.scene, context.view_layer):
             self.report({'INFO'}, line)
+        context.scene.multicamproject_props.file_io_done = True     # the add-on unlocks
         return {'FINISHED'}
 
 

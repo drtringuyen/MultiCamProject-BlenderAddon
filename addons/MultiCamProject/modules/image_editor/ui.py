@@ -1,5 +1,6 @@
 import bpy
 
+from ... import gate
 from . import lasso_ops, props, session, tool
 
 
@@ -35,6 +36,7 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
         self.layout.label(icon='MOD_WARP')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         s = session.active()
         if not tool.tool_active(context):
@@ -109,6 +111,7 @@ class MULTICAMPROJECT_PT_Lasso(bpy.types.Panel):
         self.layout.label(icon='SELECT_SET')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         row = layout.row()
         row.scale_y = 1.4
@@ -155,6 +158,7 @@ class MULTICAMPROJECT_PT_LassoView3D(bpy.types.Panel):
         self.layout.label(icon='SELECT_SET')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         cam = context.scene.camera
         img = None
         if cam is not None and cam.type == 'CAMERA' and len(cam.data.background_images):

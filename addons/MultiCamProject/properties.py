@@ -39,6 +39,10 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         type=bpy.types.Collection, name="Cameras",
         description="The camera collection. Empty = every collection holding only cameras")
 
+    file_io_done: BoolProperty(
+        name="File IO Set Up", default=False,
+        description="Setup File IO ran in this file (gate.py: the add-on unlocks)")
+
     # role folders (folders.py; the bake and export folders live in their modules)
     scan_textures_folder: StringProperty(
         name="Scan Textures", default="//00.Scan/01.FBX/", subtype='DIR_PATH',

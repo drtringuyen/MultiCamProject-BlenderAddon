@@ -2,7 +2,7 @@
 rows - never in a popup."""
 import bpy
 
-from ... import module_manager, roles
+from ... import gate, module_manager, roles
 from ..baking import common, naming
 from ..baking.ui import draw_final_toggle, draw_resolution
 from . import checks, status
@@ -152,6 +152,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         self.layout.label(icon='EXPORT')
 
     def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         if not module_manager.is_loaded("baking"):
             layout.label(text="Needs the Baking module", icon='ERROR')
