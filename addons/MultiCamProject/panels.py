@@ -125,6 +125,9 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row = col.row(align=True)
             row.operator("multicamproject.remesh", text="0C. Remesh",
                          icon='CHECKMARK' if low else 'MOD_REMESH')
+            if mm.is_loaded("linking"):     # 0B + 0C + Send Out in one click
+                row.operator("multicamproject.work_remesh_out", text="",
+                             icon='WINDOW').mode = 'REMESH'
             row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
             if mesh and mm.is_loaded("baking") and obj.multicamproject_bake.bake_source is not None:
                 row.operator("multicamproject.unlink_original", text="", icon='X')
@@ -133,6 +136,9 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row = col.row(align=True)
             row.operator("multicamproject.retopo_empty", text="0D. Retopo Empty",
                          icon='CHECKMARK' if retopo else 'MESH_PLANE')
+            if mm.is_loaded("linking"):     # 0B + 0D + Send Out in one click
+                row.operator("multicamproject.work_remesh_out", text="",
+                             icon='WINDOW').mode = 'RETOPO'
             row.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
 
         hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade

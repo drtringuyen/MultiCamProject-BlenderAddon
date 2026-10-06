@@ -156,7 +156,27 @@ def _build():
         _layout()
     except Exception as e:      # never stop the window over its layout
         print(f"[MultiCamProject] work window: layout skipped: {e}")
+    if obj is not None and settings.get("start"):
+        _start(settings["start"])
     return None
+
+
+def _start(start):
+    """Remesh / Retopo + Send Out: the window opens in the PolyCut tool / on the retopo."""
+    op = {'REMESH': "remesh_enter_tool", 'RETOPO': "retopo_focus"}.get(start)
+    if op is None:
+        return
+    for win in bpy.context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            region = next(r for r in area.regions if r.type == 'WINDOW')
+            try:
+                with bpy.context.temp_override(window=win, area=area, region=region):
+                    getattr(bpy.ops.multicamproject, op)()
+            except Exception as e:  # never stop the window over the tool
+                print(f"[MultiCamProject] work window: {op} skipped: {e}")
+            return
 
 
 bpy.app.timers.register(_build, first_interval=0.2)

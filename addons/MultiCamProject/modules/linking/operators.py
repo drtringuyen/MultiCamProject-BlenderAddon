@@ -298,7 +298,73 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
+    """One click: 0B Setup Camera Projection (when not done yet), 0C Remesh / 0D Retopo Empty,
+    then Send Out of the new low poly - a work window opens with it, its original (the Bake
+    Source) and its cameras, in the PolyCut tool / on the retopo. Receive it back here"""
+    bl_idname = "multicamproject.work_remesh_out"
+    bl_label = "Remesh + Send Out"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    mode: bpy.props.EnumProperty(
+        items=(('REMESH', "Remesh", "0B + 0C Remesh, then Send Out"),
+               ('RETOPO', "Retopo Empty", "0B + 0D Retopo Empty, then Send Out")),
+        options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        step = "0C Remesh" if props.mode == 'REMESH' else "0D Retopo Empty"
+        return (f"0B Setup Camera Projection (when not done), {step}, then open the low poly "
+                "in a work window (linked: Receive it back here)")
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if core.is_work_window(context.scene):
+            cls.poll_message_set("Already in a work window")
+            return False
+        if not bpy.data.filepath:
+            cls.poll_message_set("Save the main file first")
+            return False
+        if obj is None or obj.type != 'MESH' or obj.library:
+            return False
+        try:
+            from ..remesh import operators as rops
+        except ImportError:
+            cls.poll_message_set("The Remesh module is off")
+            return False
+        return rops._remesh_poll(cls, context)
+
+    def execute(self, context):
+        from ..remesh import workflow as wf
+        obj = context.active_object
+        if core.out_record(obj) is not None:
+            self.report({'WARNING'}, f"'{obj.name}' is linked to a work window: end the link "
+                                     "(X) first")
+            return {'CANCELLED'}
+        if obj.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        # 0B: through its operator (warnings, Bake Route) - only when not set up yet
+        cp = getattr(obj, "multicamproject_cam", None)
+        if cp is not None and not cp.is_setup:
+            if any(o.type == 'CAMERA' for o in context.scene.objects):
+                bpy.ops.multicamproject.setup()
+            else:
+                self.report({'WARNING'}, "No camera in the scene: 0B skipped")
+        copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO')
+        for w in warnings:
+            self.report({'WARNING'}, w)
+        try:
+            core.send_out(context, copy, start=self.mode)
+        except Exception as e:
+            self.report({'ERROR'}, f"'{copy.name}' is made, but Send Out failed: {e}")
+            return {'FINISHED'}
+        self.report({'INFO'}, f"'{copy.name}' sent out: a work window is opening "
+                              f"('{obj.name}' is its original here)")
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)
