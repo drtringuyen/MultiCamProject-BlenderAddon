@@ -11,10 +11,11 @@ bl_info = {
 
 
 def register():
-    from . import properties, infos, panels
+    from . import properties, infos, panels, folders
     properties.register()
     infos.register()
     panels.register()
+    folders.register()
 
     from . import module_manager
     module_manager.load_all()
@@ -24,7 +25,8 @@ def unregister():
     from . import module_manager
     module_manager.unload_all()
 
-    from . import properties, infos, panels
+    from . import properties, infos, panels, folders
+    folders.unregister()
     panels.unregister()
     infos.unregister()
     properties.unregister()

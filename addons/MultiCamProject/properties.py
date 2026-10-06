@@ -39,6 +39,22 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         type=bpy.types.Collection, name="Cameras",
         description="The camera collection. Empty = every collection holding only cameras")
 
+    # role folders (folders.py; the bake and export folders live in their modules)
+    scan_textures_folder: StringProperty(
+        name="Scan Textures", default="//00.Scan/01.fbx/", subtype='DIR_PATH',
+        description="Folder holding the original scan textures of the objects. Reload points "
+                    "every texture of the objects' materials at the file of the same name here")
+    photos_folder: StringProperty(
+        name="Camera Photos", default="//00.Scan/00.Photos/", subtype='DIR_PATH',
+        update=lambda self, context: _on_photos(self, context),
+        description="Folder holding all camera photos. Every object with Camera Projection "
+                    "uses it (new setups too); Reload runs Reload All on each of them")
+
+
+def _on_photos(props, context):
+    from . import folders
+    folders.push_photos(props.id_data)
+
 
 def register():
     bpy.utils.register_class(MULTICAMPROJECTProperties)

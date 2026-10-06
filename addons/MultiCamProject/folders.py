@@ -1,0 +1,294 @@
+"""Role folders: each collection role of the Linking panel has its folder and a Reload.
+
+    Objects        Scan Textures  the objects' original scan textures   (//00.Scan/01.fbx/)
+    Original Mesh  Bake Folder    the ALB_/NOR_ + work bakes            (//01.Bake/)
+    Export         Export Folder  the FBX + Textures/                   (//)
+    Cameras        Camera Photos  every camera photo                    (//00.Scan/00.Photos/)
+
+The bake and export folders are the Baking / 07 settings themselves (one setting, two
+places); the camera one is the scene's and is pushed to every object with Camera Projection.
+Reload points every texture of the role at the file of the same name in its folder - unless
+it already is in that folder (or below it, e.g. a work window's _work bakes) - then reloads
+them. Files that are not found keep their path and are reported."""
+import os
+import time
+
+import bpy
+from bpy.app.handlers import persistent
+
+from . import roles
+
+IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".tga", ".webp", ".bmp")
+# the defaults these folders had before; a file that never set them keeps them (_pin_old)
+OLD_DEFAULTS = (("multicamproject_bake_settings", "output_dir", "//01.Baking/"),
+                ("multicamproject_export", "folder", "//Export/"))
+
+
+# ---------------------------------------------------------------- the four folders
+
+def _bake_settings(scene):
+    return getattr(scene, "multicamproject_bake_settings", None)
+
+
+def _export_settings(scene):
+    return getattr(scene, "multicamproject_export", None)
+
+
+def photo_objects():
+    """The objects with Camera Projection set up (empty when the module is off)."""
+    try:
+        from .modules.camera_project import core
+    except ImportError:
+        return []
+    if not hasattr(bpy.types.Object, "multicamproject_cam"):
+        return []
+    return core._setup_objects()
+
+
+def holder(scene, role):
+    """(property group, property name) of the role's folder, or (None, why not)."""
+    if role == 'OBJECTS':
+        return scene.multicamproject_props, "scan_textures_folder"
+    if role == 'ORIGINALS':
+        s = _bake_settings(scene)
+        return (s, "output_dir") if s is not None else (None, "Baking module is off")
+    if role == 'EXPORT':
+        s = _export_settings(scene)
+        return (s, "folder") if s is not None else (None, "Export module is off")
+    return scene.multicamproject_props, "photos_folder"
+
+
+LABELS = {'OBJECTS': "Scan Textures", 'ORIGINALS': "Bake Folder", 'EXPORT': "Export Folder",
+          'CAMERAS': "Camera Photos"}
+
+
+def folder(scene, role):
+    """The role's folder as an absolute path ("" when unknown)."""
+    pg, attr = holder(scene, role)
+    if pg is None:
+        return ""
+    path = getattr(pg, attr)
+    return os.path.normpath(bpy.path.abspath(path)) if path else ""
+
+
+_DIRS = {}      # path: (time read, is a folder) - panels redraw often, the drive is slow
+
+
+def exists(path, ttl=2.0):
+    """os.path.isdir for the panel, read again after `ttl` seconds."""
+    now = time.monotonic()
+    hit = _DIRS.get(path)
+    if hit is None or now - hit[0] > ttl:
+        hit = _DIRS[path] = (now, bool(path) and os.path.isdir(path))
+    return hit[1]
+
+
+# ---------------------------------------------------------------- matching + relinking
+
+def _norm(path):
+    return os.path.normcase(os.path.normpath(os.path.abspath(path)))
+
+
+def _inside(path, top):
+    """True when `path` is in `top` or a folder below it."""
+    p, t = _norm(path), _norm(top)
+    return p == t or p.startswith(t.rstrip(os.sep) + os.sep)
+
+
+def _listing(top):
+    if not top or not os.path.isdir(top):
+        return {}
+    return {f.lower(): f for f in os.listdir(top) if os.path.isfile(os.path.join(top, f))}
+
+
+def _candidates(img):
+    """File names to look for: the current file's name, then the image's name (with and
+    without Blender's .001 suffix, with the usual extensions when it has none)."""
+    names = []
+    if img.filepath:
+        names.append(os.path.basename(bpy.path.abspath(img.filepath, library=img.library)))
+    stems = [img.name]
+    base, dot, tail = img.name.rpartition(".")
+    if dot and tail.isdigit() and len(tail) == 3:
+        stems.append(base)
+    for stem in stems:
+        names.append(stem)
+        if os.path.splitext(stem)[1].lower() not in IMAGE_EXTS:
+            names += [stem + ext for ext in IMAGE_EXTS]
+    return names
+
+
+def _rel(path):
+    """Relative to the .blend when it is saved (and on the same drive)."""
+    if not bpy.data.filepath:
+        return path
+    try:
+        return bpy.path.relpath(path)
+    except ValueError:
+        return path
+
+
+def _relinkable(img):
+    return (img is not None and img.source == 'FILE' and not img.packed_file
+            and not img.library)
+
+
+def relink(images, top):
+    """Point every image at its file in `top` (unless it is already in `top` or below), then
+    reload it. Returns (relinked, reloaded, [names not found])."""
+    listing = _listing(top)
+    relinked, reloaded, missing = 0, 0, []
+    for img in images:
+        if not _relinkable(img):
+            continue
+        cur = bpy.path.abspath(img.filepath) if img.filepath else ""
+        if not (cur and _inside(cur, top) and os.path.isfile(cur)):
+            real = next((listing[n.lower()] for n in _candidates(img) if n.lower() in listing),
+                        None)
+            if real is None:
+                missing.append(img.name)
+            else:
+                path = os.path.join(top, real)
+                if not cur or _norm(cur) != _norm(path):
+                    img.filepath = _rel(path)
+                    relinked += 1
+        img.reload()
+        reloaded += 1
+    return relinked, reloaded, missing
+
+
+def _tree_images(tree, out, seen):
+    if tree is None or tree in seen:
+        return
+    seen.add(tree)
+    for node in tree.nodes:
+        if node.type in {'TEX_IMAGE', 'TEX_ENVIRONMENT'} and node.image is not None:
+            out.add(node.image)
+        elif node.type == 'GROUP':
+            _tree_images(node.node_tree, out, seen)
+
+
+def _photos():
+    """Every image a camera shows as its background (the camera photos)."""
+    return {bg.image for cam in bpy.data.cameras for bg in cam.background_images
+            if bg.image is not None}
+
+
+def _own_prefixes():
+    try:
+        from .modules.baking import common
+        return common.OWN_PREFIXES
+    except ImportError:
+        return ("ALB_", "NOR_", "BAo_", "BNo_", "BNoG_", "BAp_", "BNp_")
+
+
+def _role_objects(scene, view_layer, role):
+    colls = [c for c, _lc in roles.collections(scene, view_layer, role)]
+    if not colls:
+        c = roles.find(scene, role)
+        colls = [c] if c is not None else []
+    objs = []
+    for c in colls:
+        objs += [o for o in c.all_objects if o not in objs]
+    return objs
+
+
+def scan_images(scene, view_layer):
+    """The textures of the Objects' materials, without the add-on's bakes and the camera
+    photos (those have their own folders)."""
+    out, seen = set(), set()
+    for obj in _role_objects(scene, view_layer, 'OBJECTS'):
+        for slot in obj.material_slots:
+            if slot.material is not None and slot.material.use_nodes:
+                _tree_images(slot.material.node_tree, out, seen)
+    own, photos = _own_prefixes(), _photos()
+    return sorted((i for i in out if i not in photos and not i.name.startswith(own)),
+                  key=lambda i: i.name)
+
+
+def bake_images():
+    own = _own_prefixes()
+    return sorted((i for i in bpy.data.images if i.name.startswith(own)), key=lambda i: i.name)
+
+
+def export_images(top):
+    return [i for i in bpy.data.images if _relinkable(i) and i.filepath
+            and _inside(bpy.path.abspath(i.filepath), top)]
+
+
+# ---------------------------------------------------------------- reload per role
+
+def push_photos(scene):
+    """The scene's photo folder onto every object with Camera Projection (its Folder field
+    relinks the cameras whose photo is missing)."""
+    path = scene.multicamproject_props.photos_folder
+    n = 0
+    for obj in photo_objects():
+        d = obj.multicamproject_cam
+        if d.image_folder != path:
+            d.image_folder = path
+            n += 1
+    return n
+
+
+def reload(scene, view_layer, role):
+    """Reload the role's folder. Returns (report text, warnings)."""
+    top = folder(scene, role)
+    pg, why = holder(scene, role)
+    if pg is None:
+        return why, []
+    if not top or not os.path.isdir(top):
+        return f"{LABELS[role]} not found: {top or '(empty)'}", []
+    warnings = []
+    if role == 'CAMERAS':
+        from .modules.camera_project import core
+        push_photos(scene)
+        objs = photo_objects()
+        for obj in objs:
+            warnings += [f"{obj.name}: {w}" for w in core.refresh(obj, scene)]
+        return f"Reload All on {len(objs)} object(s) from {top}", warnings
+    if role == 'OBJECTS':
+        images = scan_images(scene, view_layer)
+    elif role == 'ORIGINALS':
+        images = bake_images()
+    else:
+        images = export_images(top)
+    relinked, reloaded, missing = relink(images, top)
+    if missing:
+        shown = ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "")
+        warnings.append(f"{len(missing)} not in the folder (kept): {shown}")
+    return f"{reloaded} texture(s) reloaded, {relinked} relinked to {top}", warnings
+
+
+# ---------------------------------------------------------------- old files keep their folders
+
+def _pin_old():
+    """A file saved before the defaults changed (01.Baking -> 01.Bake, Export -> next to the
+    .blend) and that never set the folder keeps its old one when it exists."""
+    if not bpy.data.filepath:
+        return None
+    for scene in bpy.data.scenes:
+        for group, attr, old in OLD_DEFAULTS:
+            pg = getattr(scene, group, None)
+            if pg is None or pg.is_property_set(attr):
+                continue
+            if os.path.isdir(bpy.path.abspath(old)):
+                setattr(pg, attr, old)
+                print(f"[MultiCamProject] {scene.name}: kept the old folder {old}")
+    return None
+
+
+@persistent
+def _on_load(_):
+    _pin_old()
+
+
+def register():
+    bpy.app.handlers.load_post.append(_on_load)
+    # the file already open when the add-on is (re)installed; after the modules registered
+    bpy.app.timers.register(_pin_old, first_interval=0.2)
+
+
+def unregister():
+    if _on_load in bpy.app.handlers.load_post:
+        bpy.app.handlers.load_post.remove(_on_load)

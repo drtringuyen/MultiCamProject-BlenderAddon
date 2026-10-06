@@ -227,7 +227,7 @@ class MULTICAMPROJECT_BakeSettings(bpy.types.PropertyGroup):
         description="Samples per pixel - Cycles for Bake from Source, EEVEE for the albedo "
                     "and the blend mask. 1 is enough for colors")
     output_dir: StringProperty(
-        name="Folder", default="//01.Baking/", subtype='DIR_PATH',
+        name="Folder", default="//01.Bake/", subtype='DIR_PATH',
         description="Folder for ALB_<name>.png and NOR_<name>.png (same file on every bake)")
 
     bake_what: EnumProperty(

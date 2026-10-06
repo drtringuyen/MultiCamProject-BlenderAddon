@@ -1693,6 +1693,10 @@ def refresh(obj, scene):
 def setup(obj, scene):
     d = data(obj)
     mod = ensure_modifier(obj)
+    if not d.image_folder:      # the scene's Camera Photos (Linking panel)
+        props = getattr(scene, "multicamproject_props", None)
+        if props is not None and props.photos_folder:
+            d.image_folder = props.photos_folder
     if not d.is_setup:
         set_input(mod, "Mode", "Sharp")
         d.user_picked = False

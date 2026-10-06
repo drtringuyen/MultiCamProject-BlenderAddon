@@ -211,7 +211,9 @@ def _scene_settings(scene):
             if p.identifier == "rna_type" or p.type in {'POINTER', 'COLLECTION'} or p.is_readonly:
                 continue
             v = getattr(pg, p.identifier)
-            if p.type == 'ENUM' and p.is_enum_flag:
+            if p.subtype in {'DIR_PATH', 'FILE_PATH'} and isinstance(v, str)                     and v.startswith("//") and bpy.data.filepath:
+                v = bpy.path.abspath(v)     # the work window is saved elsewhere / unsaved
+            elif p.type == 'ENUM' and p.is_enum_flag:
                 v = sorted(v)
             elif hasattr(v, "__len__") and not isinstance(v, str):
                 v = list(v)
@@ -315,7 +317,7 @@ def _work_bakes(scene, obj):
         from ..baking import common
         folder = common.output_dir(scene)
     except ImportError:
-        folder = os.path.join(os.path.dirname(bpy.data.filepath), "01.Baking")
+        folder = os.path.join(os.path.dirname(bpy.data.filepath), "01.Bake")
     return os.path.join(folder, WORK_SUBDIR, bpy.path.clean_name(obj.name))
 
 

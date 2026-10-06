@@ -5,6 +5,7 @@ import os
 import bpy
 from bpy_extras.io_utils import ImportHelper
 
+from ... import folders
 from . import core
 
 
@@ -218,7 +219,43 @@ class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+class MULTICAMPROJECT_OT_ReloadFolder(bpy.types.Operator):
+    """Reload this role's folder: every texture is pointed at the file of the same name in
+    it (unless already there) and reloaded"""
+    bl_idname = "multicamproject.reload_folder"
+    bl_label = "Reload Folder"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    role: bpy.props.EnumProperty(
+        items=(('OBJECTS', "Scan Textures", ""), ('ORIGINALS', "Bake Folder", ""),
+               ('EXPORT', "Export Folder", ""), ('CAMERAS', "Camera Photos", "")),
+        options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return {
+            'OBJECTS': "Point every texture of the Objects' materials (not the bakes or camera "
+                       "photos) at the file of the same name in Scan Textures, then reload them",
+            'ORIGINALS': "Point every ALB_/NOR_ and work bake at the file of the same name in "
+                         "the Bake Folder, then reload them",
+            'EXPORT': "Reload the textures that come from the Export Folder",
+            'CAMERAS': "Use Camera Photos on every object with Camera Projection and run "
+                       "Reload All on each of them",
+        }[props.role]
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT'
+
+    def execute(self, context):
+        text, warnings = folders.reload(context.scene, context.view_layer, self.role)
+        for w in warnings[:10]:
+            self.report({'WARNING'}, w)
+        self.report({'INFO'}, text)
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)

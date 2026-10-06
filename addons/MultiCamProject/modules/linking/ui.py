@@ -4,7 +4,7 @@ import os
 
 import bpy
 
-from ... import roles
+from ... import folders, roles
 from . import core, operators as ops
 
 
@@ -74,22 +74,56 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
 
 
 def draw_roles(layout, context):
-    """Which collection plays which role (the EXPORT header's buttons, 07, Remesh): picked
-    here, or found by the usual name when empty."""
+    """Which collection plays which role (the EXPORT header's buttons, 07, Remesh) - picked
+    here, or found by the usual name when empty - and the role's folder + Reload
+    (folders.py). Wide sidebar: the folder sits next to the collection, else below it."""
     scene, vl = context.scene, context.view_layer
     props = scene.multicamproject_props
+    wide = context.region.width / context.preferences.system.ui_scale > 560
     box = layout.box().column(align=True)
-    box.label(text="Collections", icon='OUTLINER_COLLECTION')
+    box.label(text="Collections + Folders", icon='OUTLINER_COLLECTION')
     for role in roles.ORDER:
         attr, label, icon, _names = roles.ROLES[role]
         row = box.row(align=True)
-        split = row.split(factor=0.38, align=True)
-        split.label(text=label, icon=icon)
-        split.prop(props, attr, text="")
+        if wide:
+            split = row.split(factor=0.2, align=True)
+            split.label(text=label, icon=icon)
+            split = split.split(factor=0.36, align=True)
+            split.prop(props, attr, text="")
+            _draw_folder(split.row(align=True), scene, role, wide)
+        else:
+            split = row.split(factor=0.38, align=True)
+            split.label(text=label, icon=icon)
+            split.prop(props, attr, text="")
+            _draw_folder(box.row(align=True), scene, role, wide)
         if getattr(props, attr) is None:
             hint = box.row()
             hint.active = False
             hint.label(text=f"auto: {roles.auto_text(scene, vl, role)}")
+        if role != roles.ORDER[-1]:
+            box.separator(factor=0.6)
+
+
+def _draw_folder(row, scene, role, wide):
+    """'<label>' [folder] [reload] of one role; the cameras' only once an object has Camera
+    Projection set up."""
+    label = folders.LABELS[role]
+    if role == 'CAMERAS' and not folders.photo_objects():
+        row.active = False
+        row.label(text=f"{label}: after Camera Projection setup", icon='INFO')
+        return
+    pg, attr = folders.holder(scene, role)
+    if pg is None:
+        row.active = False
+        row.label(text=f"{label}: {attr}", icon='INFO')
+        return
+    split = row.split(factor=0.3 if wide else 0.38, align=True)
+    split.label(text=label, icon='FILE_FOLDER')
+    cell = split.row(align=True)
+    cell.alert = not folders.exists(folders.folder(scene, role))
+    cell.prop(pg, attr, text="")
+    cell.operator(ops.MULTICAMPROJECT_OT_ReloadFolder.bl_idname, text="",
+                  icon='FILE_REFRESH').role = role
 
 
 # ---------------------------------------------------------------- pieces for other panels
@@ -170,7 +204,7 @@ def draw_work(layout, context):
         info.label(text=f"Saved: {os.path.basename(bpy.data.filepath)} (main file can open it)",
                    icon='FILE_BLEND')
     else:
-        info.label(text="Unsaved · saving keeps it linked (bakes -> 01.Baking/_work)",
+        info.label(text="Unsaved · saving keeps it linked (bakes -> bake folder/_work)",
                    icon='WINDOW')
 
 
