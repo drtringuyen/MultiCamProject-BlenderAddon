@@ -51,6 +51,53 @@ def _scene_settings(scene):
                 pass
 
 
+CAMERA_COLLECTION = "Cameras"
+WIREFRAME_OPACITY = 0.262
+
+
+def _camera_collection(scene):
+    """Every camera into one "Cameras" collection (not the scene's top level)."""
+    cams = [o for o in scene.collection.objects if o.type == 'CAMERA']
+    if not cams:
+        return
+    coll = bpy.data.collections.new(CAMERA_COLLECTION)
+    scene.collection.children.link(coll)
+    for o in cams:
+        coll.objects.link(o)
+        scene.collection.objects.unlink(o)
+
+
+def _top_left(screen):
+    """The screen's top-left editor (not the top bar / status bar)."""
+    areas = [a for a in screen.areas if a.type not in {'TOPBAR', 'STATUSBAR'}]
+    return min(areas, key=lambda a: (a.x, -(a.y + a.height))) if areas else None
+
+
+def _layout():
+    """The work window's view: a UV Editor top left (unless it is the main 3D View),
+    statistics, wireframe and face orientation in every 3D View, and the Outliners folded
+    on the cameras (Python can't fold one item: their camera filter does it)."""
+    for win in bpy.context.window_manager.windows:
+        screen = win.screen
+        tl = _top_left(screen)
+        views = [a for a in screen.areas if a.type == 'VIEW_3D']
+        if tl is not None and not (tl.type == 'VIEW_3D' and len(views) == 1):
+            tl.type = 'IMAGE_EDITOR'
+            tl.ui_type = 'UV'
+    for screen in bpy.data.screens:
+        for area in screen.areas:
+            for space in area.spaces:
+                if space.type == 'VIEW_3D':
+                    ov = space.overlay
+                    ov.show_stats = True
+                    ov.show_wireframes = True
+                    ov.wireframe_threshold = 1.0
+                    ov.wireframe_opacity = WIREFRAME_OPACITY
+                    ov.show_face_orientation = True
+                elif space.type == 'OUTLINER':
+                    space.use_filter_object_camera = False
+
+
 def _build():
     bpy.ops.wm.read_homefile(use_empty=True)
     scene = bpy.context.scene
@@ -84,6 +131,7 @@ def _build():
     s = getattr(scene, "multicamproject_bake_settings", None)
     if s is not None:           # every bake here goes to the hand-off folder, never the real one
         s.output_dir = os.path.join(settings["bakes"], "")
+    _camera_collection(scene)
     orig = bpy.data.objects.get(settings["original"]) if settings["original"] else None
     if orig is not None and bpy.context.view_layer.objects.get(orig.name) is not None:
         orig.hide_set(True)     # as in the main file: the low poly is what you work on
@@ -104,6 +152,10 @@ def _build():
                     region = next(r for r in area.regions if r.type == 'WINDOW')
                     with bpy.context.temp_override(window=win, area=area, region=region):
                         bpy.ops.view3d.view_selected()
+    try:
+        _layout()
+    except Exception as e:      # never stop the window over its layout
+        print(f"[MultiCamProject] work window: layout skipped: {e}")
     return None
 
 
