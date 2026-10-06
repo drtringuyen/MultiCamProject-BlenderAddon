@@ -100,7 +100,8 @@ def _in_tree(coll, root):
 def ensure(scene, role):
     """The role's collection, made the way the add-on makes it when there is none: found
     (picked / usual name) or new with the usual name, linked into the scene when it is not
-    in it. EXPORT gets its colour tag like 07's Add."""
+    in it, and picked for the role in the Linking panel. EXPORT gets its colour tag like 07's
+    Add."""
     coll = find(scene, role)
     if coll is None:
         coll = bpy.data.collections.new(ROLES[role][3][0])
@@ -108,4 +109,7 @@ def ensure(scene, role):
         scene.collection.children.link(coll)
     if role == 'EXPORT':
         coll.color_tag = 'COLOR_03'
+    props = getattr(scene, "multicamproject_props", None)
+    if props is not None:
+        setattr(props, ROLES[role][0], coll)
     return coll
