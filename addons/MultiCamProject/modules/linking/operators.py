@@ -1,6 +1,7 @@
 """Linking operators: Send Out / Receive / End Link / Open / Relink in the main file, Send Back
 in a work window (core does the work)."""
 import os
+import subprocess
 
 import bpy
 from bpy_extras.io_utils import ImportHelper
@@ -317,6 +318,12 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         items=(('REMESH', "Remesh", "0B + 0C Remesh, then Send Out"),
                ('RETOPO', "Retopo", "0B + 0D Retopo, then Send Out")),
         options={'HIDDEN', 'SKIP_SAVE'})
+    existing: bpy.props.EnumProperty(
+        items=(('ASK', "Ask", "Stop when the work file already exists"),
+               ('OPEN', "Open Existing", "Link the new object to the existing work file and "
+                                         "open it"),
+               ('REPLACE', "Replace", "Send out a fresh work window over the existing file")),
+        default='ASK', options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def description(cls, context, props):
@@ -347,34 +354,59 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             return False
         return rops._remesh_poll(cls, context)
 
+    def _target(self, context):
+        """(new name, work file path) or (None, why not)."""
+        from ... import folders
+        from ..baking import naming
+        scene = context.scene
+        sc = naming.scheme(scene)
+        if sc is None:
+            return None, "No Name Prefix"
+        new_name = naming.full_name(sc, _next_index(sc),
+                                    scene.multicamproject_props.new_object_name)
+        if bpy.data.objects.get(new_name) is not None:
+            return None, f"'{new_name}' already exists"
+        folders.make_dir(scene, 'ORIGINALS')
+        bake_dir = folders.folder(scene, 'ORIGINALS')
+        if not bake_dir or not os.path.isdir(bake_dir):
+            return None, f"Bake Folder not found: {bake_dir or '(empty)'}"
+        return new_name, os.path.join(bake_dir, new_name + ".blend")
+
+    def invoke(self, context, event):
+        new_name, path = self._target(context)
+        if new_name is None or self.existing != 'ASK' or not os.path.exists(path):
+            return self.execute(context)
+        mode = self.mode
+
+        def draw(menu, _context):
+            col = menu.layout.column()
+            col.label(text=f"{os.path.basename(path)} is already in the Bake Folder",
+                      icon='ERROR')
+            op = col.operator(self.bl_idname, text="Open Existing (link the new object to it)",
+                              icon='FILE_BLEND')
+            op.mode, op.existing = mode, 'OPEN'
+            op = col.operator(self.bl_idname, text="Replace (fresh work window over it)",
+                              icon='FILE_REFRESH')
+            op.mode, op.existing = mode, 'REPLACE'
+        context.window_manager.popup_menu(draw, title="Work file exists", icon='QUESTION')
+        return {'CANCELLED'}
+
     def execute(self, context):
         from ..remesh import workflow as wf
+        from ..export import fixes
         obj = context.active_object
         if core.out_record(obj) is not None:
             self.report({'WARNING'}, f"'{obj.name}' is linked to a work window: end the link "
                                      "(X) first")
             return {'CANCELLED'}
-        from ... import folders
-        from ..baking import naming
-        from ..export import fixes
         scene = context.scene
-        sc = naming.scheme(scene)
-        if sc is None:
-            self.report({'ERROR'}, "No Name Prefix")
+        new_name, path = self._target(context)
+        if new_name is None:
+            self.report({'ERROR'}, path)
             return {'CANCELLED'}
-        new_name = naming.full_name(sc, _next_index(sc),
-                                    scene.multicamproject_props.new_object_name)
-        if bpy.data.objects.get(new_name) is not None:
-            self.report({'ERROR'}, f"'{new_name}' already exists")
-            return {'CANCELLED'}
-        folders.make_dir(scene, 'ORIGINALS')
-        bake_dir = folders.folder(scene, 'ORIGINALS')
-        if not bake_dir or not os.path.isdir(bake_dir):
-            self.report({'ERROR'}, f"Bake Folder not found: {bake_dir or '(empty)'}")
-            return {'CANCELLED'}
-        path = os.path.join(bake_dir, new_name + ".blend")
-        if os.path.exists(path):
-            self.report({'ERROR'}, f"{path} already exists - pick another name")
+        exists = os.path.exists(path)
+        if exists and self.existing == 'ASK':
+            self.report({'ERROR'}, f"{path} already exists - Open Existing or Replace")
             return {'CANCELLED'}
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
@@ -398,6 +430,8 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         obj.name = name
         if obj.data.users == 1:
             obj.data.name = mesh_name
+        if exists and self.existing == 'OPEN':
+            return self._open_existing(copy, obj, path)
         try:
             core.send_out(context, copy, start=self.mode, save_as=path)
         except Exception as e:
@@ -405,6 +439,21 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             return {'FINISHED'}
         self.report({'INFO'}, f"'{copy.name}' sent out: a work window is opening, saved as "
                               f"{os.path.basename(path)} ('{obj.name}' is its original)")
+        return {'FINISHED'}
+
+    def _open_existing(self, copy, obj, path):
+        """The work file is there already: the new object is linked to it (Receive takes
+        what it holds) and it opens."""
+        try:
+            work_name = core.relink(copy, path)
+        except Exception as e:      # not a work window (or unreadable): open it anyway
+            self.report({'WARNING'}, f"'{copy.name}' is made, but not linked to "
+                                     f"{os.path.basename(path)}: {e}")
+            subprocess.Popen([bpy.app.binary_path, path])
+            return {'FINISHED'}
+        core.open_saved(copy)
+        self.report({'INFO'}, f"'{copy.name}' is linked to {os.path.basename(path)} "
+                              f"(its '{work_name}') - opening it ('{obj.name}' is the original)")
         return {'FINISHED'}
 
 
