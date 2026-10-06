@@ -88,3 +88,24 @@ def set_shown(scene, view_layer, role, show):
                     if space.type == 'OUTLINER':
                         space.use_filter_object_camera = show
     return colls
+
+
+CREATABLE = ('ORIGINALS', 'EXPORT')     # the add-on makes these itself (Remesh, 07 Add)
+
+
+def _in_tree(coll, root):
+    return coll == root or any(_in_tree(coll, c) for c in root.children)
+
+
+def ensure(scene, role):
+    """The role's collection, made the way the add-on makes it when there is none: found
+    (picked / usual name) or new with the usual name, linked into the scene when it is not
+    in it. EXPORT gets its colour tag like 07's Add."""
+    coll = find(scene, role)
+    if coll is None:
+        coll = bpy.data.collections.new(ROLES[role][3][0])
+    if not _in_tree(coll, scene.collection):
+        scene.collection.children.link(coll)
+    if role == 'EXPORT':
+        coll.color_tag = 'COLOR_03'
+    return coll

@@ -5,7 +5,7 @@ import os
 import bpy
 from bpy_extras.io_utils import ImportHelper
 
-from ... import folders
+from ... import folders, roles
 from . import core
 
 
@@ -255,7 +255,28 @@ class MULTICAMPROJECT_OT_ReloadFolder(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+class MULTICAMPROJECT_OT_CreateRoleCollection(bpy.types.Operator):
+    """Create this collection the way the add-on does (Original Mesh / EXPORT in the scene)"""
+    bl_idname = "multicamproject.create_role_collection"
+    bl_label = "Create Collection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    role: bpy.props.EnumProperty(
+        items=(('ORIGINALS', "Original Mesh", ""), ('EXPORT', "Export", "")),
+        options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        name = roles.ROLES[props.role][3][0]
+        return f"Not in this scene yet: create the {name} collection (as Remesh / 07 would)"
+
+    def execute(self, context):
+        coll = roles.ensure(context.scene, self.role)
+        self.report({'INFO'}, f"{coll.name} is in the scene")
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)

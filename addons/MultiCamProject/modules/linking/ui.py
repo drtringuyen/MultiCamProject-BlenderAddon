@@ -89,12 +89,12 @@ def draw_roles(layout, context):
             split = row.split(factor=0.2, align=True)
             split.label(text=label, icon=icon)
             split = split.split(factor=0.36, align=True)
-            split.prop(props, attr, text="")
+            _draw_picker(split.row(align=True), scene, vl, props, role, attr)
             _draw_folder(split.row(align=True), scene, role, wide)
         else:
             split = row.split(factor=0.38, align=True)
             split.label(text=label, icon=icon)
-            split.prop(props, attr, text="")
+            _draw_picker(split.row(align=True), scene, vl, props, role, attr)
             _draw_folder(box.row(align=True), scene, role, wide)
         if getattr(props, attr) is None:
             hint = box.row()
@@ -102,6 +102,14 @@ def draw_roles(layout, context):
             hint.label(text=f"auto: {roles.auto_text(scene, vl, role)}")
         if role != roles.ORDER[-1]:
             box.separator(factor=0.6)
+
+
+def _draw_picker(row, scene, vl, props, role, attr):
+    """The collection field; + a create button when Original Mesh / EXPORT is not there."""
+    row.prop(props, attr, text="")
+    if role in roles.CREATABLE and not roles.collections(scene, vl, role):
+        row.operator(ops.MULTICAMPROJECT_OT_CreateRoleCollection.bl_idname, text="",
+                     icon='FILE_REFRESH').role = role
 
 
 def _draw_folder(row, scene, role, wide):
