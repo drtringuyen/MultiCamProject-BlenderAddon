@@ -44,11 +44,11 @@ def draw_start(layout, context):
     if es is not None:
         field = row.row(align=True)
         field.alert = not prefix_ok(scene)
-        field.prop(es, "name_prefix", text="", placeholder="Name Prefix (needed)")
+        field.prop(es, "name_prefix", text="", placeholder="Name Prefix: 00_st")
     sub = row.row(align=True)
     sub.enabled = prefix_ok(scene)
     sub.operator("multicamproject.auto_fill_folders", text="Setup File IO", icon='VIEWZOOM')
     hint = layout.row()
     hint.active = False
-    hint.label(text="Name Prefix, then Setup File IO - the add-on unlocks after it"
+    hint.label(text="Name Prefix like 00_st, then Setup File IO - the add-on unlocks"
                if not prefix_ok(scene) else "Setup File IO unlocks the add-on", icon='INFO')
