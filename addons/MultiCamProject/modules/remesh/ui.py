@@ -8,6 +8,39 @@ def _res(n):
     return f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
 
 
+def _draw_decide(layout, context, obj):
+    """0C's first step: the Decimate amount is decided and applied before anything else (the
+    GN modifiers are muted meanwhile, 02 Protect still works)."""
+    dec = wf.decimate_modifier(obj)
+    box = layout.box().column(align=True)
+    box.alert = True
+    box.label(text="03. Decide the Decimate - the rest unlocks after Apply", icon='MOD_DECIM')
+    box.alert = False
+    row = box.row(align=True)
+    for r in wf.DECIMATE_PRESETS:
+        row.operator("multicamproject.remesh_decimate_ratio", text=f"{r:g}",
+                     depress=abs(dec.ratio - r) < 1e-6).ratio = r
+    row = box.row(align=True)
+    row.prop(dec, "show_viewport", text="", emboss=False)
+    row.prop(dec, "ratio", text="Amount")
+    try:        # the preview's face count (already evaluated for the viewport)
+        ev = obj.evaluated_get(context.evaluated_depsgraph_get())
+        after = len(ev.data.polygons)
+    except Exception:
+        after = None
+    info = box.row()
+    info.active = False
+    info.label(text=f"{len(obj.data.polygons):,} -> {after:,} faces" if after is not None
+               else f"{len(obj.data.polygons):,} faces", icon='INFO')
+    row = box.row(align=True)
+    row.scale_y = 1.4
+    row.operator("multicamproject.remesh_apply_decimate", text="Apply Decimate",
+                 icon='CHECKMARK')
+    hint = box.row()
+    hint.active = False
+    hint.label(text="02 Protect keeps parts · Ctrl+Z undoes 0C", icon='LOCKED')
+
+
 class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
     """Cutting & Modelling: shown for a low poly (0C Remesh, or a picked high poly)"""
     bl_label = "Cutting & Modelling"
@@ -27,9 +60,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         self.layout.label(icon='MOD_REMESH')
 
     def draw(self, context):
-        gate.lock(self.layout, context)     # greyed out until Setup File IO
+        self.layout.enabled = gate.ready(context.scene)     # greyed out until Setup File IO
         layout = self.layout
         obj = context.active_object
+        pending = wf.decimate_pending(obj)
         d = obj.multicamproject_bake
         baking = module_manager.is_loaded("baking")
         s = context.scene.multicamproject_bake_settings if baking else None
@@ -39,6 +73,8 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 link_ui.draw_work(layout, context)
             else:
                 link_ui.draw_main(layout, context, obj)
+        if pending:
+            _draw_decide(layout, context, obj)
 
         # the high poly this low poly bakes from (only 04 uses it)
         row = layout.row(align=True)
@@ -49,6 +85,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             cage.prop(d, "cage", text="Cage")
 
         retopo = wf.is_retopo(obj)
+        rest = layout                       # 01 / Decimate Brush wait for the decision
+        if pending:
+            rest = layout.column()
+            rest.enabled = False
         if retopo:
             # 0D: modelled by hand on the original - no PolyCut / Decimate
             col = layout.column(align=True)
@@ -57,7 +97,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                          icon='EDITMODE_HLT')
         else:
             # 01 / 02: the PolyCut tool and Set Faces
-            col = layout.column(align=True)
+            col = rest.column(align=True)
             col.scale_y = 1.25
             in_mesh_mode = context.mode in {'SCULPT', 'EDIT_MESH'}
             # PolyCut is a Sculpt Mode tool; Edit Mode keeps Blender's own L (Select Linked)
@@ -91,6 +131,8 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 tog.alert = on_density and not dyn          # the brush does nothing without it
                 tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
                              depress=dyn)
+            col = layout.column(align=True)     # 02 (Protect) stays usable while deciding
+            col.scale_y = 1.25
             row = col.row(align=True)
             sub = row.row(align=True)
             sub.enabled = in_mesh_mode
@@ -100,10 +142,16 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.operator("multicamproject.remesh_set_faces", text="",
                          icon='FACE_MAPS').action = 'CLEAR_FACE_SETS'
 
+        if pending:     # everything after 02 waits for the decision
+            layout = layout.column()
+            layout.enabled = False
+
         # 03: one Decimate (vg_Protect keeps parts), applied before the unwrap
         box = layout.box().column(align=True)
         dec = wf.decimate_modifier(obj)
-        if retopo and dec is None:
+        if pending:
+            box.label(text="03. Decimate: decided above", icon='MOD_DECIM')
+        elif retopo and dec is None:
             box.label(text=f"03. Retopo: {len(obj.data.polygons):,} faces (no Decimate)",
                       icon='MESH_PLANE')
         elif dec is not None:
@@ -113,11 +161,6 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
             box.label(text=f"{len(obj.data.polygons):,} faces · vg_Protect stays · "
                            "apply before the unwrap", icon='INFO')
-            if not dec.show_viewport:
-                hint = box.row()
-                hint.active = False
-                hint.label(text="Preview off (fast while cutting) - the eye shows it",
-                           icon='HIDE_ON')
         elif obj.get(wf.APPLIED_KEY):
             box.label(text=f"03. Decimate applied: {len(obj.data.polygons):,} faces",
                       icon='CHECKMARK')

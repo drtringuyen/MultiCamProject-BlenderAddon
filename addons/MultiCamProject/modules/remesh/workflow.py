@@ -108,14 +108,29 @@ def ensure_stack(obj, applied_ok=True):
         dec.ratio = DECIMATE_RATIO if ratio is None else ratio
         dec.vertex_group = VG_PROTECT
         dec.invert_vertex_group = True      # weight 1 = protected = not decimated
-        # hidden while cutting / marking (01, 02): on a scan it re-evaluates for seconds
-        # after every change; the 03 eye shows the result, Apply works either way
-        dec.show_viewport = False
+        dec.show_viewport = True    # the first decision after 0C (decimate_pending)
     _move(obj, dec, 0)
     return dec
 
 
 APPLIED_KEY = "multicamproject_decimated"   # on the object: the Decimate was applied (03)
+DECIMATE_PRESETS = (0.02, 0.05, 0.1, 0.2)
+
+
+def decimate_pending(obj):
+    """A Remesh copy whose Decimate is not decided yet: the object is locked (only the
+    Decimate, 02 Protect and the view) and its GN modifiers are muted until Apply."""
+    return (obj is not None and obj.type == 'MESH' and not is_retopo(obj)
+            and is_low_poly(obj) and decimate_modifier(obj) is not None
+            and not obj.get(APPLIED_KEY))
+
+
+def set_gn(obj, on):
+    """GN-CameraProject / GN-Final in the viewport: muted while the Decimate is decided (the
+    preview costs only the Decimate), on again after Apply."""
+    for m in obj.modifiers:
+        if m.type == 'NODES' and m.show_viewport != on:
+            m.show_viewport = on
 
 
 def clear_custom_normals(obj):
@@ -146,7 +161,20 @@ def apply_decimate(context, obj):
         bpy.ops.object.modifier_apply(modifier=dec.name)
     obj[APPLIED_KEY] = True
     clear_custom_normals(obj)
+    after_decimate(obj, context.scene)
     return before, len(obj.data.polygons)
+
+
+def after_decimate(obj, scene):
+    """The Decimate is decided: GN-CameraProject / GN-Final on again, the cameras scored on
+    the low poly (Apply here, or Receive of a window that applied it)."""
+    set_gn(obj, True)
+    cam = getattr(obj, "multicamproject_cam", None)
+    if module_manager.is_loaded("camera_project") and cam is not None and cam.is_setup:
+        try:
+            cp.refresh(obj, scene)
+        except Exception as e:      # never undo the Apply over a rescore
+            print(f"[MultiCamProject] {obj.name}: Reload All after the Decimate skipped: {e}")
 
 
 def set_snap(obj, on):
@@ -568,4 +596,6 @@ def make_copy(context, obj, retopo=False):
             gn_final.ensure_modifier(copy)      # its own wrapper, last in the stack
         from ..baking import route
         route.after_step(copy, 'RETOPO' if retopo else 'ORIGINAL')
+    if not retopo and decimate_modifier(copy) is not None:
+        set_gn(copy, False)             # the Decimate is decided first (decimate_pending)
     return copy, warnings

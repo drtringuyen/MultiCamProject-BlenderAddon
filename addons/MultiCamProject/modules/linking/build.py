@@ -162,6 +162,13 @@ def _build():
         _layout()
     except Exception as e:      # never stop the window over its layout
         print(f"[MultiCamProject] work window: layout skipped: {e}")
+    if obj is not None:         # an undecided Decimate: the GN modifiers stay muted here too
+        try:
+            wf = importlib.import_module(f"{settings['addon']}.modules.remesh.workflow")
+            if wf.decimate_pending(obj):
+                wf.set_gn(obj, False)
+        except Exception as e:
+            print(f"[MultiCamProject] work window: GN mute skipped: {e}")
     if obj is not None and settings.get("save_as"):
         _save(settings["save_as"])
     if obj is not None and settings.get("start"):
@@ -182,7 +189,9 @@ def _save(path):
 
 def _start(start):
     """Remesh / Retopo + Send Out: the window opens in the PolyCut tool / on the retopo."""
-    op = {'REMESH': "remesh_enter_tool", 'RETOPO': "retopo_focus"}.get(start)
+    if start == 'REMESH':     # 0C: the Decimate is decided first (Object Mode, its box)
+        return
+    op = {'RETOPO': "retopo_focus"}.get(start)
     if op is None:
         return
     for win in bpy.context.window_manager.windows:

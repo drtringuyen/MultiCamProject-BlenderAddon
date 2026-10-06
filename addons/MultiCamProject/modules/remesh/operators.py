@@ -1,7 +1,7 @@
 import bmesh
 import bpy
 import gpu
-from bpy.props import BoolProperty, EnumProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
@@ -28,6 +28,31 @@ def _inside(p, poly):
     return hit
 
 
+def _decided(cls, obj):
+    """PolyCut, its pick and the Decimate Brush wait for the Decimate decision."""
+    if wf.decimate_pending(obj):
+        cls.poll_message_set("Decide the Decimate first (Apply)")
+        return False
+    return True
+
+
+class MULTICAMPROJECT_OT_RemeshDecimateRatio(bpy.types.Operator):
+    """Set the Decimate amount (one viewport update, no slider drag)"""
+    bl_idname = "multicamproject.remesh_decimate_ratio"
+    bl_label = "Decimate Amount"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    ratio: FloatProperty(min=0.0001, max=1.0, default=0.05, options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return wf.decimate_modifier(context.active_object) is not None
+
+    def execute(self, context):
+        wf.decimate_modifier(context.active_object).ratio = self.ratio
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     """Draw a polygon: the mesh is cut exactly along its lines (not along the scan's triangles)
     and the inside becomes a new face set. Click to add points, Enter or double click to
@@ -40,7 +65,8 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         return (obj is not None and obj.type == 'MESH' and context.mode == 'SCULPT'
-                and context.area is not None and context.area.type == 'VIEW_3D')
+                and context.area is not None and context.area.type == 'VIEW_3D'
+                and _decided(cls, obj))
 
     # ------------------------------------------------------------ points
     # The clicks are kept in 3D (on the surface under the mouse, or at the depth of the last
@@ -199,8 +225,8 @@ def _enter_tool(context, obj):
 class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
     """0C Remesh: make the low-poly copy. It takes the name, EXPORT and the textures, gets
     a Decimate (vg_Protect) and the camera projection. The original becomes <name>_original
-    in "Original Mesh", the copy's Bake Source (BA_ / BN_). Then Sculpt Mode with the
-    PolyCut tool"""
+    in "Original Mesh", the copy's Bake Source (BA_ / BN_). First decide and apply the
+    Decimate (the projection waits, muted), then PolyCut"""
     bl_idname = "multicamproject.remesh"
     bl_label = "Remesh"
     bl_options = {'REGISTER', 'UNDO'}
@@ -216,6 +242,11 @@ class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
         copy, warnings = wf.make_copy(context, obj)
         for w in warnings:
             self.report({'WARNING'}, w)
+        if wf.decimate_pending(copy):
+            # Object Mode: the Decimate is decided first (Cutting & Modelling), then PolyCut
+            self.report({'INFO'}, f"'{copy.name}' is the Remesh copy: decide its Decimate, "
+                                  "then Apply")
+            return {'FINISHED'}
         _enter_tool(context, copy)
         self.report({'INFO'}, f"'{copy.name}' is the Remesh copy, '{obj.name}' the high poly")
         return {'FINISHED'}
@@ -352,7 +383,8 @@ class MULTICAMPROJECT_OT_RemeshEnterTool(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == 'MESH' and not obj.library
+        return (obj is not None and obj.type == 'MESH' and not obj.library
+                and _decided(cls, obj))
 
     def execute(self, context):
         _enter_tool(context, context.active_object)
@@ -377,7 +409,8 @@ class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == 'MESH' and not obj.library
+        return (obj is not None and obj.type == 'MESH' and not obj.library
+                and _decided(cls, obj))
 
     def invoke(self, context, event):
         obj = context.active_object
@@ -418,7 +451,8 @@ class MULTICAMPROJECT_OT_RemeshPick(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        return obj is not None and obj.type == 'MESH' and context.mode == 'SCULPT'
+        return (obj is not None and obj.type == 'MESH' and context.mode == 'SCULPT'
+                and _decided(cls, obj))
 
     def invoke(self, context, event):
         obj = context.active_object
@@ -791,7 +825,8 @@ class MULTICAMPROJECT_OT_UnlinkOriginal(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
+_CLASSES = (MULTICAMPROJECT_OT_RemeshDecimateRatio, MULTICAMPROJECT_OT_RemeshPolyCut,
+            MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
             MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,

@@ -206,7 +206,16 @@ class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return core.is_work_window(context.scene) and core.work_object(context.scene) is not None
+        if not core.is_work_window(context.scene):
+            return False
+        obj = core.work_object(context.scene)
+        if obj is None:
+            return False
+        from ... import gate
+        if gate.decimate_pending(obj):  # it never comes back with a Decimate still on it
+            cls.poll_message_set("Decide the Decimate first (Apply)")
+            return False
+        return True
 
     def execute(self, context):
         if context.mode != 'OBJECT':

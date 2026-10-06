@@ -28,9 +28,19 @@ def ready(scene):
     return props.file_io_done and prefix_ok(scene)
 
 
+def decimate_pending(obj):
+    """The active object waits for its Decimate decision (Cutting & Modelling)."""
+    try:
+        from .modules.remesh import workflow as wf
+    except ImportError:
+        return False
+    return wf.decimate_pending(obj)
+
+
 def lock(layout, context):
-    """Grey out a panel until the gate is open. Returns True when open."""
-    ok = ready(context.scene)
+    """Grey out a panel until the gate is open, and while the active object's Decimate is
+    not decided. Returns True when open."""
+    ok = ready(context.scene) and not decimate_pending(context.active_object)
     layout.enabled = ok
     return ok
 

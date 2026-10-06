@@ -477,6 +477,7 @@ def _take_modifiers(obj, man):
         snap.show_viewport = man["snap"]["show_viewport"]
     if man.get("applied"):
         obj[wf.APPLIED_KEY] = True
+        wf.set_gn(obj, True)    # the Decimate was decided in the window (Receive rescores)
 
 
 def _take_cameras(obj, scene, man):

@@ -104,6 +104,12 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             gate.draw_start(layout, context)
             layout = layout.column()
             layout.enabled = False
+        elif gate.decimate_pending(obj):
+            box = layout.box()
+            box.alert = True
+            box.label(text="Decide the Decimate first (Cutting & Modelling)", icon='MOD_DECIM')
+            layout = layout.column()
+            layout.enabled = False
         if not mesh:
             layout.label(text="Select a mesh", icon='INFO')
         cams = any(o.type == 'CAMERA' for o in context.scene.objects)
