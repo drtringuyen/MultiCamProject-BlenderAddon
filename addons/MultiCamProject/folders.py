@@ -10,7 +10,8 @@ places); the camera one is the scene's: it relinks the cameras' background photo
 any Camera Projection setup) and is pushed to every object with Camera Projection.
 Reload points every texture of the role at the file of the same name in its folder - unless
 it already is in that folder (or below it, e.g. a work window's _work bakes) - then reloads
-them. Files that are not found keep their path and are reported."""
+them. Files that are not found keep their path and are reported. The bake and export folders
+are made on disk when missing (file load / save / Reload, only in files that use the add-on)."""
 import os
 import time
 
@@ -283,6 +284,8 @@ def reload(scene, view_layer, role):
     pg, why = holder(scene, role)
     if pg is None:
         return why, []
+    if role in MADE:
+        make_dir(scene, role)
     if not top or not os.path.isdir(top):
         return f"{LABELS[role]} not found: {top or '(empty)'}", []
     warnings = []
@@ -329,17 +332,74 @@ def _pin_old():
     return None
 
 
+# ---------------------------------------------------------------- the add-on makes its folders
+
+MADE = ('ORIGINALS', 'EXPORT')      # the bake + export folders are made on disk when missing
+
+
+def _is_project(scene):
+    """A file that uses the add-on (other .blends opened never get folders made)."""
+    return any(roles.find(scene, r) is not None for r in ('OBJECTS', 'EXPORT', 'ORIGINALS'))         or bool(photo_objects())
+
+
+def make_dir(scene, role):
+    """Create the role's folder when it is missing (saved .blend only: // needs a place).
+    Returns the path made, else None."""
+    if not bpy.data.filepath:
+        return None
+    path = folder(scene, role)
+    if not path or os.path.isdir(path):
+        return None
+    try:
+        os.makedirs(path, exist_ok=True)
+    except OSError as e:
+        print(f"[MultiCamProject] could not create {path}: {e}")
+        return None
+    _DIRS.pop(path, None)
+    print(f"[MultiCamProject] created {path}")
+    return path
+
+
+def make_dirs():
+    """Bake + export folders of every scene that uses the add-on."""
+    if not bpy.data.filepath:
+        return None
+    for scene in bpy.data.scenes:
+        try:
+            if _is_project(scene):
+                for role in MADE:
+                    if holder(scene, role)[0] is not None:
+                        make_dir(scene, role)
+        except Exception as e:      # never break a load / save over a folder
+            print(f"[MultiCamProject] folders skipped: {e}")
+    return None
+
+
+def _startup():
+    _pin_old()      # first: a file kept on 01.Baking never gets an empty 01.Bake
+    make_dirs()
+    return None
+
+
 @persistent
 def _on_load(_):
-    _pin_old()
+    _startup()
+
+
+@persistent
+def _on_save(_):
+    make_dirs()
 
 
 def register():
     bpy.app.handlers.load_post.append(_on_load)
+    bpy.app.handlers.save_post.append(_on_save)
     # the file already open when the add-on is (re)installed; after the modules registered
-    bpy.app.timers.register(_pin_old, first_interval=0.2)
+    bpy.app.timers.register(_startup, first_interval=0.2)
 
 
 def unregister():
+    if _on_save in bpy.app.handlers.save_post:
+        bpy.app.handlers.save_post.remove(_on_save)
     if _on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load)
