@@ -79,9 +79,41 @@ def _top_left(screen):
     return min(areas, key=lambda a: (a.x, -(a.y + a.height))) if areas else None
 
 
+ADDON_TAB = "MultiCamProject"      # the sidebar tab the window opens on
+_tab_tries = [0]
+
+
+def _addon_tab():
+    """The sidebar on the add-on's tab: a region knows its tabs only once drawn, so this
+    retries a few times after the window is up."""
+    _tab_tries[0] += 1
+    done = True
+    for win in bpy.context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for region in area.regions:
+                if region.type == 'UI':
+                    try:
+                        region.active_panel_category = ADDON_TAB
+                    except (TypeError, AttributeError):
+                        pass
+                    done = done and region.active_panel_category == ADDON_TAB
+                    region.tag_redraw()
+    if done and bpy.data.filepath and not bpy.data.is_dirty:
+        try:                # the saved window reopens on the tab too (nothing else changed)
+            win = bpy.context.window_manager.windows[0]
+            with bpy.context.temp_override(window=win):
+                bpy.ops.wm.save_mainfile()
+        except Exception as e:
+            print(f"[MultiCamProject] work window: tab not saved: {e}")
+    return None if done or _tab_tries[0] >= 20 else 0.25
+
+
 def _layout():
     """The work window's view: a UV Editor top left (unless it is the main 3D View),
-    statistics, wireframe and face orientation in every 3D View, and the Outliners folded
+    statistics, wireframe, face orientation and the sidebar on MultiCamProject in every
+    3D View, and the Outliners folded
     on the cameras (Python can't fold one item: their camera filter does it)."""
     for win in bpy.context.window_manager.windows:
         screen = win.screen
@@ -90,6 +122,13 @@ def _layout():
         if tl is not None and not (tl.type == 'VIEW_3D' and len(views) == 1):
             tl.type = 'IMAGE_EDITOR'
             tl.ui_type = 'UV'
+        # the sidebar on the add-on's tab. show_region_ui's update needs the window in the
+        # context - set from a timer without it, Blender 5.2 crashes (no active window)
+        for area in views:
+            with bpy.context.temp_override(window=win, screen=screen, area=area):
+                area.spaces.active.show_region_ui = True
+    _tab_tries[0] = 0
+    bpy.app.timers.register(_addon_tab, first_interval=0.3)
     for screen in bpy.data.screens:
         for area in screen.areas:
             for space in area.spaces:
