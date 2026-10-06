@@ -50,7 +50,7 @@ class MULTICAMPROJECT_OT_ToggleCollection(bpy.types.Operator):
         colls = roles.collections(context.scene, context.view_layer, props.role)
         label = roles.ROLES[props.role][1]
         if not colls:
-            return f"No {label} collection (pick one in the Linking panel)"
+            return f"No {label} collection (pick one in IO Folders & Collections)"
         names = ", ".join(c.name for c, _lc in colls)
         verb = "Hide" if roles.shown(context.scene, context.view_layer, props.role) else "Show"
         extra = (" (the Outliner folds the cameras; they still project and are scored)"

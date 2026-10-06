@@ -25,8 +25,9 @@ def _file_text(obj):
 # ---------------------------------------------------------------- the panel
 
 class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
-    """Work windows: which work file is linked to which object"""
-    bl_label = "Linking"
+    """IO Folders & Collections: the collection roles + their folders, and the work windows
+    (which work file is linked to which object)"""
+    bl_label = "IO Folders & Collections"
     bl_idname = "MULTICAMPROJECT_PT_linking"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'

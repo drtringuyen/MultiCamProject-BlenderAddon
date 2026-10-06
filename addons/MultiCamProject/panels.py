@@ -72,7 +72,7 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
 
 
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
-    """Setup: 0A / 0B / 0C (or 0D) in any order - each adds its part to the same object:
+    """Setup: Setup File IO (collections + folders), then 0A / 0B / 0C (or 0D) in any order - each adds its part to the same object:
     MCP_ + MAT_, the camera lists, the Bake Source, EXPORT. 0E: new UVs for a handmade one"""
     bl_label = "Setup"
     bl_idname = "MULTICAMPROJECT_PT_setup"
@@ -90,6 +90,12 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
         layout = self.layout
         obj = context.active_object
         mesh = obj is not None and obj.type == 'MESH'
+        if mm.is_loaded("linking"):
+            # the IO Folders & Collections panel's Auto Detect and Fill Folders
+            row = layout.row(align=True)
+            row.scale_y = 1.3
+            row.operator("multicamproject.auto_fill_folders", text="Setup File IO",
+                         icon='VIEWZOOM')
         if not mesh:
             layout.label(text="Select a mesh", icon='INFO')
         cams = any(o.type == 'CAMERA' for o in context.scene.objects)
