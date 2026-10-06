@@ -43,7 +43,9 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
     scan_textures_folder: StringProperty(
         name="Scan Textures", default="//00.Scan/01.FBX/", subtype='DIR_PATH',
         options={'PATH_SUPPORTS_BLEND_RELATIVE'},
-        description="Folder holding the original scan textures of the objects. Reload points "
+        update=lambda self, context: _on_scan(self, context),
+        description="Folder holding the original scan textures of the objects. Missing "
+                    "textures are relinked from it on their own. Reload points "
                     "every texture of the objects' materials at the file of the same name here")
     photos_folder: StringProperty(
         name="Camera Photos", default="//00.Scan/00.Photos/", subtype='DIR_PATH',
@@ -54,9 +56,15 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "(new setups too) and gets a Reload All")
 
 
+def _on_scan(props, context):
+    from . import folders
+    folders.relink_missing(props.id_data)
+
+
 def _on_photos(props, context):
     from . import folders
     folders.push_photos(props.id_data)
+    folders.relink_missing(props.id_data)
 
 
 def register():

@@ -332,6 +332,69 @@ def reload(scene, view_layer, role):
     return f"{reloaded} texture(s) reloaded, {relinked} relinked to {top}", warnings
 
 
+# ---------------------------------------------------------------- missing files fixed on their own
+
+def _missing(images):
+    """The images whose file is not there - one listing per folder, no stat per file."""
+    by_dir, out = {}, []
+    for img in images:
+        if not _relinkable(img):
+            continue
+        path = os.path.normpath(bpy.path.abspath(img.filepath)) if img.filepath else ""
+        if not path:
+            out.append(img)
+            continue
+        d = os.path.dirname(path)
+        if d not in by_dir:
+            by_dir[d] = _listing(d)
+        if os.path.basename(path).lower() not in by_dir[d]:
+            out.append(img)
+    return out
+
+
+def _file_images():
+    """Every file image of the .blend that is not a bake or a camera photo."""
+    own, photos = _own_prefixes(), _photos()
+    return [i for i in bpy.data.images
+            if i.source == 'FILE' and i not in photos and not i.name.startswith(own)]
+
+
+def relink_missing(scene):
+    """Only the images whose file is missing get it from their role's folder: textures from
+    Scan Textures, bakes from the Bake Folder, camera photos from Camera Photos. Images
+    that load fine are left alone (no reload). Returns how many were relinked."""
+    n = 0
+    for role, images in (('OBJECTS', _file_images), ('ORIGINALS', bake_images),
+                         ('CAMERAS', lambda: list(_photos()))):
+        top = folder(scene, role)
+        if not top:
+            continue
+        missing = _missing(images())
+        if not missing:
+            continue
+        listing = _listing(top)
+        if not listing:
+            continue
+        r, _n, _miss = relink(missing, top, listing)
+        n += r
+    return n
+
+
+def relink_all_missing():
+    """relink_missing for every scene (file load, add-on install)."""
+    if not bpy.data.filepath:
+        return 0
+    n = 0
+    for scene in bpy.data.scenes:
+        try:
+            n += relink_missing(scene)
+        except Exception as e:      # never break a load over a texture
+            print(f"[MultiCamProject] relink of missing files skipped: {e}")
+    if n:
+        print(f"[MultiCamProject] {n} missing texture(s) / photo(s) relinked from the folders")
+    return n
+
+
 # ---------------------------------------------------------------- auto detect
 
 DEFAULTS = {'OBJECTS': "//00.Scan/01.FBX/", 'ORIGINALS': "//01.Bake/", 'EXPORT': "//Export/",
@@ -440,6 +503,9 @@ def auto_fill(scene, view_layer):
         found = f" ({n}/{total} files)" if total else ""
         lines.append(f"{LABELS[role]}: {value}{found}")
     _DIRS.clear()
+    n = relink_missing(scene)
+    if n:
+        lines.append(f"{n} missing texture(s) / photo(s) relinked")
     return lines
 
 
@@ -532,6 +598,7 @@ def _startup():
     _pin_old()      # first: a file kept on 01.Baking never gets an empty 01.Bake
     _fill_roles()
     make_dirs()
+    relink_all_missing()
     return None
 
 
