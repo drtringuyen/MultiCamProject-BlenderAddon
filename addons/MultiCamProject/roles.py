@@ -10,7 +10,7 @@ ROLES = {
     'OBJECTS': ("objects_collection", "Objects", 'MESH_CUBE', ("OBJECTS",)),
     'ORIGINALS': ("originals_collection", "Original Mesh", 'MESH_ICOSPHERE', ("Original Mesh",)),
     'EXPORT': ("export_collection", "Export", 'EXPORT', ("EXPORT",)),
-    'CAMERAS': ("cameras_collection", "Cameras", 'OUTLINER_OB_CAMERA', ()),
+    'CAMERAS': ("cameras_collection", "Cameras", 'OUTLINER_OB_CAMERA', ("CAMERAS",)),
 }
 ORDER = ('OBJECTS', 'ORIGINALS', 'EXPORT', 'CAMERAS')     # the header's buttons
 
@@ -113,3 +113,36 @@ def ensure(scene, role):
     if props is not None:
         setattr(props, ROLES[role][0], coll)
     return coll
+
+
+def _found(scene, view_layer, role):
+    """The collection to fill an empty picker with: the one with the usual name in this
+    scene, else (cameras) the only collection holding just cameras."""
+    names = {n.lower() for n in ROLES[role][3]}
+    layers = _layers(view_layer)
+    named = [lc.collection for lc in layers if lc.collection.name.lower() in names]
+    if named:
+        return named[0]
+    if role == 'CAMERAS':
+        cams = [c for c, _lc in collections(scene, view_layer, role)]
+        if len(cams) == 1:
+            return cams[0]
+    return None
+
+
+def autofill(scene):
+    """Empty pickers get the collection found for them (file load / save / install).
+    Returns the roles filled."""
+    props = getattr(scene, "multicamproject_props", None)
+    if props is None or not scene.view_layers:
+        return []
+    filled = []
+    for role in ORDER:
+        attr = ROLES[role][0]
+        if getattr(props, attr) is not None:
+            continue
+        coll = _found(scene, scene.view_layers[0], role)
+        if coll is not None:
+            setattr(props, attr, coll)
+            filled.append(role)
+    return filled

@@ -387,8 +387,21 @@ def _redraw():
                 area.tag_redraw()
 
 
+def _fill_roles():
+    """Empty collection pickers get OBJECTS / Original Mesh / EXPORT / CAMERAS when found."""
+    filled = False
+    for scene in bpy.data.scenes:
+        try:
+            filled = bool(roles.autofill(scene)) or filled
+        except Exception as e:
+            print(f"[MultiCamProject] collection roles skipped: {e}")
+    if filled:
+        _redraw()
+
+
 def _startup():
     _pin_old()      # first: a file kept on 01.Baking never gets an empty 01.Bake
+    _fill_roles()
     make_dirs()
     return None
 
