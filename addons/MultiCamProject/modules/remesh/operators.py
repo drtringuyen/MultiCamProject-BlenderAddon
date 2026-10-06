@@ -1,7 +1,7 @@
 import bmesh
 import bpy
 import gpu
-from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
@@ -34,23 +34,6 @@ def _decided(cls, obj):
         cls.poll_message_set("Decide the Decimate first (Apply)")
         return False
     return True
-
-
-class MULTICAMPROJECT_OT_RemeshDecimateRatio(bpy.types.Operator):
-    """Set the Decimate amount (one viewport update, no slider drag)"""
-    bl_idname = "multicamproject.remesh_decimate_ratio"
-    bl_label = "Decimate Amount"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    ratio: FloatProperty(min=0.0001, max=1.0, default=0.05, options={'SKIP_SAVE'})
-
-    @classmethod
-    def poll(cls, context):
-        return wf.decimate_modifier(context.active_object) is not None
-
-    def execute(self, context):
-        wf.decimate_modifier(context.active_object).ratio = self.ratio
-        return {'FINISHED'}
 
 
 class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
@@ -825,8 +808,7 @@ class MULTICAMPROJECT_OT_UnlinkOriginal(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_RemeshDecimateRatio, MULTICAMPROJECT_OT_RemeshPolyCut,
-            MULTICAMPROJECT_OT_Remesh,
+_CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
             MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,

@@ -114,7 +114,6 @@ def ensure_stack(obj, applied_ok=True):
 
 
 APPLIED_KEY = "multicamproject_decimated"   # on the object: the Decimate was applied (03)
-DECIMATE_PRESETS = (0.02, 0.05, 0.1, 0.2)
 
 
 def decimate_pending(obj):

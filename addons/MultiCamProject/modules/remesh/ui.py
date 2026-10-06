@@ -23,15 +23,14 @@ def _faces_text(context, obj):
 
 
 def _draw_amount_row(row, context, obj, dec, label, scale=1.0):
-    """[eye] [amount] [after / before faces] [Apply] on one row."""
+    """[after / before faces] [eye] [amount] [Apply] on one row."""
     row.scale_y = scale
-    row.prop(dec, "show_viewport", text="", emboss=False)
-    split = row.split(factor=0.34, align=True)
+    split = row.split(factor=0.42, align=True)
+    split.label(text=_faces_text(context, obj).replace(" faces", ""))
+    rest = split.row(align=True)
+    rest.prop(dec, "show_viewport", text="", emboss=False)
+    split = rest.split(factor=0.55, align=True)
     split.prop(dec, "ratio", text=label)
-    split = split.split(factor=0.68, align=True)
-    faces = split.row(align=True)
-    faces.alignment = 'CENTER'
-    faces.label(text=_faces_text(context, obj).replace(" faces", ""))
     split.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
 
 
@@ -43,10 +42,6 @@ def _draw_decide(layout, context, obj):
     box.alert = True
     box.label(text="03. Decide the Decimate - the rest unlocks after Apply", icon='MOD_DECIM')
     box.alert = False
-    row = box.row(align=True)
-    for r in wf.DECIMATE_PRESETS:
-        row.operator("multicamproject.remesh_decimate_ratio", text=f"{r:g}",
-                     depress=abs(dec.ratio - r) < 1e-6).ratio = r
     _draw_amount_row(box.row(align=True), context, obj, dec, "", 1.4)
     hint = box.row()
     hint.active = False
