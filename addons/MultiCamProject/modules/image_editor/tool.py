@@ -46,7 +46,7 @@ def preview_dims(space):
     img = space.image
     if img is None or not img.has_data:
         return None
-    return field.preview_size(*img.size)
+    return field.preview_size(*img.size, props.preview_long_side())
 
 
 def screen_scale(region, dims):

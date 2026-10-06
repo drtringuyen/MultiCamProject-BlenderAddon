@@ -156,7 +156,8 @@ def start(img):
     if w < 2 or h < 2:
         _drop_unused(source, img)
         raise ValueError(f"Cannot read the pixels of {source.name} - is the file missing?")
-    pw, ph = field.preview_size(w, h)
+    from . import props
+    pw, ph = field.preview_size(w, h, props.preview_long_side())
     src = field.downscale(read_pixels(source), pw, ph)
     users = users_of(img)
 
