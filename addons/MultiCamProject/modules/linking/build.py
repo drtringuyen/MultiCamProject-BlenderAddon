@@ -156,9 +156,22 @@ def _build():
         _layout()
     except Exception as e:      # never stop the window over its layout
         print(f"[MultiCamProject] work window: layout skipped: {e}")
+    if obj is not None and settings.get("save_as"):
+        _save(settings["save_as"])
     if obj is not None and settings.get("start"):
         _start(settings["start"])
     return None
+
+
+def _save(path):
+    """The window buttons of 0C / 0D: the window is saved at once (Bake Folder/<object>.blend),
+    so the main file can open it again - its save handlers record it as a saved window."""
+    try:
+        win = bpy.context.window_manager.windows[0]
+        with bpy.context.temp_override(window=win):
+            bpy.ops.wm.save_as_mainfile(filepath=path, check_existing=False)
+    except Exception as e:  # never stop the window over the save
+        print(f"[MultiCamProject] work window: not saved as {path}: {e}")
 
 
 def _start(start):

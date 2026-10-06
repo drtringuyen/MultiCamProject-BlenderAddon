@@ -71,6 +71,15 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
         pass
 
 
+def _new_name(row, context):
+    """The window buttons' New Object Name (one setting, shown on the 0C and 0D rows)."""
+    props = context.scene.multicamproject_props
+    cell = row.row(align=True)
+    cell.ui_units_x = 5
+    cell.alert = not props.new_object_name.strip()
+    cell.prop(props, "new_object_name", text="", placeholder="New name")
+
+
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
     """Setup: Setup File IO (collections + folders), then 0A / 0B / 0C (or 0D) in any order - each adds its part to the same object:
     MCP_ + MAT_, the camera lists, the Bake Source, EXPORT. 0E: new UVs for a handmade one"""
@@ -125,6 +134,7 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.operator("multicamproject.remesh", text="0C. Remesh",
                          icon='CHECKMARK' if low else 'MOD_REMESH')
             if mm.is_loaded("linking"):     # 0B + 0C + Send Out in one click
+                _new_name(row, context)
                 row.operator("multicamproject.work_remesh_out", text="",
                              icon='WINDOW').mode = 'REMESH'
             row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
@@ -136,6 +146,7 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.operator("multicamproject.retopo_empty", text="0D. Retopo",
                          icon='CHECKMARK' if retopo else 'MESH_PLANE')
             if mm.is_loaded("linking"):     # 0B + 0D + Send Out in one click
+                _new_name(row, context)
                 row.operator("multicamproject.work_remesh_out", text="",
                              icon='WINDOW').mode = 'RETOPO'
             # plane or empty: also the third icon, so both window buttons line up

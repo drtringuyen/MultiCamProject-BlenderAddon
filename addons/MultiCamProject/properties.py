@@ -39,6 +39,11 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         type=bpy.types.Collection, name="Cameras",
         description="The camera collection. Empty = every collection holding only cameras")
 
+    new_object_name: StringProperty(
+        name="New Object Name", default="",
+        description="The window buttons of 0C / 0D: the new object becomes ENV_<prefix>."
+                    "<next ##>_<this name>, its work window saved as that name in the Bake "
+                    "Folder")
     file_io_done: BoolProperty(
         name="File IO Set Up", default=False,
         description="Setup File IO ran in this file (gate.py: the add-on unlocks)")

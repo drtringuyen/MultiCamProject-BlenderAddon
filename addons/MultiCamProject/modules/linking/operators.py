@@ -305,8 +305,10 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
 
 class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
     """One click: 0B Setup Camera Projection (when not done yet), 0C Remesh / 0D Retopo,
-    then Send Out of the new low poly - a work window opens with it, its original (the Bake
-    Source) and its cameras, in the PolyCut tool / on the retopo. Receive it back here"""
+    the new low poly named ENV_<prefix>.<next ##>_<New Object Name> (the original keeps its
+    name), then Send Out - a work window opens with it, its original (the Bake Source) and
+    its cameras, in the PolyCut tool / on the retopo, saved as Bake Folder/<name>.blend.
+    Receive it back here"""
     bl_idname = "multicamproject.work_remesh_out"
     bl_label = "Remesh + Send Out"
     bl_options = {'REGISTER', 'UNDO'}
@@ -319,8 +321,9 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
     @classmethod
     def description(cls, context, props):
         step = "0C Remesh" if props.mode == 'REMESH' else "0D Retopo"
-        return (f"0B Setup Camera Projection (when not done), {step}, then open the low poly "
-                "in a work window (linked: Receive it back here)")
+        return (f"0B Setup Camera Projection (when not done), {step} - the new object is "
+                "ENV_<prefix>.<next ##>_<name> - then open it in a work window saved in the "
+                "Bake Folder (linked: Receive it back here)")
 
     @classmethod
     def poll(cls, context):
@@ -335,8 +338,12 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             return False
         try:
             from ..remesh import operators as rops
+            from ..export import fixes  # noqa: F401 - the ENV_ rename
         except ImportError:
-            cls.poll_message_set("The Remesh module is off")
+            cls.poll_message_set("Needs the Remesh and Export modules")
+            return False
+        if not context.scene.multicamproject_props.new_object_name.strip():
+            cls.poll_message_set("Type the new object's name first")
             return False
         return rops._remesh_poll(cls, context)
 
@@ -347,8 +354,31 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             self.report({'WARNING'}, f"'{obj.name}' is linked to a work window: end the link "
                                      "(X) first")
             return {'CANCELLED'}
+        from ... import folders
+        from ..baking import naming
+        from ..export import fixes
+        scene = context.scene
+        sc = naming.scheme(scene)
+        if sc is None:
+            self.report({'ERROR'}, "No Name Prefix")
+            return {'CANCELLED'}
+        new_name = naming.full_name(sc, _next_index(sc),
+                                    scene.multicamproject_props.new_object_name)
+        if bpy.data.objects.get(new_name) is not None:
+            self.report({'ERROR'}, f"'{new_name}' already exists")
+            return {'CANCELLED'}
+        folders.make_dir(scene, 'ORIGINALS')
+        bake_dir = folders.folder(scene, 'ORIGINALS')
+        if not bake_dir or not os.path.isdir(bake_dir):
+            self.report({'ERROR'}, f"Bake Folder not found: {bake_dir or '(empty)'}")
+            return {'CANCELLED'}
+        path = os.path.join(bake_dir, new_name + ".blend")
+        if os.path.exists(path):
+            self.report({'ERROR'}, f"{path} already exists - pick another name")
+            return {'CANCELLED'}
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+        name, mesh_name = obj.name, obj.data.name
         # 0B: through its operator (warnings, Bake Route) - only when not set up yet
         cp = getattr(obj, "multicamproject_cam", None)
         if cp is not None and not cp.is_setup:
@@ -359,14 +389,30 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO')
         for w in warnings:
             self.report({'WARNING'}, w)
+        # the new object's own name (MCP_ / MAT_ / textures follow), into EXPORT; the
+        # original takes its name back (make_copy gave it _original)
+        export = fixes.ensure_export_collection(scene)
+        if export not in copy.users_collection:
+            export.objects.link(copy)
+        fixes.rename_object(copy, new_name)
+        obj.name = name
+        if obj.data.users == 1:
+            obj.data.name = mesh_name
         try:
-            core.send_out(context, copy, start=self.mode)
+            core.send_out(context, copy, start=self.mode, save_as=path)
         except Exception as e:
             self.report({'ERROR'}, f"'{copy.name}' is made, but Send Out failed: {e}")
             return {'FINISHED'}
-        self.report({'INFO'}, f"'{copy.name}' sent out: a work window is opening "
-                              f"('{obj.name}' is its original here)")
+        self.report({'INFO'}, f"'{copy.name}' sent out: a work window is opening, saved as "
+                              f"{os.path.basename(path)} ('{obj.name}' is its original)")
         return {'FINISHED'}
+
+
+def _next_index(sc):
+    """The ## after the highest one of this prefix in the file (00 when there is none)."""
+    from ..baking import naming
+    found = [p[0] for p in (naming.parse(o.name, sc) for o in bpy.data.objects) if p]
+    return max(found) + 1 if found else 0
 
 
 _CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,

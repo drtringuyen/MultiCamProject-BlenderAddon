@@ -271,9 +271,10 @@ def _keep_names(obj):
     return names
 
 
-def send_out(context, obj, start=""):
+def send_out(context, obj, start="", save_as=""):
     """Write obj (with everything it points to) for a new Blender and open it there.
     `start`: 'REMESH' / 'RETOPO' opens the window in the PolyCut tool / the retopo.
+    `save_as`: the window saves itself there right away (else it stays unsaved).
     Returns the send-out id."""
     main = bpy.data.filepath
     if not main:
@@ -299,7 +300,7 @@ def send_out(context, obj, start=""):
         "render": [scene.render.resolution_x, scene.render.resolution_y,
                    scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
         "unit_system": scene.unit_settings.system,
-        "unit_scale": scene.unit_settings.scale_length, "start": start}
+        "unit_scale": scene.unit_settings.scale_length, "start": start, "save_as": save_as}
     settings_path = os.path.join(job_dir(job_id), SETTINGS_FILE)
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f)
