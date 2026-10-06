@@ -105,13 +105,8 @@ def draw_roles(layout, context):
 
 
 def _draw_folder(row, scene, role, wide):
-    """'<label>' [folder] [reload] of one role; the cameras' only once an object has Camera
-    Projection set up."""
+    """'<label>' [folder] [reload] of one role."""
     label = folders.LABELS[role]
-    if role == 'CAMERAS' and not folders.photo_objects():
-        row.active = False
-        row.label(text=f"{label}: after Camera Projection setup", icon='INFO')
-        return
     pg, attr = folders.holder(scene, role)
     if pg is None:
         row.active = False

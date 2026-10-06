@@ -239,8 +239,8 @@ class MULTICAMPROJECT_OT_ReloadFolder(bpy.types.Operator):
             'ORIGINALS': "Point every ALB_/NOR_ and work bake at the file of the same name in "
                          "the Bake Folder, then reload them",
             'EXPORT': "Reload the textures that come from the Export Folder",
-            'CAMERAS': "Use Camera Photos on every object with Camera Projection and run "
-                       "Reload All on each of them",
+            'CAMERAS': "Relink every camera's background photo from Camera Photos and reload "
+                       "it; objects with Camera Projection use the folder and get a Reload All",
         }[props.role]
 
     @classmethod

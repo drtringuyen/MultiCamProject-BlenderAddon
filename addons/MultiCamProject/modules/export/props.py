@@ -147,7 +147,7 @@ class MULTICAMPROJECT_ExportSettings(bpy.types.PropertyGroup):
                     "down, the list is sorted by ##. Off: type ## and names freely (only the "
                     "object is renamed, nothing moves). Turning it on again numbers 00 -> n in "
                     "the typed order and renames MCP_/MAT_/ALB_/NOR_ and their files")
-    folder: StringProperty(name="Folder", default="//", subtype='DIR_PATH',
+    folder: StringProperty(name="Folder", default="//Export/", subtype='DIR_PATH',
                            description="Folder for the FBX, Textures/, Editor/ and the report")
     split: EnumProperty(
         name="Files", default='ONE',

@@ -1,12 +1,13 @@
 """Role folders: each collection role of the Linking panel has its folder and a Reload.
 
-    Objects        Scan Textures  the objects' original scan textures   (//00.Scan/01.fbx/)
+    Objects        Scan Textures  the objects' original scan textures   (//00.Scan/01.FBX/)
     Original Mesh  Bake Folder    the ALB_/NOR_ + work bakes            (//01.Bake/)
-    Export         Export Folder  the FBX + Textures/                   (//)
+    Export         Export Folder  the FBX + Textures/                   (//Export/)
     Cameras        Camera Photos  every camera photo                    (//00.Scan/00.Photos/)
 
 The bake and export folders are the Baking / 07 settings themselves (one setting, two
-places); the camera one is the scene's and is pushed to every object with Camera Projection.
+places); the camera one is the scene's: it relinks the cameras' background photos (also before
+any Camera Projection setup) and is pushed to every object with Camera Projection.
 Reload points every texture of the role at the file of the same name in its folder - unless
 it already is in that folder (or below it, e.g. a work window's _work bakes) - then reloads
 them. Files that are not found keep their path and are reported."""
@@ -20,8 +21,7 @@ from . import roles
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".tga", ".webp", ".bmp")
 # the defaults these folders had before; a file that never set them keeps them (_pin_old)
-OLD_DEFAULTS = (("multicamproject_bake_settings", "output_dir", "//01.Baking/"),
-                ("multicamproject_export", "folder", "//Export/"))
+OLD_DEFAULTS = (("multicamproject_bake_settings", "output_dir", "//01.Baking/"),)
 
 
 # ---------------------------------------------------------------- the four folders
@@ -216,6 +216,52 @@ def export_images(top):
             and _inside(bpy.path.abspath(i.filepath), top)]
 
 
+def _cameras(scene, view_layer):
+    """The Cameras role's camera objects, else every camera of the scene."""
+    cams = [o for o in _role_objects(scene, view_layer, 'CAMERAS') if o.type == 'CAMERA']
+    return cams or [o for o in scene.objects if o.type == 'CAMERA']
+
+
+def relink_photos(scene, view_layer, top):
+    """Every camera's background photo from `top` (by its file name, then the camera's name);
+    a camera without one gets <camera name>.<ext> when it is there. Works without any
+    Camera Projection setup. Returns (relinked, reloaded, [cameras not found])."""
+    listing = _listing(top)
+    relinked, reloaded, missing = 0, 0, []
+    for cam in _cameras(scene, view_layer):
+        bgs = cam.data.background_images
+        img = bgs[0].image if len(bgs) else None
+        if img is not None:
+            r, n, miss = relink([img], top)
+            if miss:        # the image's own name failed: try the camera's
+                real = next((listing[(cam.name + e).lower()] for e in IMAGE_EXTS
+                             if (cam.name + e).lower() in listing), None)
+                if real is None:
+                    missing.append(cam.name)
+                else:
+                    img.filepath = _rel(os.path.join(top, real))
+                    img.reload()
+                    r += 1
+            relinked, reloaded = relinked + r, reloaded + n
+            continue
+        real = next((listing[(cam.name + e).lower()] for e in IMAGE_EXTS
+                     if (cam.name + e).lower() in listing), None)
+        if real is None:
+            missing.append(cam.name)
+            continue
+        img = bpy.data.images.load(_rel(os.path.join(top, real)), check_existing=True)
+        bg = bgs[0] if len(bgs) else bgs.new()
+        bg.image = img
+        cam.data.show_background_images = True
+        relinked, reloaded = relinked + 1, reloaded + 1
+    return relinked, reloaded, missing
+
+
+def _missing_text(missing):
+    shown = ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "")
+    return f"{len(missing)} not in the folder (kept): {shown}"
+
+
 # ---------------------------------------------------------------- reload per role
 
 def push_photos(scene):
@@ -241,12 +287,18 @@ def reload(scene, view_layer, role):
         return f"{LABELS[role]} not found: {top or '(empty)'}", []
     warnings = []
     if role == 'CAMERAS':
-        from .modules.camera_project import core
-        push_photos(scene)
+        relinked, reloaded, missing = relink_photos(scene, view_layer, top)
+        if missing:
+            warnings.append(_missing_text(missing))
+        text = f"{reloaded} camera photo(s) reloaded, {relinked} relinked to {top}"
         objs = photo_objects()
-        for obj in objs:
-            warnings += [f"{obj.name}: {w}" for w in core.refresh(obj, scene)]
-        return f"Reload All on {len(objs)} object(s) from {top}", warnings
+        if objs:
+            from .modules.camera_project import core
+            push_photos(scene)
+            for obj in objs:
+                warnings += [f"{obj.name}: {w}" for w in core.refresh(obj, scene)]
+            text += f" · Reload All on {len(objs)} object(s)"
+        return text, warnings
     if role == 'OBJECTS':
         images = scan_images(scene, view_layer)
     elif role == 'ORIGINALS':
@@ -255,16 +307,15 @@ def reload(scene, view_layer, role):
         images = export_images(top)
     relinked, reloaded, missing = relink(images, top)
     if missing:
-        shown = ", ".join(missing[:6]) + (" ..." if len(missing) > 6 else "")
-        warnings.append(f"{len(missing)} not in the folder (kept): {shown}")
+        warnings.append(_missing_text(missing))
     return f"{reloaded} texture(s) reloaded, {relinked} relinked to {top}", warnings
 
 
 # ---------------------------------------------------------------- old files keep their folders
 
 def _pin_old():
-    """A file saved before the defaults changed (01.Baking -> 01.Bake, Export -> next to the
-    .blend) and that never set the folder keeps its old one when it exists."""
+    """A file saved before the default changed (01.Baking -> 01.Bake) and that never set the
+    folder keeps its old one when it exists."""
     if not bpy.data.filepath:
         return None
     for scene in bpy.data.scenes:
