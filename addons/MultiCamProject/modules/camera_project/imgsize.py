@@ -1,14 +1,48 @@
 """Width / height of an image without decoding it. img.size makes Blender load the whole
 picture - an 8K photo is ~0.3 s and hundreds of MB, far too much for 490 cameras - so the
 size is read from the file header (PNG IHDR, JPEG SOF), from the packed bytes for a packed
-image. Cached per file (path, size, date)."""
+image. Cached per file (path, size, date).
+
+The photos sit on a network drive where every stat costs ~1 ms: a file's existence, size and
+date come from one listing of its folder (scandir carries them), kept DIR_TTL seconds."""
 import io
 import os
 import struct
+import time
 
 import bpy
 
 _cache = {}         # key -> (w, h) or None
+_dirs = {}          # normcase folder -> (time read, {normcase name: (size, mtime)})
+DIR_TTL = 2.0
+
+
+def forget():
+    """Read the folders again on the next call (a Reload All starts with this)."""
+    _dirs.clear()
+
+
+def entry(path):
+    """(size, mtime) of the file at `path`, or None when it is not there - from its
+    folder's listing."""
+    # the key is case-folded, the folder is read as written: Google Drive's
+    # shortcut-targets-by-id paths are case-sensitive
+    real, name = os.path.split(os.path.abspath(path))
+    folder, name = os.path.normcase(real), os.path.normcase(name)
+    now = time.monotonic()
+    hit = _dirs.get(folder)
+    if hit is None or now - hit[0] > DIR_TTL:
+        files = {}
+        try:
+            with os.scandir(real) as it:
+                for e in it:
+                    if e.is_file():
+                        st = e.stat()       # Windows: from the listing, no extra call
+                        files[os.path.normcase(e.name)] = (st.st_size, st.st_mtime)
+        except OSError:
+            pass
+        hit = _dirs[folder] = (now, files)
+    return hit[1].get(name)
 _SOF = {0xC0, 0xC1, 0xC2, 0xC3, 0xC5, 0xC6, 0xC7, 0xC9, 0xCA, 0xCB, 0xCD, 0xCE, 0xCF}
 
 
@@ -70,11 +104,10 @@ def _header(img):
     if img.source != 'FILE' or not img.filepath:
         return None
     path = bpy.path.abspath(img.filepath, library=img.library)
-    try:
-        st = os.stat(path)
-    except OSError:
+    st = entry(path)
+    if st is None:
         return None
-    key = (os.path.normcase(path), st.st_size, st.st_mtime)
+    key = (os.path.normcase(path), st[0], st[1])
     if key not in _cache:
         try:
             with open(path, "rb") as f:

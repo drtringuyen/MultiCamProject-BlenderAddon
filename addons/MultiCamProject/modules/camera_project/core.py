@@ -58,7 +58,8 @@ def image_ok(img):
     if img is None:
         return False
     if img.source == 'FILE' and not img.packed_file:
-        if not os.path.isfile(bpy.path.abspath(img.filepath, library=img.library)):
+        if not img.filepath or imgsize.entry(
+                bpy.path.abspath(img.filepath, library=img.library)) is None:
             return False
     if img.has_data:
         return img.size[0] > 0 and img.size[1] > 0
@@ -1658,6 +1659,7 @@ def refresh(obj, scene):
     Returns a list of warning strings."""
     d = data(obj)
     warnings = []
+    imgsize.forget()        # photos copied in since the last look count
 
     cams = scene_cameras(scene)
     folder, listing = _folder_listing(d.image_folder)
