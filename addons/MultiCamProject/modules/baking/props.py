@@ -74,7 +74,7 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                                            "or a Rebake): another one means Rebake first")
     rebaked: BoolProperty(description="A Rebake wrote ALB_ / NOR_ since Edit UV (Cancel puts "
                                       "the _previous files back)")
-    retopo: BoolProperty(description="Made by 0D Retopo Empty: modelled by hand on top of the "
+    retopo: BoolProperty(description="Made by 0D Retopo: modelled by hand on top of the "
                                      "original, no Decimate")
     # where 06 Bake Final takes ALB_ / NOR_ from (each object its own)
     route: EnumProperty(name="Bake Route", items=ROUTE_ITEMS, default='MIXED', update=_on_route,

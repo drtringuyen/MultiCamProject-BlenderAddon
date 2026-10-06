@@ -299,7 +299,7 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
-    """One click: 0B Setup Camera Projection (when not done yet), 0C Remesh / 0D Retopo Empty,
+    """One click: 0B Setup Camera Projection (when not done yet), 0C Remesh / 0D Retopo,
     then Send Out of the new low poly - a work window opens with it, its original (the Bake
     Source) and its cameras, in the PolyCut tool / on the retopo. Receive it back here"""
     bl_idname = "multicamproject.work_remesh_out"
@@ -308,12 +308,12 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
 
     mode: bpy.props.EnumProperty(
         items=(('REMESH', "Remesh", "0B + 0C Remesh, then Send Out"),
-               ('RETOPO', "Retopo Empty", "0B + 0D Retopo Empty, then Send Out")),
+               ('RETOPO', "Retopo", "0B + 0D Retopo, then Send Out")),
         options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def description(cls, context, props):
-        step = "0C Remesh" if props.mode == 'REMESH' else "0D Retopo Empty"
+        step = "0C Remesh" if props.mode == 'REMESH' else "0D Retopo"
         return (f"0B Setup Camera Projection (when not done), {step}, then open the low poly "
                 "in a work window (linked: Receive it back here)")
 

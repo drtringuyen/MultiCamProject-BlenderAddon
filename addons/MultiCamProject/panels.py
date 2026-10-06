@@ -134,11 +134,13 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
             retopo = low and wf.is_retopo(obj)
             row = col.row(align=True)
-            row.operator("multicamproject.retopo_empty", text="0D. Retopo Empty",
+            row.operator("multicamproject.retopo_empty", text="0D. Retopo",
                          icon='CHECKMARK' if retopo else 'MESH_PLANE')
             if mm.is_loaded("linking"):     # 0B + 0D + Send Out in one click
                 row.operator("multicamproject.work_remesh_out", text="",
                              icon='WINDOW').mode = 'RETOPO'
+            # plane or empty: also the third icon, so both window buttons line up
+            row.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_PLANE')
             row.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
 
         hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade

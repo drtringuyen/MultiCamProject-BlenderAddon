@@ -461,9 +461,10 @@ def _export_collection(scene):
     return fixes.ensure_export_collection(scene)
 
 
-def retopo_plane(obj, name):
+def retopo_plane(obj, name, plane=True):
     """0D's start: one quad over obj's bounds (local X/Y) at their bottom (where the export
-    wants the origin), its uv_normal filling 0-1, every material slot of obj."""
+    wants the origin), its uv_normal filling 0-1, every material slot of obj. `plane` off:
+    a completely empty mesh (uv_normal and the slots still there)."""
     me = obj.data
     n = len(me.vertices)
     if n:
@@ -476,6 +477,12 @@ def retopo_plane(obj, name):
     c = (lo + hi) / 2
     c[2] = lo[2]
     hx, hy = max((hi[0] - lo[0]) / 2, 0.01), max((hi[1] - lo[1]) / 2, 0.01)
+    if not plane:
+        empty = bpy.data.meshes.new(name)
+        empty.uv_layers.new(name=cp.UV_NORMAL)
+        for m in me.materials:
+            empty.materials.append(m)
+        return empty
     plane = bpy.data.meshes.new(name)
     plane.from_pydata([(c[0] - hx, c[1] - hy, c[2]), (c[0] + hx, c[1] - hy, c[2]),
                        (c[0] + hx, c[1] + hy, c[2]), (c[0] - hx, c[1] + hy, c[2])],
@@ -495,8 +502,8 @@ def is_retopo(obj):
 
 
 def make_copy(context, obj, retopo=False):
-    """The Remesh button (0C), or with `retopo` 0D Retopo Empty: the same, but the copy gets
-    a plane (retopo_plane) instead of the scan's mesh, and no Decimate. Returns (copy,
+    """The Remesh button (0C), or with `retopo` 0D Retopo: the same, but the copy gets
+    a plane - or nothing, per the 0D option (retopo_plane) - instead of the scan's mesh, and no Decimate. Returns (copy,
     warnings). Object Mode only."""
     if is_handmade(obj):
         raise RuntimeError(HANDMADE_TEXT)
@@ -510,7 +517,8 @@ def make_copy(context, obj, retopo=False):
     collections = [c for c in obj.users_collection if c != orig_coll]
 
     copy = obj.copy()                   # a full copy: a cut must never touch the original
-    copy.data = retopo_plane(obj, mesh_name) if retopo else obj.data.copy()
+    with_plane = getattr(scene, "multicamproject_retopo_plane", True)
+    copy.data = retopo_plane(obj, mesh_name, with_plane) if retopo else obj.data.copy()
     # plain renames (not export's rename_object): MCP_/MAT_/ALB_/NOR_ keep their names and
     # belong to the copy, which takes the original name
     obj.name = name + ORIGINAL_SUFFIX

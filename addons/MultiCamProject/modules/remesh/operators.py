@@ -301,11 +301,12 @@ def focus_retopo(context, obj, report=None):
 
 
 class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
-    """0D Retopo Empty: as 0C Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
-    but the new object starts as one plane (uv_normal 0-1) to model by hand on the original.
+    """0D Retopo: as 0C Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
+    but the new object starts as one plane (uv_normal 0-1) - or empty, per the 0D option -
+    to model by hand on the original.
     Then both in local view and Edit Mode on the new object"""
     bl_idname = "multicamproject.retopo_empty"
-    bl_label = "Retopo Empty"
+    bl_label = "Retopo"
     bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
@@ -812,6 +813,10 @@ def register():
         name="Retopo Snapping", default=True,
         description="0D: snap to the original's surface (Face Project) and the Retopology "
                     "overlay - changes the scene's snapping settings")
+    bpy.types.Scene.multicamproject_retopo_plane = BoolProperty(
+        name="Start with a Plane", default=True,
+        description="0D: on - the retopo starts as one plane over the original's bounds "
+                    "(uv_normal 0-1); off - completely empty, model from nothing")
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(_face_menu)
     bpy.types.VIEW3D_MT_edit_mesh_faces.append(_face_menu)
     core.register()
@@ -819,6 +824,7 @@ def register():
 
 def unregister():
     del bpy.types.Scene.multicamproject_retopo_snap
+    del bpy.types.Scene.multicamproject_retopo_plane
     core.unregister()
     bpy.types.VIEW3D_MT_edit_mesh_faces.remove(_face_menu)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_face_menu)
