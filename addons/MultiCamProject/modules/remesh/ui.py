@@ -112,6 +112,11 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
             box.label(text=f"{len(obj.data.polygons):,} faces · vg_Protect stays · "
                            "apply before the unwrap", icon='INFO')
+            if not dec.show_viewport:
+                hint = box.row()
+                hint.active = False
+                hint.label(text="Preview off (fast while cutting) - the eye shows it",
+                           icon='HIDE_ON')
         elif obj.get(wf.APPLIED_KEY):
             box.label(text=f"03. Decimate applied: {len(obj.data.polygons):,} faces",
                       icon='CHECKMARK')

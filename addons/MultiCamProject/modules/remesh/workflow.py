@@ -108,6 +108,9 @@ def ensure_stack(obj, applied_ok=True):
         dec.ratio = DECIMATE_RATIO if ratio is None else ratio
         dec.vertex_group = VG_PROTECT
         dec.invert_vertex_group = True      # weight 1 = protected = not decimated
+        # hidden while cutting / marking (01, 02): on a scan it re-evaluates for seconds
+        # after every change; the 03 eye shows the result, Apply works either way
+        dec.show_viewport = False
     _move(obj, dec, 0)
     return dec
 
@@ -137,6 +140,7 @@ def apply_decimate(context, obj):
     if sum(o.data == obj.data for o in bpy.data.objects) > 1:
         raise RuntimeError("The mesh is shared by several objects")
     _move(obj, dec, 0)
+    dec.show_viewport = True    # Blender skips a modifier hidden in the viewport
     before = len(obj.data.polygons)
     with context.temp_override(object=obj, active_object=obj):
         bpy.ops.object.modifier_apply(modifier=dec.name)
