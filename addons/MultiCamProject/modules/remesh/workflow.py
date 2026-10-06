@@ -20,7 +20,7 @@ DECIMATE = "Decimate"
 SNAP = "Snap to Source"
 VG_PROTECT = "vg_Protect"
 VG_SNAP = "vg_Snap"
-DECIMATE_RATIO = 0.5
+DECIMATE_RATIO = 0.05
 # the v3 stack, replaced on load (the GN-Remesh group itself is the user's: never deleted)
 OLD_GN_REMESH = "GN-Remesh"
 OLD_DECIMATES = ("Decimate Overall", "Decimate Selective")
