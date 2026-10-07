@@ -378,7 +378,7 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         sc = naming.scheme(scene)
         if sc is None:
             return None, "No Name Prefix"
-        new_name = naming.full_name(sc, _next_index(sc),
+        new_name = naming.full_name(sc, naming.next_index(sc),
                                     scene.multicamproject_props.new_object_name)
         if bpy.data.objects.get(new_name) is not None:
             return None, f"'{new_name}' already exists"
@@ -482,13 +482,6 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         self.report({'INFO'}, f"'{copy.name}' -> {os.path.basename(path)}: its '{work_name}' "
                               "takes this mesh (the old one goes to 'old version')")
         return {'FINISHED'}
-
-
-def _next_index(sc):
-    """The ## after the highest one of this prefix in the file (00 when there is none)."""
-    from ..baking import naming
-    found = [p[0] for p in (naming.parse(o.name, sc) for o in bpy.data.objects) if p]
-    return max(found) + 1 if found else 0
 
 
 class MULTICAMPROJECT_OT_WorkSave(bpy.types.Operator):

@@ -666,9 +666,19 @@ class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _object_mode(context)
+        return _object_or_edit(context)
 
     def execute(self, context):
+        # Edit Mode: out for the refresh (the slots / GN change), back in afterwards
+        edit = context.mode == 'EDIT_MESH'
+        _to_object_mode(context)
+        try:
+            return self._refresh(context)
+        finally:
+            if edit and context.active_object is not None:
+                bpy.ops.object.mode_set(mode='EDIT')
+
+    def _refresh(self, context):
         from . import cache, matsync
         scene = context.scene
         objs = [o for o in scope_objects(context, self.scope, bake=False) if matsync.in_scope(o)]

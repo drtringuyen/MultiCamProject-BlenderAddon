@@ -71,6 +71,12 @@ def full_name(sc, index, short):
     return fixed_part(sc, index) + clean_name(short)
 
 
+def next_index(sc):
+    """The ## after the highest one of this prefix in the file (00 when there is none)."""
+    found = [p[0] for p in (parse(o.name, sc) for o in bpy.data.objects) if p]
+    return max(found) + 1 if found else 0
+
+
 def short_name(name):
     """What the user names: the part after '...<##>_', or the cleaned name."""
     p = parse(name)

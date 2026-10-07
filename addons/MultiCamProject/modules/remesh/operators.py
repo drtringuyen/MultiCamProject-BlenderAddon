@@ -222,9 +222,11 @@ class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
         obj = context.active_object
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+        name, mesh_name = obj.name, obj.data.name
         copy, warnings = wf.make_copy(context, obj)
         for w in warnings:
             self.report({'WARNING'}, w)
+        wf.apply_new_name(context.scene, copy, obj, name, mesh_name)
         if wf.decimate_pending(copy):
             # Object Mode: the Decimate is decided first (Cutting & Modelling), then PolyCut
             self.report({'INFO'}, f"'{copy.name}' is the Remesh copy: decide its Decimate, "
@@ -336,9 +338,11 @@ class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
         obj = context.active_object
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+        name, mesh_name = obj.name, obj.data.name
         new, warnings = wf.make_copy(context, obj, retopo=True)
         for w in warnings:
             self.report({'WARNING'}, w)
+        wf.apply_new_name(context.scene, new, obj, name, mesh_name)
         focus_retopo(context, new, self.report)
         self.report({'INFO'}, f"'{new.name}' is the retopo, '{obj.name}' the high poly")
         return {'FINISHED'}

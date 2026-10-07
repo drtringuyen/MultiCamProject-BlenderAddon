@@ -573,6 +573,32 @@ def retopo_mesh(obj, name, content=()):
     return new
 
 
+def apply_new_name(scene, copy, obj, name, mesh_name):
+    """0C / 0D: the New Object Name typed on the Setup rows names the copy
+    ENV_<prefix>.<next ##>_<typed> (MCP_ / MAT_ / textures follow, as in 07) and the
+    original takes its name back. Returns the new name, else None (nothing typed, no Name
+    Prefix, no export module, or that name is taken)."""
+    typed = scene.multicamproject_props.new_object_name.strip()
+    if not typed:
+        return None
+    try:
+        from ..baking import naming
+        from ..export import fixes
+    except ImportError:
+        return None
+    sc = naming.scheme(scene)
+    if sc is None:
+        return None
+    new = naming.full_name(sc, naming.next_index(sc), typed)
+    if bpy.data.objects.get(new) is not None:
+        return None
+    fixes.rename_object(copy, new)
+    obj.name = name
+    if obj.data.users == 1:
+        obj.data.name = mesh_name
+    return new
+
+
 def is_retopo(obj):
     d = getattr(obj, "multicamproject_bake", None)
     return bool(d is not None and d.retopo)
@@ -634,6 +660,9 @@ def make_copy(context, obj, retopo=False, decimate=True):
     copy.select_set(True)
     if context.view_layer.objects.get(obj.name) == obj:
         obj.hide_set(True)              # (not when "Original Mesh" is excluded)
+    for o in content:                   # the retopo's start (ROOM_Template parts): done
+        o.select_set(False)
+        o.hide_set(True)
 
     if retopo:
         copy.multicamproject_bake.retopo = True
