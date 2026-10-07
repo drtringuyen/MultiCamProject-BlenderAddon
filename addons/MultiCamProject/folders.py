@@ -225,6 +225,45 @@ def scan_images(scene, view_layer):
                   key=lambda i: i.name)
 
 
+def original_normal_nodes(scene, view_layer):
+    """The Normal Map / Bump nodes of the originals' own materials (the scan materials of the
+    Objects and Original Mesh collections - not the add-on's MCP_ / MAT_, not linked ones),
+    in node groups too."""
+    try:
+        from .modules.camera_project import core as cp
+        ours = cp._is_ours
+    except ImportError:
+        ours = lambda m: False
+    mats = {s.material for role in ('OBJECTS', 'ORIGINALS')
+            for o in _role_objects(scene, view_layer, role) if o.type == 'MESH'
+            for s in o.material_slots if s.material is not None}
+    out, seen = [], set()
+
+    def walk(tree):
+        if tree is None or tree in seen or tree.library:
+            return
+        seen.add(tree)
+        for node in tree.nodes:
+            if node.type in {'NORMAL_MAP', 'BUMP'}:
+                out.append(node)
+            elif node.type == 'GROUP':
+                walk(node.node_tree)
+    for m in mats:
+        if not m.library and not ours(m) and m.use_nodes:
+            walk(m.node_tree)
+    return out
+
+
+def set_original_normal(scene, view_layer, strength):
+    """Every original material's normal Strength (original_normal_nodes). Returns the count."""
+    nodes = original_normal_nodes(scene, view_layer)
+    for node in nodes:
+        sock = node.inputs.get("Strength")
+        if sock is not None and not sock.links:
+            sock.default_value = strength
+    return len(nodes)
+
+
 def bake_images():
     own = _own_prefixes()
     return sorted((i for i in bpy.data.images if i.name.startswith(own)), key=lambda i: i.name)

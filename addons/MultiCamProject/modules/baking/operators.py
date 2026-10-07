@@ -196,7 +196,8 @@ class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
-    """04 Bake from Source: the Bake Source's colors into BAo_ and its surface into BNo_, on
+    """04 Bake from Source: the Bake Source's colors into BAo_ and (Original Normal = From
+    Original's Surface only) its surface into BNo_, on
     uv_normal at the scene's resolution (Selected to Active, Cage). Files in the bake folder, under
     the projection - not the final textures (06 Bake Final makes those)"""
     bl_idname = "multicamproject.bake_from_source"

@@ -1,7 +1,7 @@
 import bpy
 
 from ... import gate
-from . import common, fingerprint, gn_final, matsync, normal, operators, route
+from . import common, engine, fingerprint, gn_final, matsync, normal, operators, route
 
 
 def _res(n):
@@ -167,14 +167,17 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         col.active = False
         r = route.get(obj)
         if r in {route.ORIGINAL, route.MIXED}:
+            parts = "BAo_ / BNo_" if d.original_normal == 'BAKED' else "BAo_"
             if d.ba_image is None or not common.file_ok(d.ba_image):
-                col.label(text=f"No BAo_ / BNo_ yet: bakes from {d.bake_source.name} first",
+                col.label(text=f"No {parts} yet: bakes from {d.bake_source.name} first",
                           icon='INFO')
             elif fingerprint.ba_outdated(obj):
                 col.label(text=f"BAo_ outdated ({fingerprint.ba_why(obj)}): bakes from the "
                                "source again first", icon='INFO')
+            elif engine.needs_source_bake(obj):
+                col.label(text="No current BNo_: bakes from the source again first", icon='INFO')
             else:
-                col.label(text=f"BAo_ / BNo_ {_res(d.ba_size)} from {d.bake_source.name}",
+                col.label(text=f"{parts} {_res(d.ba_size)} from {d.bake_source.name}",
                           icon='MESH_DATA')
         if r in {route.PROJECTION, route.MIXED}:
             if d.bap_image is None or not common.file_ok(d.bap_image):

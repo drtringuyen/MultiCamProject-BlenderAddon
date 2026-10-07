@@ -556,8 +556,8 @@ def bake_from_source(context, obj):
 
 
 def bake_from_source_steps(context, obj):
-    """BAo_ (the source's colors) and BNo_ (its surface, tangent normals) onto obj's
-    uv_normal - Selected to Active from the Bake Source, at the object's resolution. Both are
+    """BAo_ (the source's colors) and BNo_ (its surface, tangent normals - only when the
+    object's Original Normal is From Original's Surface) onto obj's uv_normal - Selected to Active from the Bake Source, at the object's resolution. Both are
     files in the bake folder, overwritten on the next bake; MCP_ shows them under the
     projection. The low poly and its source are shown for the whole time (a Remesh original
     usually sits in an excluded collection). A generator (jobs); returns the seconds."""
@@ -587,7 +587,9 @@ def _bake_from_source(context, obj):
     d.ba_far_share, d.ba_far_max, d.ba_fit_cage = source_distance(obj, src)
     was_final = gn_final.is_final(obj)
     ba = _work_image(common.ba_name(obj), size, 'sRGB')
-    bn = _work_image(common.bn_name(obj), size, 'Non-Color', is_float=True)     # 16-bit PNG
+    # BNo_ (Cycles) only when picked: by default the original's normal is generated from BAo_
+    bn = (_work_image(common.bn_name(obj), size, 'Non-Color', is_float=True)    # 16-bit PNG
+          if d.original_normal == 'BAKED' else None)
     prev = _uv_normal_active(obj)
     try:
         with render_state(scene), \
@@ -598,27 +600,32 @@ def _bake_from_source(context, obj):
                 yield jobs.Step("Bake from Source: colors (BAo_)")
                 yield from _bake(context, obj, [obj, src], 'EMIT', size, ba,
                                  use_selected_to_active=True, cage_extrusion=common.cage(obj))
-            with mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
-                configure(scene, 'NORMAL')
-                b = scene.render.bake
-                b.normal_space = 'TANGENT'
-                b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
-                sel = [obj, hp]
-                hp.select_set(True)
-                yield jobs.Step("Bake from Source: surface (BNo_)")
-                yield from _bake(context, obj, sel, 'NORMAL', size, bn, use_selected_to_active=True,
-                                 cage_extrusion=common.cage(obj), normal_space='TANGENT')
+            if bn is not None:
+                with mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
+                    configure(scene, 'NORMAL')
+                    b = scene.render.bake
+                    b.normal_space = 'TANGENT'
+                    b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
+                    sel = [obj, hp]
+                    hp.select_set(True)
+                    yield jobs.Step("Bake from Source: surface (BNo_)")
+                    yield from _bake(context, obj, sel, 'NORMAL', size, bn,
+                                     use_selected_to_active=True, cage_extrusion=common.cage(obj),
+                                     normal_space='TANGENT')
     except Exception:
         bpy.data.images.remove(ba)      # the old BAo_ / BNo_ stay as they were
-        bpy.data.images.remove(bn)
+        if bn is not None:
+            bpy.data.images.remove(bn)
         raise
     finally:
         _uv_restore(obj, prev)
         if gn_final.is_final(obj) != was_final:
             gn_final.set_final(obj, scene, was_final)
-    yield jobs.Step("Bake from Source: writing BAo_ / BNo_")
+    yield jobs.Step("Bake from Source: writing BAo_" + (" / BNo_" if bn is not None else ""))
     d.ba_image = store_work(scene, ba, d.ba_image, common.ba_name(obj))
-    d.bn_image = store_work(scene, bn, d.bn_image, common.bn_name(obj), normal=True)
+    if bn is not None:
+        d.bn_image = store_work(scene, bn, d.bn_image, common.bn_name(obj), normal=True)
+    d.bn_stale = bn is None and d.bn_image is not None     # an older BNo_ left as it was
     d.ba_size = size
     d.ba_fingerprint = fingerprint.stamp_source(obj)
     d.last_ba_seconds = time.perf_counter() - t0
@@ -653,13 +660,15 @@ def source_distance(obj, src, samples=4000):
 
 
 def needs_source_bake(obj):
-    """A route that uses the Original, a Bake Source and no current BAo_: Bake Final bakes
-    from the source first."""
+    """A route that uses the Original, a Bake Source and no current BAo_ (or, From
+    Original's Surface picked, no current BNo_): Bake Final bakes from the source first."""
     from . import route
     d = common.data(obj)
     return (route.uses_original(obj) and d.bake_source is not None
             and (d.ba_image is None or not common.file_ok(d.ba_image)
-                 or fingerprint.ba_outdated(obj)))
+                 or fingerprint.ba_outdated(obj)
+                 or (d.original_normal == 'BAKED'
+                     and (d.bn_stale or d.bn_image is None or not common.file_ok(d.bn_image)))))
 
 
 def needs_projection_bake(obj):

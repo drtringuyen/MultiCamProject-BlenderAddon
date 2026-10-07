@@ -80,9 +80,10 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     route: EnumProperty(name="Bake Route", items=ROUTE_ITEMS, default='MIXED', update=_on_route,
                         description="Where Bake Final takes ALB_ / NOR_ from")
     original_normal: EnumProperty(
-        name="Original Normal", default='BAKED',
+        name="Original Normal", default='GENERATED',
         items=(('BAKED', "From Original's Surface",
-                "BNo_: the original's surface baked onto the low poly (Cycles)", 'MESH_DATA', 0),
+                "BNo_: the original's surface baked onto the low poly (Cycles) - only baked "
+                "when picked here", 'MESH_DATA', 0),
                ('GENERATED', "Generated from Albedo High-pass",
                 "Generated from BAo_ (the original's colors) with the engine below - "
                 "High-pass or AI", 'IMAGE_RGB', 1)),
@@ -104,6 +105,8 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                               description="BAo_<name>: albedo baked from the Bake Source")
     bn_image: PointerProperty(type=bpy.types.Image, name="Baked Normal (Original)",
                               description="BNo_<name>: normal baked from the Bake Source")
+    bn_stale: BoolProperty(description="The last Bake from Source left BNo_ out (Original "
+                                       "Normal = Generated): it is older than BAo_")
     bap_image: PointerProperty(type=bpy.types.Image, name="Baked Albedo (Projection)",
                                description="BAp_<name>: albedo rendered from the projection")
     bnp_image: PointerProperty(type=bpy.types.Image, name="Baked Normal (Projection)",

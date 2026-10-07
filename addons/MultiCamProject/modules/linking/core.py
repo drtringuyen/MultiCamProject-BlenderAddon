@@ -59,7 +59,7 @@ TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
             ("nor_image", "nor_name", True))
 META = ("ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
         "last_ba_seconds", "last_bp_seconds", "last_bake_seconds", "last_nor_seconds",
-        "ba_far_share", "ba_far_max", "ba_fit_cage")
+        "ba_far_share", "ba_far_max", "ba_fit_cage", "bn_stale")
 SCENE_GROUPS = ("multicamproject_bake_settings", "multicamproject_export",
                 "multicamproject_sides", "multicamproject_props")
 

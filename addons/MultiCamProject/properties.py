@@ -1,5 +1,5 @@
 import bpy
-from bpy.props import BoolProperty, StringProperty, IntProperty, PointerProperty
+from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
 
 
 class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
@@ -48,6 +48,13 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         name="File IO Set Up", default=False,
         description="Setup File IO ran in this file (gate.py: the add-on unlocks)")
 
+    original_normal_strength: FloatProperty(
+        name="Original Normal", default=1.0, min=0.0, soft_max=5.0,
+        update=lambda self, context: _on_original_normal(self, context),
+        description="Normal strength of the originals' own materials (Normal Map / Bump of "
+                    "the scan materials in Objects and Original Mesh). The add-on's MCP_ / "
+                    "MAT_ are not touched")
+
     # role folders (folders.py; the bake and export folders live in their modules)
     scan_textures_folder: StringProperty(
         name="Scan Textures", default="//00.Scan/01.FBX/", subtype='DIR_PATH',
@@ -63,6 +70,11 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="Folder holding all camera photos. Reload relinks every camera's "
                     "background photo from it; every object with Camera Projection uses it "
                     "(new setups too) and gets a Reload All")
+
+
+def _on_original_normal(props, context):
+    from . import folders
+    folders.set_original_normal(props.id_data, context.view_layer, props.original_normal_strength)
 
 
 def _on_scan(props, context):

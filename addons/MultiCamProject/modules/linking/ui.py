@@ -107,8 +107,13 @@ def draw_roles(layout, context):
     box.separator(factor=0.6)
     row = box.row(align=True)
     row.scale_y = 1.2
-    row.operator(ops.MULTICAMPROJECT_OT_AutoFillFolders.bl_idname,
-                 text="Auto Detect and Fill Folders", icon='VIEWZOOM')
+    split = row.split(factor=0.38, align=True)
+    # the originals' scan materials only (folders.original_normal_nodes); greyed: none has one
+    sub = split.row(align=True)
+    sub.active = bool(folders.original_normal_nodes(scene, vl))
+    sub.prop(props, "original_normal_strength", text="Normal")
+    split.operator(ops.MULTICAMPROJECT_OT_AutoFillFolders.bl_idname,
+                   text="Auto Detect and Fill Folders", icon='VIEWZOOM')
 
 
 def _draw_picker(row, scene, vl, props, role, attr):

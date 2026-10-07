@@ -210,7 +210,8 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         if d.ba_image is not None:
             info = box.row()
             info.active = False
-            info.label(text=f"BAo_ + BNo_ {_res(d.ba_size)} (files, not final) · "
+            what = "BAo_" if d.bn_stale or d.bn_image is None else "BAo_ + BNo_"
+            info.label(text=f"{what} {_res(d.ba_size)} (files, not final) · "
                             f"{d.last_ba_seconds:.1f} s", icon='IMAGE_RGB')
             why = fingerprint.ba_why(obj)
             if why:
