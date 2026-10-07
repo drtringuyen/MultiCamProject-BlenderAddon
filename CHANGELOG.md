@@ -6,6 +6,10 @@
 - Material Preview / Rendered views go to Solid when a job starts and back when it ends (or
   is stopped). A Bake from Source shows the scan and swaps its 100+ materials to Emission
   and back; EEVEE in the viewport compiled and loaded all of it, and Blender froze.
+- **Fix: Bake from Source hung Blender for good right after the Cycles bake** (stuck at
+  ~9 s, 0% CPU). While Cycles is the scene's engine the UI starts Cycles material preview
+  renders; setting the engine back made Blender wait for them while holding the Python lock
+  they need. The job now waits (at most 30 s) until no preview render runs.
 
 ### Bake Route per object: From Original / From Projection / Mixed (2026-10-05)
 - **Dropdown at the start of 06's Albedo / Normal / Both row**, each object its own:

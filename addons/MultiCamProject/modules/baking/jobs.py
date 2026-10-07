@@ -268,6 +268,7 @@ def _restore_views(saved):
 # ---------------------------------------------------------------- the runner
 
 _pending = None     # (title, names, gen, finish) for the runner's invoke
+PREVIEW_WAIT = 30.0     # seconds at most to wait for material previews after a bake
 
 
 def start(op, context, title, names, gen, finish, light=()):
@@ -309,6 +310,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
         RUN = Run(title, names, light)
         self._views = _solid_views()
         self._job = None
+        self._preview_wait = None
         self._exc = None
         self._last_draw = 0.0
         wm = context.window_manager
@@ -340,6 +342,15 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
             if bpy.app.is_job_running('OBJECT_BAKE'):
                 self._status(context)
                 return {'RUNNING_MODAL'}
+            # With Cycles as the scene's engine the UI starts material preview renders (Cycles,
+            # Python). The next step sets the engine back, and Blender then waits for those
+            # threads while holding the GIL they need: a deadlock (Blender hangs, 0% CPU).
+            if self._preview_wait is None:
+                self._preview_wait = time.perf_counter()
+            if (bpy.app.is_job_running('RENDER_PREVIEW')
+                    and time.perf_counter() - self._preview_wait < PREVIEW_WAIT):
+                return {'RUNNING_MODAL'}
+            self._preview_wait = None
             job, self._job = self._job, None
             RUN.baking = False
             try:
