@@ -316,8 +316,8 @@ def focus_retopo(context, obj, report=None):
 
 class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
     """0D Retopo: as 0C Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
-    but the new object starts as one plane (uv_normal 0-1) - or empty, per the 0D option -
-    to model by hand on the original.
+    but the new object starts as the other selected mesh (e.g. a ROOM_Template part, its UV
+    as uv_normal) - or empty, per the 0D option - to model by hand on the original.
     Then both in local view and Edit Mode on the new object"""
     bl_idname = "multicamproject.retopo_empty"
     bl_label = "Retopo"
@@ -325,7 +325,12 @@ class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _remesh_poll(cls, context)
+        if not _remesh_poll(cls, context):
+            return False
+        if context.scene.multicamproject_retopo_plane                 and not wf.retopo_content(context, context.active_object):
+            cls.poll_message_set(wf.RETOPO_CONTENT_TEXT)
+            return False
+        return True
 
     def execute(self, context):
         obj = context.active_object
@@ -824,9 +829,10 @@ def register():
         description="0D: snap to the original's surface (Face Project) and the Retopology "
                     "overlay - changes the scene's snapping settings")
     bpy.types.Scene.multicamproject_retopo_plane = BoolProperty(
-        name="Start with a Plane", default=True,
-        description="0D: on - the retopo starts as one plane over the original's bounds "
-                    "(uv_normal 0-1); off - completely empty, model from nothing")
+        name="Start from the Selected Mesh", default=True,
+        description="0D: on - the retopo starts as a copy of the other selected mesh (e.g. "
+                    "a ROOM_Template part; select it, then the scan active), its UV map as "
+                    "uv_normal; off - completely empty, model from nothing")
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(_face_menu)
     bpy.types.VIEW3D_MT_edit_mesh_faces.append(_face_menu)
     core.register()

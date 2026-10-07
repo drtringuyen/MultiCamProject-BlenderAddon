@@ -531,39 +531,46 @@ def _export_collection(scene):
     return fixes.ensure_export_collection(scene)
 
 
-def retopo_plane(obj, name, plane=True):
-    """0D's start: one quad over obj's bounds (local X/Y) at their bottom (where the export
-    wants the origin), its uv_normal filling 0-1, every material slot of obj. `plane` off:
-    a completely empty mesh (uv_normal and the slots still there)."""
-    me = obj.data
-    n = len(me.vertices)
-    if n:
-        co = np.empty(n * 3, np.float32)
-        me.vertices.foreach_get("co", co)
-        co = co.reshape(n, 3)
-        lo, hi = co.min(0), co.max(0)
-    else:
-        lo, hi = np.array((-1.0, -1.0, 0.0)), np.array((1.0, 1.0, 0.0))
-    c = (lo + hi) / 2
-    c[2] = lo[2]
-    hx, hy = max((hi[0] - lo[0]) / 2, 0.01), max((hi[1] - lo[1]) / 2, 0.01)
-    if not plane:
-        empty = bpy.data.meshes.new(name)
-        empty.uv_layers.new(name=cp.UV_NORMAL)
-        for m in me.materials:
-            empty.materials.append(m)
-        return empty
-    plane = bpy.data.meshes.new(name)
-    plane.from_pydata([(c[0] - hx, c[1] - hy, c[2]), (c[0] + hx, c[1] - hy, c[2]),
-                       (c[0] + hx, c[1] + hy, c[2]), (c[0] - hx, c[1] + hy, c[2])],
-                      [], [(0, 1, 2, 3)])
-    uv = plane.uv_layers.new(name=cp.UV_NORMAL)
-    for loop, xy in zip(uv.uv, ((0, 0), (1, 0), (1, 1), (0, 1))):
-        loop.vector = xy
-    for m in me.materials:
-        plane.materials.append(m)
-    plane.update()
-    return plane
+def retopo_content(context, obj):
+    """0D's start with its option on: the other selected meshes (e.g. ROOM_Template parts)."""
+    return [o for o in context.selected_objects
+            if o != obj and o.type == 'MESH' and not o.library]
+
+
+RETOPO_CONTENT_TEXT = ("Select the mesh to start from too (the scan active), or turn off "
+                       "\"Start from the Selected Mesh\" for an empty retopo")
+
+
+def retopo_mesh(obj, name, content=()):
+    """0D's start: the meshes of `content` (copies, in obj's local space, their first UV map
+    as uv_normal), else a completely empty mesh - with every material slot of obj."""
+    import bmesh
+    new = bpy.data.meshes.new(name)
+    if content:
+        bm = bmesh.new()
+        to_local = obj.matrix_world.inverted()
+        for src in content:
+            me = src.data.copy()
+            try:
+                uvs = me.uv_layers
+                keep = uvs.get(cp.UV_NORMAL) or uvs.active or (uvs[0] if len(uvs) else None)
+                for uv in [u for u in uvs if u != keep]:
+                    uvs.remove(uv)
+                if keep is not None:
+                    keep.name = cp.UV_NORMAL
+                me.materials.clear()
+                me.transform(to_local @ src.matrix_world)
+                bm.from_mesh(me)
+            finally:
+                bpy.data.meshes.remove(me)
+        bm.to_mesh(new)
+        bm.free()
+    if new.uv_layers.get(cp.UV_NORMAL) is None:
+        new.uv_layers.new(name=cp.UV_NORMAL)
+    for m in obj.data.materials:
+        new.materials.append(m)
+    new.update()
+    return new
 
 
 def is_retopo(obj):
@@ -572,8 +579,9 @@ def is_retopo(obj):
 
 
 def make_copy(context, obj, retopo=False, decimate=True):
-    """The Remesh button (0C), or with `retopo` 0D Retopo: the same, but the copy gets
-    a plane - or nothing, per the 0D option (retopo_plane) - instead of the scan's mesh, and no Decimate. Returns (copy,
+    """The Remesh button (0C), or with `retopo` 0D Retopo: the same, but the copy gets the
+    other selected meshes - or nothing, per the 0D option (retopo_mesh) - instead of the
+    scan's mesh, and no Decimate. Returns (copy,
     warnings). Object Mode only. `decimate` False (0C's window button): no Decimate here -
     the work window adds it and applies it, so the main file never evaluates it."""
     if is_handmade(obj):
@@ -587,9 +595,13 @@ def make_copy(context, obj, retopo=False, decimate=True):
     # goes only where the object was otherwise
     collections = [c for c in obj.users_collection if c != orig_coll]
 
+    content = []
+    if retopo and getattr(scene, "multicamproject_retopo_plane", True):
+        content = retopo_content(context, obj)
+        if not content:
+            raise RuntimeError(RETOPO_CONTENT_TEXT)
     copy = obj.copy()                   # a full copy: a cut must never touch the original
-    with_plane = getattr(scene, "multicamproject_retopo_plane", True)
-    copy.data = retopo_plane(obj, mesh_name, with_plane) if retopo else obj.data.copy()
+    copy.data = retopo_mesh(obj, mesh_name, content) if retopo else obj.data.copy()
     # plain renames (not export's rename_object): MCP_/MAT_/ALB_/NOR_ keep their names and
     # belong to the copy, which takes the original name
     obj.name = name + ORIGINAL_SUFFIX

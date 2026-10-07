@@ -155,8 +155,8 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
                 _new_name(row, context)
                 row.operator("multicamproject.work_remesh_out", text="",
                              icon='WINDOW').mode = 'RETOPO'
-            # plane or empty: also the third icon, so both window buttons line up
-            row.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_PLANE')
+            # from the selected mesh or empty: also the third icon, so both window buttons line up
+            row.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
             row.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
 
         hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade

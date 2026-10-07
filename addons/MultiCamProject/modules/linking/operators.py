@@ -426,6 +426,9 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         if exists and self.existing == 'ASK':
             self.report({'ERROR'}, f"{path} already exists - Open Existing or Replace")
             return {'CANCELLED'}
+        if self.mode == 'RETOPO' and scene.multicamproject_retopo_plane                 and not wf.retopo_content(context, obj):
+            self.report({'ERROR'}, wf.RETOPO_CONTENT_TEXT)
+            return {'CANCELLED'}
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         name, mesh_name = obj.name, obj.data.name
