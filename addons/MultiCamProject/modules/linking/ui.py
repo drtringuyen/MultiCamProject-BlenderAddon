@@ -143,8 +143,12 @@ def draw_row_button(layout, obj, relink=False):
     the Linking list."""
     rec = core.out_record(obj)
     if rec is None:
+        last = core.last_window(obj)
         cell = layout.row(align=True)
-        cell.ui_units_x = 1.1
+        cell.ui_units_x = 1.1 * (1 + bool(last))
+        if last:        # after X: the earlier work file again, with the current mesh
+            cell.operator(ops.MULTICAMPROJECT_OT_WorkReopen.bl_idname, text="",
+                          icon='FILE_BLEND').object_name = obj.name
         cell.operator(ops.MULTICAMPROJECT_OT_WorkSendOut.bl_idname, text="",
                       icon='WINDOW').object_name = obj.name
         return

@@ -30,6 +30,7 @@ import uuid
 
 import bpy
 from bpy.app.handlers import persistent
+from mathutils import Matrix
 
 from ..remesh import workflow as wf
 
@@ -40,6 +41,11 @@ WORK_ID_KEY = "multicamproject_work_id"     # work window scene: the send-out id
 WORK_SAVE_AS_KEY = "multicamproject_work_save_as"   # work window scene: where Ctrl+S saves it
 WORK_BAKES_KEY = "multicamproject_work_bakes"   # work window scene: main bake folder/_work/<obj>
 WINDOW_FILE = "window.json"     # the saved work file's path, written by the window
+LAST_WINDOW_KEY = "multicamproject_out_last"    # main object: its work file after X
+WORK_TAKEN_KEY = "multicamproject_work_incoming"    # work window scene: last mesh taken (time)
+INCOMING_FILE = "incoming.blend"    # the main file's current mesh for an existing work file
+INCOMING_JSON = "incoming.json"
+OLD_COLLECTION = "old version"      # work window: the replaced versions (hidden)
 WORK_SUBDIR = "_work"           # in the main bake folder: saved work windows' bakes
 MANIFEST = "manifest.json"
 MESH_FILE = "mesh.blend"
@@ -332,9 +338,181 @@ def open_saved(obj):
 
 
 def cancel(obj):
-    """Forget the send-out; the main object stays as it is."""
+    """Forget the send-out; the main object stays as it is. Its saved work file is kept as
+    the last one (the row's Blender button sends the current mesh into it again)."""
+    path = saved_window(obj)
+    if path:
+        obj[LAST_WINDOW_KEY] = path
     if OUT_KEY in obj:
         del obj[OUT_KEY]
+
+
+def last_window(obj):
+    """The work file obj was linked to before its X ('' = none / gone)."""
+    path = obj.get(LAST_WINDOW_KEY, "") if obj is not None else ""
+    return path if path and os.path.isfile(path) else ""
+
+
+# ---------------------------------------------------------------- an existing work file again
+
+def send_mesh(obj, path):
+    """Link obj to the saved work file at `path` and send its current mesh along: the window
+    keeps what it has in "old version" and takes this mesh (take_incoming). Opens it.
+    Returns the window's object name."""
+    work_name = relink(obj, path)
+    rec = out_record(obj)
+    folder = job_dir(rec["id"])
+    os.makedirs(folder, exist_ok=True)
+    if obj.mode != 'OBJECT':
+        obj.update_from_editmode()
+    lib = os.path.join(folder, INCOMING_FILE)
+    bpy.data.libraries.write(lib, {obj.data}, path_remap='ABSOLUTE')
+    applied = bool(obj.get(wf.APPLIED_KEY))
+    info = {"time": time.time(), "mesh": obj.data.name, "matrix": _matrix_list(obj.matrix_world),
+            "decimate": not wf.is_retopo(obj) and not applied}
+    tmp = os.path.join(folder, INCOMING_JSON + ".tmp")
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(info, f)
+    os.replace(tmp, os.path.join(folder, INCOMING_JSON))
+    _stamp_record(obj)          # placement + signature as sent now
+    if LAST_WINDOW_KEY in obj:
+        del obj[LAST_WINDOW_KEY]
+    subprocess.Popen([bpy.app.binary_path, path])
+    return work_name
+
+
+def _old_version(scene, obj):
+    """A copy of obj as it is now (mesh, materials; no GN, no add-on links) in the hidden
+    "old version" collection, named <obj>_v<n>."""
+    coll = bpy.data.collections.get(OLD_COLLECTION)
+    if coll is None:
+        coll = bpy.data.collections.new(OLD_COLLECTION)
+    if coll.name not in scene.collection.children:
+        scene.collection.children.link(coll)
+    taken = [int(o.name.rsplit("_v", 1)[1]) for o in coll.objects
+             if "_v" in o.name and o.name.rsplit("_v", 1)[1].isdigit()]
+    n = max(taken, default=0) + 1
+    dup = obj.copy()
+    dup.data = obj.data.copy()
+    dup.name = dup.data.name = f"{obj.name}_v{n}"
+    dup.animation_data_clear()
+    for m in [m for m in dup.modifiers if m.type == 'NODES']:
+        dup.modifiers.remove(m)
+    for group, attrs in (("multicamproject_cam", ("is_setup", "material")),
+                         ("multicamproject_bake", ("bake_source", "source", "material"))):
+        d = getattr(dup, group, None)
+        for a in attrs if d is not None else ():
+            try:
+                setattr(d, a, False if a == "is_setup" else None)
+            except (AttributeError, TypeError):
+                pass
+    for c in list(dup.users_collection):
+        c.objects.unlink(dup)
+    coll.objects.link(dup)
+    for vl in scene.view_layers:
+        lc = vl.layer_collection.children.get(coll.name)
+        if lc is not None:
+            lc.exclude = True
+    return dup
+
+
+def take_incoming(scene):
+    """In a work window: a mesh the main file sent for this window (send_mesh) replaces the
+    work object's mesh; what it had goes to "old version" first. The object keeps its
+    modifiers, materials and settings; a dense mesh gets the Decimate decision again.
+    Returns the old version's name, or '' when nothing was waiting."""
+    job_id = scene.get(WORK_ID_KEY, "")
+    obj = work_object(scene)
+    if not job_id or obj is None:
+        return ""
+    folder = job_dir(job_id)
+    try:
+        with open(os.path.join(folder, INCOMING_JSON), encoding="utf-8") as f:
+            info = json.load(f)
+    except (OSError, ValueError):
+        return ""
+    lib = os.path.join(folder, INCOMING_FILE)
+    if info.get("time", 0) <= scene.get(WORK_TAKEN_KEY, 0) or not os.path.isfile(lib):
+        return ""
+    if obj.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    flat = info["matrix"]
+    m = Matrix([flat[i:i + 4] for i in range(0, 16, 4)])
+    kinds = ("materials", "images", "node_groups", "textures")
+    before = {k: set(getattr(bpy.data, k)) for k in kinds}
+    with bpy.data.libraries.load(lib, link=False) as (src, dst):
+        dst.meshes = [info["mesh"]] if info["mesh"] in src.meshes else src.meshes[:1]
+    new = dst.meshes[0] if dst.meshes else None
+    if new is None:
+        raise RuntimeError(f"no mesh in {lib}")
+    old = _old_version(scene, obj)      # only once the new mesh is here
+    new.transform(m)                    # the window works in world space (no parents)
+    if m.determinant() < 0:
+        new.flip_normals()
+    mats = list(obj.data.materials)
+    prev = obj.data
+    obj.data = new
+    new.materials.clear()               # the window's own materials, not the copies
+    for mat in mats:
+        new.materials.append(mat)
+    if prev.users == 0:
+        bpy.data.meshes.remove(prev)
+    new.name = obj.name
+    for k in kinds:                     # what came along with the mesh and is unused now
+        coll = getattr(bpy.data, k)
+        for idb in [i for i in coll if i not in before[k] and i.users == 0]:
+            coll.remove(idb)
+    if info.get("decimate"):
+        if wf.APPLIED_KEY in obj:
+            del obj[wf.APPLIED_KEY]
+        dec = wf.ensure_stack(obj, applied_ok=False)
+        if dec is not None:
+            dec.show_viewport = True
+        wf.set_gn(obj, False)           # decided again first (decimate_pending)
+    scene[WORK_TAKEN_KEY] = info["time"]
+    for f in (INCOMING_JSON, INCOMING_FILE):
+        try:
+            os.remove(os.path.join(folder, f))
+        except OSError:
+            pass
+    obj.update_tag()
+    return old.name
+
+
+_take_tries = [0]
+
+
+def _take_later():
+    """After a work file opens: take a waiting mesh once the window is up."""
+    _take_tries[0] += 1
+    wm = bpy.context.window_manager
+    if not wm or not wm.windows:
+        return None if _take_tries[0] > 40 else 0.25
+    scene = bpy.context.scene
+    try:
+        name = take_incoming(scene) if is_work_window(scene) else ""
+    except Exception as e:      # never break opening the file
+        print(f"[MultiCamProject] new mesh from the main file not taken: {e}")
+        return None
+    if name:
+        print(f"[MultiCamProject] new mesh from the main file - the previous one is '{name}' "
+              f"in '{OLD_COLLECTION}'")
+        win = wm.windows[0]
+
+        def draw(menu, _context):
+            menu.layout.label(text=f"The previous version is '{name}' in '{OLD_COLLECTION}' "
+                                   "(hidden)", icon='INFO')
+        with bpy.context.temp_override(window=win):
+            wm.popup_menu(draw, title="New mesh from the main file", icon='IMPORT')
+        for area in win.screen.areas:
+            area.tag_redraw()
+    return None
+
+
+@persistent
+def _on_load_incoming(_):
+    _take_tries[0] = 0
+    bpy.app.timers.register(_take_later, first_interval=0.3)
 
 
 # ---------------------------------------------------------------- work window: Send Back
@@ -750,10 +928,12 @@ def linked_objects():
 def register():
     bpy.app.handlers.save_pre.append(_on_save_pre)
     bpy.app.handlers.save_post.append(_on_save_post)
+    bpy.app.handlers.load_post.append(_on_load_incoming)
 
 
 def unregister():
     for lst, fn in ((bpy.app.handlers.save_pre, _on_save_pre),
-                    (bpy.app.handlers.save_post, _on_save_post)):
+                    (bpy.app.handlers.save_post, _on_save_post),
+                    (bpy.app.handlers.load_post, _on_load_incoming)):
         if fn in lst:
             lst.remove(fn)

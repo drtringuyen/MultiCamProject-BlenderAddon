@@ -467,18 +467,17 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         return {'FINISHED'}
 
     def _open_existing(self, copy, obj, path):
-        """The work file is there already: the new object is linked to it (Receive takes
-        what it holds) and it opens."""
+        """The work file is there already: the new object is linked to it and its mesh sent
+        along - the window keeps its version in "old version" and takes this one."""
         try:
-            work_name = core.relink(copy, path)
+            work_name = core.send_mesh(copy, path)
         except Exception as e:      # not a work window (or unreadable): open it anyway
             self.report({'WARNING'}, f"'{copy.name}' is made, but not linked to "
                                      f"{os.path.basename(path)}: {e}")
             subprocess.Popen([bpy.app.binary_path, path])
             return {'FINISHED'}
-        core.open_saved(copy)
-        self.report({'INFO'}, f"'{copy.name}' is linked to {os.path.basename(path)} "
-                              f"(its '{work_name}') - opening it ('{obj.name}' is the original)")
+        self.report({'INFO'}, f"'{copy.name}' -> {os.path.basename(path)}: its '{work_name}' "
+                              "takes this mesh (the old one goes to 'old version')")
         return {'FINISHED'}
 
 
@@ -512,7 +511,37 @@ class MULTICAMPROJECT_OT_WorkSave(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+class MULTICAMPROJECT_OT_WorkReopen(bpy.types.Operator):
+    """Open the work file this object was linked to before (X), with this object's current
+    mesh: the window keeps its version in "old version" (hidden) and takes this one - the
+    link is back on"""
+    bl_idname = "multicamproject.work_reopen"
+    bl_label = "Reopen Work File with this Mesh"
+    bl_options = {'REGISTER'}
+
+    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'OBJECT' and not core.is_work_window(context.scene)
+
+    def execute(self, context):
+        obj = _target(context, self.object_name)
+        path = core.last_window(obj) if obj is not None else ""
+        if not path:
+            self.report({'WARNING'}, "No earlier work file for this object")
+            return {'CANCELLED'}
+        try:
+            work_name = core.send_mesh(obj, path)
+        except Exception as e:
+            self.report({'ERROR'}, f"Not sent: {e}")
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{os.path.basename(path)} opens: its '{work_name}' takes "
+                              f"'{obj.name}''s mesh (the old one goes to 'old version')")
+        return {'FINISHED'}
+
+
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkReopen, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)
