@@ -72,7 +72,6 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
 
 
 NAME_UNITS = 5      # the New Object Name field at the start of 0B / 0C / 0D
-ICON_UNITS = 4      # their icon buttons at the end: the step buttons line up in between
 
 
 def _new_name(row, context):
@@ -85,18 +84,11 @@ def _new_name(row, context):
 
 
 def _icons(row, n):
-    """The cell for a step's `n` icon buttons, one unit each."""
+    """The cell for a step's `n` icon buttons, one unit each, flush with the panel's right
+    edge (the step button takes the rest of the width)."""
     cell = row.row(align=True)
     cell.ui_units_x = n
     return cell
-
-
-def _pad(row, n):
-    """After `n` icon buttons: a gap to ICON_UNITS, so every step button ends at the same x."""
-    if n < ICON_UNITS:
-        gap = row.row(align=True)
-        gap.ui_units_x = ICON_UNITS - n
-        gap.label(text="")
 
 
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
@@ -155,7 +147,6 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             n = int(bool(setup and mm.is_loaded("remesh")))
             if n:
                 _icons(row, n).operator("multicamproject.remove_projection", text="", icon='X')
-            _pad(row, n)
 
         low = False
         if mm.is_loaded("remesh"):
@@ -177,7 +168,6 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             if unlink:
                 icons.operator("multicamproject.unlink_original", text="", icon='X')
             icons.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
-            _pad(row, n)
             retopo = low and wf.is_retopo(obj)
             row = col.row(align=True)
             if named:
@@ -192,7 +182,6 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             # from the selected mesh or empty
             icons.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
             icons.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
-            _pad(row, n)
 
         hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade
         if hand:
