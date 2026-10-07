@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### EXPORT header: Room and Room Template buttons (2026-10-07)
+- Two more hide / show buttons after Cameras: **ROOM** (house) and **ROOM_Template** (box),
+  found by their collection names; a button shows only when its collection is in the scene.
+
 ### Bakes / exports switch the 3D views to Solid while they run (2026-10-07)
 - Material Preview / Rendered views go to Solid when a job starts and back when it ends (or
   is stopped). A Bake from Source shows the scan and swaps its 100+ materials to Emission

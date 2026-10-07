@@ -5,14 +5,17 @@ collection holding only cameras). The EXPORT header's buttons hide / show them; 
 and Remesh code read EXPORT / ORIGINALS through here."""
 import bpy
 
-# role: (scene setting, label, icon, usual names)
+# role: (scene setting, label, icon, usual names); no setting = found by its name only
 ROLES = {
     'OBJECTS': ("objects_collection", "Objects", 'MESH_CUBE', ("OBJECTS",)),
     'ORIGINALS': ("originals_collection", "Original Mesh", 'MESH_ICOSPHERE', ("Original Mesh",)),
     'EXPORT': ("export_collection", "Export", 'EXPORT', ("EXPORT",)),
     'CAMERAS': ("cameras_collection", "Cameras", 'OUTLINER_OB_CAMERA', ("CAMERAS",)),
+    'ROOM': (None, "Room", 'HOME', ("ROOM",)),
+    'TEMPLATE': (None, "Room Template", 'SNAP_VOLUME', ("ROOM_Template",)),
 }
-ORDER = ('OBJECTS', 'ORIGINALS', 'EXPORT', 'CAMERAS')     # the header's buttons
+ORDER = ('OBJECTS', 'ORIGINALS', 'EXPORT', 'CAMERAS')     # the Linking panel's pickers
+HEADER = ORDER + ('ROOM', 'TEMPLATE')                     # the EXPORT header's buttons
 
 
 def _layers(view_layer):
@@ -30,7 +33,8 @@ def _layers(view_layer):
 def picked(scene, role):
     """The collection picked for `role` in this scene (None = not picked)."""
     props = getattr(scene, "multicamproject_props", None)
-    return getattr(props, ROLES[role][0], None) if props is not None else None
+    attr = ROLES[role][0]
+    return getattr(props, attr, None) if props is not None and attr else None
 
 
 def collections(scene, view_layer, role):

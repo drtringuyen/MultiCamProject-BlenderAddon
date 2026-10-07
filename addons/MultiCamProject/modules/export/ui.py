@@ -262,13 +262,13 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         # notes (e.g. n-gons) are counted here; their texts show under the list for the
         # active object
         warn = f" · {notes} warn" if notes else ""
-        split = layout.split(factor=0.72, align=True)       # the counts get most of the row
+        split = layout.split(factor=0.6, align=True)        # the counts get most of the row
         split.label(text=f"EXPORT ({ready}/{len(objs)} ready · {tri_text(tris)}{warn})",
                     icon='COLLECTION_COLOR_03')
         right = split.row(align=True)
         right.alignment = 'RIGHT'
         vl = bpy.context.view_layer
-        for role in roles.ORDER:            # Objects, Original Mesh, Export, Cameras
+        for role in roles.HEADER:           # Objects, Original Mesh, Export, Cameras, Room, Template
             if roles.collections(scene, vl, role):
                 right.operator("multicamproject.toggle_collection", text="",
                                depress=roles.shown(scene, vl, role),

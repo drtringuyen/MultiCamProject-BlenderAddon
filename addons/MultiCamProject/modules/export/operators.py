@@ -63,6 +63,8 @@ class MULTICAMPROJECT_OT_ToggleCollection(bpy.types.Operator):
         colls = roles.collections(context.scene, context.view_layer, props.role)
         label = roles.ROLES[props.role][1]
         if not colls:
+            if roles.ROLES[props.role][0] is None:
+                return f"No '{roles.ROLES[props.role][3][0]}' collection in this scene"
             return f"No {label} collection (pick one in IO Folders & Collections)"
         names = ", ".join(c.name for c, _lc in colls)
         verb = "Hide" if roles.shown(context.scene, context.view_layer, props.role) else "Show"
@@ -75,8 +77,9 @@ class MULTICAMPROJECT_OT_ToggleCollection(bpy.types.Operator):
         show = not roles.shown(sc, vl, self.role)
         colls = roles.set_shown(sc, vl, self.role, show)
         if not colls:
-            self.report({'WARNING'}, f"No {roles.ROLES[self.role][1]} collection - pick one "
-                                     "in the Linking panel")
+            attr, label, _icon, names = roles.ROLES[self.role]
+            self.report({'WARNING'}, f"No {label} collection - pick one in the Linking panel"
+                        if attr else f"No '{names[0]}' collection in this scene")
             return {'CANCELLED'}
         self.report({'INFO'}, f"{'Shown' if show else 'Hidden'}: "
                               + ", ".join(c.name for c, _lc in colls))
