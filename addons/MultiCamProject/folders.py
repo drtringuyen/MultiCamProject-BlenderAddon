@@ -18,7 +18,7 @@ import time
 import bpy
 from bpy.app.handlers import persistent
 
-from . import roles
+from . import roles, template_mesh
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".tga", ".webp", ".bmp")
 # the defaults these folders had before; a file that never set them keeps them (_pin_old)
@@ -499,8 +499,8 @@ def wire_scan_materials(scene, view_layer):
 
 
 def auto_fill(scene, view_layer):
-    """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT made when they
-    are not in the scene, then every role's folder (missing bake / export folders are made).
+    """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT and the template
+    mesh (template_mesh.py) made when they are not in the scene, then every role's folder (missing bake / export folders are made).
     Returns report lines."""
     lines = []
     filled = roles.autofill(scene)
@@ -510,6 +510,8 @@ def auto_fill(scene, view_layer):
     for role in roles.CREATABLE:       # Original Mesh / EXPORT: made when not in the scene
         if not roles.collections(scene, view_layer, role):
             made.append(roles.ensure(scene, role).name)
+    if template_mesh.ensure(scene) is not None:
+        made.append(template_mesh.NAME)
     if made:
         lines.append("Added to the scene: " + ", ".join(made))
     for role in roles.ORDER:
