@@ -71,13 +71,32 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
         pass
 
 
+NAME_UNITS = 5      # the New Object Name field at the start of 0B / 0C / 0D
+ICON_UNITS = 4      # their icon buttons at the end: the step buttons line up in between
+
+
 def _new_name(row, context):
-    """The window buttons' New Object Name (one setting, shown on the 0C and 0D rows)."""
+    """The window buttons' New Object Name (one setting, shown on the 0B, 0C and 0D rows)."""
     props = context.scene.multicamproject_props
     cell = row.row(align=True)
-    cell.ui_units_x = 5
+    cell.ui_units_x = NAME_UNITS
     cell.alert = not props.new_object_name.strip()
     cell.prop(props, "new_object_name", text="", placeholder="Object name")
+
+
+def _icons(row, n):
+    """The cell for a step's `n` icon buttons, one unit each."""
+    cell = row.row(align=True)
+    cell.ui_units_x = n
+    return cell
+
+
+def _pad(row, n):
+    """After `n` icon buttons: a gap to ICON_UNITS, so every step button ends at the same x."""
+    if n < ICON_UNITS:
+        gap = row.row(align=True)
+        gap.ui_units_x = ICON_UNITS - n
+        gap.label(text="")
 
 
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
@@ -124,40 +143,56 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
             row.popover(panel="MULTICAMPROJECT_PT_project_sides", text="", icon='PREFERENCES')
 
         setup = mesh and hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup
+        named = bool(mm.is_loaded("linking"))     # the window buttons' name: 0B / 0C / 0D
         if mm.is_loaded("camera_project"):
             row = col.row(align=True)
-            row.enabled = cams
-            row.operator("multicamproject.setup", text="0B. Setup Camera Projection",
+            if named:
+                _new_name(row, context)
+            sub = row.row(align=True)
+            sub.enabled = cams
+            sub.operator("multicamproject.setup", text="0B. Setup Camera Projection",
                          icon='CHECKMARK' if setup else 'CAMERA_DATA')
-            if setup and mm.is_loaded("remesh"):
-                row.operator("multicamproject.remove_projection", text="", icon='X')
+            n = int(bool(setup and mm.is_loaded("remesh")))
+            if n:
+                _icons(row, n).operator("multicamproject.remove_projection", text="", icon='X')
+            _pad(row, n)
 
         low = False
         if mm.is_loaded("remesh"):
             from .modules.remesh import workflow as wf
             low = mesh and wf.is_low_poly(obj)
             row = col.row(align=True)
+            if named:
+                _new_name(row, context)
             row.operator("multicamproject.remesh", text="0C. Remesh",
                          icon='CHECKMARK' if low else 'MOD_REMESH')
-            if mm.is_loaded("linking"):     # 0B + 0C + Send Out in one click
-                _new_name(row, context)
-                row.operator("multicamproject.work_remesh_out", text="",
-                             icon='WINDOW').mode = 'REMESH'
-            row.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
-            if mesh and mm.is_loaded("baking") and obj.multicamproject_bake.bake_source is not None:
-                row.operator("multicamproject.unlink_original", text="", icon='X')
-            row.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
+            unlink = bool(mesh and mm.is_loaded("baking")
+                          and obj.multicamproject_bake.bake_source is not None)
+            n = 2 + named + unlink
+            icons = _icons(row, n)
+            if named:       # 0B + 0C + Send Out in one click
+                icons.operator("multicamproject.work_remesh_out", text="",
+                               icon='WINDOW').mode = 'REMESH'
+            icons.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
+            if unlink:
+                icons.operator("multicamproject.unlink_original", text="", icon='X')
+            icons.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
+            _pad(row, n)
             retopo = low and wf.is_retopo(obj)
             row = col.row(align=True)
+            if named:
+                _new_name(row, context)
             row.operator("multicamproject.retopo_empty", text="0D. Retopo",
                          icon='CHECKMARK' if retopo else 'MESH_PLANE')
-            if mm.is_loaded("linking"):     # 0B + 0D + Send Out in one click
-                _new_name(row, context)
-                row.operator("multicamproject.work_remesh_out", text="",
-                             icon='WINDOW').mode = 'RETOPO'
-            # from the selected mesh or empty: also the third icon, so both window buttons line up
-            row.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
-            row.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
+            n = 2 + named
+            icons = _icons(row, n)
+            if named:       # 0B + 0D + Send Out in one click
+                icons.operator("multicamproject.work_remesh_out", text="",
+                               icon='WINDOW').mode = 'RETOPO'
+            # from the selected mesh or empty
+            icons.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
+            icons.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
+            _pad(row, n)
 
         hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade
         if hand:
