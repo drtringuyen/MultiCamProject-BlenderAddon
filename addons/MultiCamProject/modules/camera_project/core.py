@@ -1,5 +1,7 @@
-"""Camera projection logic: material, modifier wiring, camera scoring, images, slots."""
+"""Camera projection logic: material, modifier wiring, camera list + coverage (measured on
+request only), images, slots."""
 import os
+import random
 from contextlib import contextmanager
 
 import bpy
@@ -14,8 +16,7 @@ IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".exr", ".webp", ".bmp")
 # coverage filter of the camera list and the auto pick: (key, label, minimum coverage)
 COVERAGE_FILTERS = (('100', "100%", 0.999), ('80', ">80%", 0.8), ('50', ">50%", 0.5),
                     ('30', ">30%", 0.3), ('ALL', "All", 0.0))
-AXES = ((0.0, 1.0, 0.0), (1.0, 0.0, 0.0), (0.0, 0.0, 1.0))    # Camera 1 ~ +-Y, 2 ~ +-X, 3 ~ +-Z
-MAX_SAMPLES = 4000      # vertices sampled for scoring
+MAX_SAMPLES = 4000      # object vertices projected per camera by Measure Coverage
 
 
 def data(obj):
@@ -1190,13 +1191,6 @@ def migrate_all():
             migrate_shifts(obj, scene)
             if get_modifier(obj):
                 apply_slots(obj, scene)
-        if obj.type == 'MESH' and not obj.library and data(obj).is_setup and not measured(data(obj)):
-            d = data(obj)
-            old = len(d.cameras)
-            rescore(obj, scene)     # a list from before coverage was stored: all hidden at 0%
-            if old and not len(d.cameras):
-                print(f"[MultiCamProject] '{obj.name}': no camera sees it after the "
-                      "coverage migration - press Measure Coverage to check")
         if obj.type == 'MESH' and not obj.library:
             migrate_mask2(obj)
     migrate_wrappers(scene)
@@ -1275,7 +1269,8 @@ def min_coverage(d):
 
 
 def passes(d, item):
-    return item.coverage >= min_coverage(d)
+    """Before Measure Coverage every camera passes (the filter needs the measure)."""
+    return not measured(d) or item.coverage >= min_coverage(d)
 
 
 def searched(d, item):
@@ -1285,65 +1280,62 @@ def searched(d, item):
 
 def display_order(obj):
     """Camera list items for the UI: the slots first, then the cameras that pass the
-    coverage filter and the search, most coverage first."""
+    coverage filter and the search, most coverage first (by name before a measure)."""
     d = data(obj)
     slots = get_slots(d)
     items = [it for it in d.cameras if it.camera]
     top = sorted((it for it in items if it.camera in slots), key=lambda it: slots.index(it.camera))
     rest = sorted((it for it in items if it.camera not in slots and passes(d, it)
-                   and searched(d, it)),
-                  key=lambda it: (-it.coverage, it.camera.name.lower()))
+                   and searched(d, it)), key=sort_key)
     return top, rest
 
 
-def view_axis(cam):
-    """Unit direction the camera looks along (world)."""
-    v = -world_matrix(cam).to_3x3().col[2]
-    return v.normalized() if v.length else v
+def sort_key(item):
+    """The camera list's order: most coverage first, then by name (all 0 before a measure)."""
+    return -item.coverage, item.camera.name.lower() if item.camera else ""
 
 
-def axis_pick(d, n):
-    """Cameras for slots 1..n: Camera 1 looks most along +-Y, 2 along +-X, 3 along +-Z (a tie
-    goes to more coverage), 4..n the most coverage left. Only cameras with an image that pass
-    the coverage filter; when too few pass, the next best by coverage fill up.
+def random_pick(d, n):
+    """Cameras for slots 1..n: random ones with a photo that pass the coverage filter (any
+    camera passes before Measure Coverage); when too few do, random others fill up.
     Returns (cameras, warning or '')."""
-    items = [it for it in d.cameras if it.camera and image_ok(cam_image(it.camera))]
-    ok = [it for it in items if passes(d, it)]
-    picked, below = [], 0
-
-    def best_along(pool, axis):
-        free = [it for it in pool if it.camera not in picked]
-        if not free:
-            return None
-        return max(free, key=lambda it: (round(abs(view_axis(it.camera).dot(axis)), 3), it.coverage))
-
-    for axis in AXES[:n]:
-        it = best_along(ok, axis)
-        if it is None:          # none left that passes: the axis rule still holds below it
-            it = best_along(items, axis)
-            below += it is not None
-        if it is not None:
-            picked.append(it.camera)
-    for pool in (ok, items):    # slots 4-6: the most coverage left
-        for it in sorted(pool, key=lambda it: -it.coverage):
-            if len(picked) >= n:
-                break
-            if it.camera not in picked:
-                picked.append(it.camera)
-                below += pool is items
-    warning = (f"Only {len(ok)} camera(s) pass the coverage filter - {below} picked below it"
-               if below else "")
-    return (picked + [None] * n)[:n], warning
+    items = [it.camera for it in d.cameras if it.camera and image_ok(cam_image(it.camera))]
+    has_photo = set(items)
+    ok = [it.camera for it in d.cameras if it.camera in has_photo and passes(d, it)]
+    picked = random.sample(ok, min(n, len(ok)))
+    rest = [c for c in items if c not in picked]
+    below = random.sample(rest, min(n - len(picked), len(rest)))
+    warning = (f"Only {len(ok)} camera(s) pass the coverage filter - {len(below)} picked "
+               "below it" if below else "")
+    return (picked + below + [None] * n)[:n], warning
 
 
 def measured(d):
-    """False when the list was made before coverage was stored (every item at 0)."""
-    return not len(d.cameras) or any(it.coverage > 0 for it in d.cameras)
+    """True once Measure Coverage ran on the list (some camera has a coverage)."""
+    return any(it.coverage > 0 for it in d.cameras)
 
 
 def rescore(obj, scene):
-    """Score every scene camera against the object and rebuild the camera list (most
-    coverage first). Photos are not loaded. Returns the set of cameras that see it."""
+    """Rebuild the camera list: every scene camera not removed by hand. Nothing is measured
+    (fast with hundreds of cameras) - a camera keeps the coverage it was measured with, a
+    new one starts at 0. Returns the set listed."""
+    d = data(obj)
+    removed = {r.camera for r in d.removed if r.camera}
+    old = {it.camera: (it.score, it.coverage) for it in d.cameras if it.camera}
+    cams = [c for c in scene_cameras(scene) if c not in removed]
+    d.cameras.clear()
+    for c in cams:
+        it = d.cameras.add()
+        it.camera = c
+        it.score, it.coverage = old.get(c, (0.0, 0.0))
+    return set(cams)
+
+
+def measure_coverage(obj, scene):
+    """Measure Coverage (only on request: it projects up to MAX_SAMPLES vertices into every
+    camera): score every scene camera against the object and rebuild the camera list - the
+    cameras that see nothing of it leave the list. Photos are not loaded. Returns the set
+    of cameras that see it."""
     d = data(obj)
     if obj.mode == 'EDIT':
         obj.update_from_editmode()      # score the mesh as edited, not as last left
@@ -1385,17 +1377,17 @@ def remove_camera(obj, cam):
 
 
 def restore_cameras(obj, scene):
-    """Bring every removed camera back into the list (measured again)."""
+    """Bring every removed camera back into the list (not measured)."""
     data(obj).removed.clear()
     rescore(obj, scene)
 
 
 def auto_pick(obj, scene):
-    """Measure again, then slots by axis_pick; afterwards the slots count as not picked
-    by hand."""
+    """List the cameras again, then random ones in the slots (random_pick); afterwards the
+    slots count as not picked by hand."""
     d = data(obj)
     rescore(obj, scene)
-    cams, warning = axis_pick(d, slot_count(d))
+    cams, warning = random_pick(d, slot_count(d))
     set_slots(d, cams)
     d.user_picked = False
     apply_slots(obj, scene)
@@ -1443,16 +1435,16 @@ def assign_slot(obj, cam, slot, scene):
 
 
 def refill_slots(d, slots, sees, warnings):
-    """Keep each slot camera that still sees the object and has a photo; the others (and
-    empty slots) get the best-coverage free camera with a photo that passes the filter."""
+    """Keep each slot camera that is still listed and has a photo; the others (and empty
+    slots) get a random free camera with a photo that passes the filter."""
     for i, cam in enumerate(slots):
         if cam is not None and cam in sees and image_ok(cam_image(cam)):
             continue        # the pick is kept, whatever its coverage
         free = [it.camera for it in d.cameras if it.camera not in slots and passes(d, it)
                 and image_ok(cam_image(it.camera))]
-        new = free[0] if free else None
+        new = random.choice(free) if free else None
         if cam is not None:
-            why = "no longer sees the object" if cam not in sees else "has no loaded image"
+            why = "is no longer listed" if cam not in sees else "has no loaded image"
             warnings.append(f"Camera {i + 1}: '{cam.name}' {why} -> "
                             f"{new.name if new else 'left empty'}")
         slots[i] = new
@@ -1460,8 +1452,8 @@ def refill_slots(d, slots, sees, warnings):
 
 
 def check_slots(obj, scene):
-    """Refresh: the camera list (Selected + Other Cameras) is measured again, the Camera 1-n
-    picks stay unless they no longer see the object or have no photo, empty slots are
+    """Refresh: the camera list (Selected + Other Cameras) is made again (not measured), the
+    Camera 1-n picks stay unless they are no longer listed or have no photo, empty slots are
     filled from the list. The object's own MCP_ goes back into its material slot (a
     duplicate keeps the original's), slot photos are fetched from the folder when missing,
     then CamTex_1..n and the GN modifier are rewired to the slots.
@@ -1520,19 +1512,20 @@ def slot_of(obj, cam):
 
 
 def change_slot_count(obj, scene):
-    """After the Cameras dropdown: empty new slots get the best-scoring unused cameras
-    with an image, then the modifier moves to the group for the new count and the
+    """After the Cameras dropdown: empty new slots get random unused cameras with an image
+    that pass the filter, then the modifier moves to the group for the new count and the
     material is rebuilt for it. Slots above the count keep their camera."""
     d = data(obj)
     if not d.is_setup:
         return
     slots = get_slots(d)
-    free = [it.camera for it in d.cameras            # coverage order
+    free = [it.camera for it in d.cameras
             if it.camera and it.camera not in slots and passes(d, it)
             and image_ok(cam_image(it.camera))]
+    random.shuffle(free)
     for i, cam in enumerate(slots):
         if cam is None and free:
-            slots[i] = free.pop(0)
+            slots[i] = free.pop()
     set_slots(d, slots)
     apply_slots(obj, scene)
 
@@ -1655,7 +1648,7 @@ def set_paint_brush(context, color=None, blend='MIX'):
 # ---------------------------------------------------------------- reload all
 
 def refresh(obj, scene):
-    """Reload All: images -> clipping -> scoring -> slot check -> material -> rewire.
+    """Reload All: images -> clipping -> camera list -> slot check -> material -> rewire.
     Returns a list of warning strings."""
     d = data(obj)
     warnings = []
@@ -1675,7 +1668,7 @@ def refresh(obj, scene):
     sees = rescore(obj, scene)
     slots = get_slots(d)
     if not d.user_picked:
-        slots, warning = axis_pick(d, slot_count(d))
+        slots, warning = random_pick(d, slot_count(d))
         if warning:
             warnings.append(warning)
     else:

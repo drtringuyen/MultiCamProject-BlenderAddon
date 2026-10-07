@@ -120,9 +120,8 @@ class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
-    """Resort: score every camera again and pick the best for the slots - Camera 1 looks
-    most along +-Y, 2 along +-X, 3 along +-Z, 4-6 the most coverage left (only cameras
-    that pass the coverage filter)"""
+    """Shuffle: random cameras with a photo for the slots (after Measure Coverage only
+    cameras that pass the coverage filter). Nothing is measured"""
     bl_idname = "multicamproject.auto_pick"
     bl_label = "Resort Cameras"
     bl_options = {'REGISTER', 'UNDO'}
@@ -142,8 +141,8 @@ class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_CheckSlots(bpy.types.Operator):
-    """Refresh: measure the camera list again (Selected + Other Cameras), keep the picked
-    cameras that still see the object, fill empty slots from the list, then load them into
+    """Refresh: list the cameras again (Selected + Other Cameras, not measured), keep the
+    picked cameras that are still listed, fill empty slots from the list, then load them into
     the material and GN - the object's own material in its slot, each Cam texture holding
     its camera's photo (fetched from the folder when missing)"""
     bl_idname = "multicamproject.check_slots"
@@ -165,8 +164,9 @@ class MULTICAMPROJECT_OT_CheckSlots(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_MeasureCoverage(bpy.types.Operator):
-    """Measure again how much of the object each camera sees (the list and its filter).
-    Photos are not loaded and the Camera 1-6 slots stay as they are"""
+    """Measure how much of the object each camera sees (sorts the list, and the coverage
+    filter needs it) - slow with many cameras, so it runs only from here. Photos are not
+    loaded and the Camera 1-6 slots stay as they are"""
     bl_idname = "multicamproject.measure_coverage"
     bl_label = "Measure Coverage"
     bl_options = {'REGISTER', 'UNDO'}
@@ -177,7 +177,7 @@ class MULTICAMPROJECT_OT_MeasureCoverage(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
-        core.rescore(obj, context.scene)
+        core.measure_coverage(obj, context.scene)
         d = core.data(obj)
         shown = sum(core.passes(d, it) for it in d.cameras)
         self.report({'INFO'}, f"{len(d.cameras)} camera(s) see '{obj.name}', "
@@ -866,7 +866,14 @@ class MULTICAMPROJECT_OT_SoloStep(bpy.types.Operator):
         top, rest = core.display_order(context.active_object)
         cams = [it.camera for it in top + rest]
         cur = context.scene.camera
-        i = cams.index(cur) + self.step if cur in cams else 0
+        if cur not in cams:
+            i = 0
+        else:
+            k = cams.index(cur)
+            # a big step (Left / Right: 5) stops at the first / last camera
+            i = min(max(k + self.step, 0), len(cams) - 1) if abs(self.step) > 1 else k + self.step
+            if i == k:
+                return {'CANCELLED'}
         if not 0 <= i < len(cams):
             return {'CANCELLED'}        # already at the top/bottom of the list
         return bpy.ops.multicamproject.solo_camera(camera=cams[i].name)
@@ -969,7 +976,9 @@ def register():
         # Add-on items come first in a keymap, so here the poll decides: sidebar + solo
         # -> step the camera, anything else -> falls through to Jump to Keyframe.
         km = kc.keymaps.new(name="Frames")
-        for key, step in (('UP_ARROW', -1), ('DOWN_ARROW', 1)):
+        # Left / Right: 5 cameras at a time (elsewhere they keep stepping frames)
+        for key, step in (('UP_ARROW', -1), ('DOWN_ARROW', 1),
+                          ('LEFT_ARROW', -5), ('RIGHT_ARROW', 5)):
             kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloStep.bl_idname, key, 'PRESS')
             kmi.properties.step = step
             _keymaps.append((km, kmi))

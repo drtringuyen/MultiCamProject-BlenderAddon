@@ -135,10 +135,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
         header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
-        # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
+        # Shuffle (random cameras in the slots), slot count dropdown, Refresh (check the
         # material's Cam textures against the slots) at the end, like Other Cameras
         sub = header.row(align=True)
-        sub.operator("multicamproject.auto_pick", text="", icon='SORTSIZE')
+        sub.operator("multicamproject.auto_pick", text="", icon='MOD_NOISE')
         cnt = sub.row(align=True)
         cnt.ui_units_x = 3.2
         cnt.prop(d, "slot_count", text="")
@@ -167,11 +167,12 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         drop.ui_units_x = 3.2
         drop.prop(d, "coverage_filter", text="")
         flt.operator("multicamproject.restore_cameras", text="", icon='LOOP_BACK')
-        if body and not core.measured(d):
-            r = body.row()
-            r.alert = True
-            r.label(text="Coverage not measured yet - press Resort or Reload All", icon='ERROR')
-        elif body and not total:
+        if body and len(d.cameras) and not core.measured(d):
+            r = body.row()      # every camera shown until then: the filter needs the measure
+            r.active = False
+            r.label(text="Coverage not measured - Measure Coverage (next to the list) to sort "
+                         "and filter", icon='INFO')
+        if body and not total:
             body.label(text="No other camera - every camera seeing the object is in a slot",
                        icon='INFO')
         elif body:
@@ -323,10 +324,9 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
                  if it.camera and it.camera not in slots and core.passes(data, it)
                  and core.searched(data, it) and pattern in it.camera.name.lower() else 0
                  for it in items]
-        # most coverage first (the same order as the arrow keys step through)
+        # most coverage first, by name before a measure (the order the arrow keys step through)
         order = bpy.types.UI_UL_list.sort_items_helper(
-            [(i, (-it.coverage, it.camera.name.lower() if it.camera else ""))
-             for i, it in enumerate(items)], lambda e: e[1])
+            [(i, core.sort_key(it)) for i, it in enumerate(items)], lambda e: e[1])
         return flags, order
 
 
