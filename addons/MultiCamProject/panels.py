@@ -74,13 +74,21 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
 NAME_UNITS = 5      # the New Object Name field at the start of 0B / 0C / 0D
 
 
-def _new_name(row, context):
-    """The window buttons' New Object Name (one setting, shown on the 0B, 0C and 0D rows)."""
+def _step_row(col, context, named):
+    """A 0B / 0C / 0D row: the window buttons' New Object Name first (one setting, on all
+    three) - a split of the row, so the fields are equally wide on every row - then the
+    returned row for the step's button and icons."""
+    row = col.row(align=True)
+    if not named:
+        return row
+    scale = context.preferences.system.ui_scale
+    width = max(context.region.width - 30 * scale, 1)
+    split = row.split(factor=min(0.45, NAME_UNITS * 20 * scale / width), align=True)
     props = context.scene.multicamproject_props
-    cell = row.row(align=True)
-    cell.ui_units_x = NAME_UNITS
+    cell = split.row(align=True)
     cell.alert = not props.new_object_name.strip()
     cell.prop(props, "new_object_name", text="", placeholder="Object name")
+    return split.row(align=True)
 
 
 def _icons(row, n):
@@ -137,12 +145,10 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
         setup = mesh and hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup
         named = bool(mm.is_loaded("linking"))     # the window buttons' name: 0B / 0C / 0D
         if mm.is_loaded("camera_project"):
-            row = col.row(align=True)
-            if named:
-                _new_name(row, context)
+            row = _step_row(col, context, named)
             sub = row.row(align=True)
             sub.enabled = cams
-            sub.operator("multicamproject.setup", text="0B. Setup Camera Projection",
+            sub.operator("multicamproject.setup", text="0B. Projection",
                          icon='CHECKMARK' if setup else 'CAMERA_DATA')
             n = int(bool(setup and mm.is_loaded("remesh")))
             if n:
@@ -152,9 +158,7 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
         if mm.is_loaded("remesh"):
             from .modules.remesh import workflow as wf
             low = mesh and wf.is_low_poly(obj)
-            row = col.row(align=True)
-            if named:
-                _new_name(row, context)
+            row = _step_row(col, context, named)
             row.operator("multicamproject.remesh", text="0C. Remesh",
                          icon='CHECKMARK' if low else 'MOD_REMESH')
             unlink = bool(mesh and mm.is_loaded("baking")
@@ -169,9 +173,7 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
                 icons.operator("multicamproject.unlink_original", text="", icon='X')
             icons.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
             retopo = low and wf.is_retopo(obj)
-            row = col.row(align=True)
-            if named:
-                _new_name(row, context)
+            row = _step_row(col, context, named)
             row.operator("multicamproject.retopo_empty", text="0D. Retopo",
                          icon='CHECKMARK' if retopo else 'MESH_PLANE')
             n = 2 + named
