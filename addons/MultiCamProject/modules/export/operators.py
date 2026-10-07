@@ -12,6 +12,19 @@ def _poll(context):
     return context.mode == 'OBJECT' and not jobs.busy()
 
 
+def _poll_edit(context):
+    """Object Mode, or Edit Mode (the operator leaves it itself)."""
+    return context.mode in {'OBJECT', 'EDIT_MESH'} and not jobs.busy()
+
+
+def _to_object_mode(context):
+    """Leave Edit Mode (the edits are written into the mesh). Returns True when it did."""
+    if context.mode != 'OBJECT' and context.active_object is not None:
+        bpy.ops.object.mode_set(mode='OBJECT')
+        return True
+    return False
+
+
 def select_and_frame_row(context, es):
     """The status list's clicked row: select that object only and frame it."""
     coll = common.export_collection(context.scene)
@@ -137,9 +150,17 @@ class MULTICAMPROJECT_OT_ExportFixTransforms(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _poll(context)
+        return _poll_edit(context)
 
     def execute(self, context):
+        edit = _to_object_mode(context)
+        try:
+            return self._fix(context)
+        finally:
+            if edit and context.active_object is not None:
+                bpy.ops.object.mode_set(mode='EDIT')
+
+    def _fix(self, context):
         n = 0
         for obj in status.objects_with(context.scene, {'TRANSFORM'}):
             why = fixes.fix_transform(obj)
@@ -194,9 +215,10 @@ class MULTICAMPROJECT_OT_ExportUpdateOutdated(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _poll(context)
+        return _poll_edit(context)
 
     def execute(self, context):
+        _to_object_mode(context)
         return _rebake(self, context, status.objects_with(context.scene, {'OUTDATED'}),
                        "Update Outdated")
 
@@ -209,9 +231,10 @@ class MULTICAMPROJECT_OT_ExportBakeMissing(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _poll(context)
+        return _poll_edit(context)
 
     def execute(self, context):
+        _to_object_mode(context)
         objs = [o for o in status.objects_with(context.scene, {'NOT_BAKED', 'FILE', 'TEXTURE'})
                 if common.has_uv_normal(o)]
         return _rebake(self, context, objs, "Bake Missing")

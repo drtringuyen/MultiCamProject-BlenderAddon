@@ -181,7 +181,11 @@ def file_ok(img):
 
 
 def selected_meshes(context):
-    return [o for o in context.selected_objects if o.type == 'MESH']
+    """The selected meshes, without one that another selected mesh bakes from (its Bake
+    Source - the scan stays selected next to its retopo / Remesh copy)."""
+    objs = [o for o in context.selected_objects if o.type == 'MESH']
+    sources = {data(o).bake_source for o in objs}
+    return [o for o in objs if o not in sources]
 
 
 def _layer_coll(view_layer, coll):

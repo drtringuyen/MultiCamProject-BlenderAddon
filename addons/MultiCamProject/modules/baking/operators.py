@@ -206,8 +206,7 @@ class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_mode(context):
-            cls.poll_message_set("Object Mode only")
+        if not _object_or_edit(context):
             return False
         objs = common.selected_meshes(context)
         if not objs:
@@ -221,6 +220,7 @@ class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        _to_object_mode(context)
         objs = common.selected_meshes(context)
         return jobs.start(self, context, "Bake from Source", [o.name for o in objs],
                           _source_steps(context, objs),
