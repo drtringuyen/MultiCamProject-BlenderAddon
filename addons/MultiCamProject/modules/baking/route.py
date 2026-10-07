@@ -105,7 +105,8 @@ def changed(obj):
 
 def after_step(obj, step):
     """A Setup step ran on `obj` ('PROJECTION' 0A/0B, 'ORIGINAL' 0C / Use Existing,
-    'RETOPO' 0D): the first workflow sets the route, a second one (or 0D) asks."""
+    'RETOPO' 0D): the first workflow sets the route, a second one asks. 0D sets From
+    Original (bakes from the scan it was modelled on) without asking."""
     if obj is None or obj.type != 'MESH':
         return
     d = common.data(obj)
@@ -113,8 +114,8 @@ def after_step(obj, step):
         return
     both = has_projection(obj) and has_original(obj)
     if step == 'RETOPO':
-        set_route(obj, PROJECTION)
-        d.route_prompt = "0D Retopo made - From Projection set"
+        set_route(obj, ORIGINAL)
+        d.route_prompt = ""
     elif both:                  # a second workflow: the route stays, the user is asked
         set_route(obj, d.route)
         d.route_prompt = (f"{'0B Projection' if step == 'PROJECTION' else '0C Original'} added - "
