@@ -539,7 +539,7 @@ def wire_scan_materials(scene, view_layer):
 
 def auto_fill(scene, view_layer):
     """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT and the template
-    mesh ROOM_Template (template_mesh.py) made when they are not in the scene, then every
+    collection ROOM_Template (template_mesh.py) made when they are not in the scene, then every
     role's folder (missing bake / export folders are made). Returns report lines."""
     lines = []
     filled = roles.autofill(scene)
@@ -549,8 +549,9 @@ def auto_fill(scene, view_layer):
     for role in roles.CREATABLE:       # Original Mesh / EXPORT: made when not in the scene
         if not roles.collections(scene, view_layer, role):
             made.append(roles.ensure(scene, role).name)
-    if template_mesh.ensure(scene) is not None:
-        made.append(template_mesh.NAME)
+    room = template_mesh.ensure(scene)
+    if room:
+        made.append(f"{template_mesh.NAME} ({len(room)} objects)")
     if made:
         lines.append("Added to the scene: " + ", ".join(made))
     for role in roles.ORDER:
