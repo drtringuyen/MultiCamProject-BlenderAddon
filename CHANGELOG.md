@@ -2,6 +2,11 @@
 
 ## Unreleased
 
+### Bakes / exports switch the 3D views to Solid while they run (2026-10-07)
+- Material Preview / Rendered views go to Solid when a job starts and back when it ends (or
+  is stopped). A Bake from Source shows the scan and swaps its 100+ materials to Emission
+  and back; EEVEE in the viewport compiled and loaded all of it, and Blender froze.
+
 ### Bake Route per object: From Original / From Projection / Mixed (2026-10-05)
 - **Dropdown at the start of 06's Albedo / Normal / Both row**, each object its own:
   - **From Original:** BAo_ / BNo_ baked from the Bake Source (Cycles); ALB_ / NOR_ are file

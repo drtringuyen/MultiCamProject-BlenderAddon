@@ -240,6 +240,31 @@ def _redraw():
                 area.tag_redraw()
 
 
+def _solid_views():
+    """Every 3D view in Material Preview / Rendered goes to Solid for the job: a Bake from
+    Source shows the scan (100+ materials, their textures) and turns its materials to
+    Emission and back - EEVEE in the viewport would compile and load all of it each time
+    and freeze Blender. Returns [(space, shading type)] for _restore_views."""
+    saved = []
+    for win in bpy.context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.type != 'VIEW_3D':
+                continue
+            for space in area.spaces:
+                if space.type == 'VIEW_3D' and space.shading.type in {'MATERIAL', 'RENDERED'}:
+                    saved.append((space, space.shading.type))
+                    space.shading.type = 'SOLID'
+    return saved
+
+
+def _restore_views(saved):
+    for space, shading in saved:
+        try:
+            space.shading.type = shading
+        except (ReferenceError, AttributeError):    # the area was closed meanwhile
+            pass
+
+
 # ---------------------------------------------------------------- the runner
 
 _pending = None     # (title, names, gen, finish) for the runner's invoke
@@ -282,6 +307,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
         title, names, self._gen, self._finish, light = _pending
         _pending = None
         RUN = Run(title, names, light)
+        self._views = _solid_views()
         self._job = None
         self._exc = None
         self._last_draw = 0.0
@@ -368,6 +394,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
         context.window_manager.event_timer_remove(self._timer)
         if context.workspace is not None:
             context.workspace.status_text_set(None)
+        _restore_views(self._views)
         RUN = None
         try:
             lines = self._finish(result, error)
@@ -391,6 +418,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
             self._gen.close()
         except Exception:
             pass
+        _restore_views(self._views)
         RUN = None
 
 
