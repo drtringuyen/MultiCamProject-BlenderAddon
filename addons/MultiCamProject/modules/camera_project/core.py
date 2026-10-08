@@ -1187,9 +1187,78 @@ def migrate_material_names():
         bpy.data.node_groups.remove(ng)
 
 
+def sync_occlusion(obj):
+    """The modifier's Occlusion = not Project through (the camera weights the GN computes
+    skip faces the object's own mesh hides from a camera, like Paint and Fill)."""
+    mod = get_modifier(obj)
+    if mod is None or mod.node_group is None:
+        return
+    want = not data(obj).project_through
+    try:
+        if bool(get_input(mod, "Occlusion")) != want:
+            set_input(mod, "Occlusion", want)
+    except (KeyError, AttributeError):
+        pass
+
+
+def visible_faces(obj, cam, scene):
+    """Per face: True when `cam` really sees it - in its frame, facing it, and not hidden
+    by the object's own mesh (a ray from the face centre to the camera). The same test as
+    the projection's Occlusion. Object Mode mesh data, world space."""
+    from mathutils.bvhtree import BVHTree
+    me = obj.data
+    n = len(me.polygons)
+    if n == 0 or cam is None:
+        return np.zeros(n, dtype=bool)
+    mw = obj.matrix_world
+    co = np.empty(n * 3, dtype=np.float32)
+    me.polygons.foreach_get("center", co)
+    nr = np.empty(n * 3, dtype=np.float32)
+    me.polygons.foreach_get("normal", nr)
+    m4 = np.array(mw, dtype=np.float32)
+    co = co.reshape(n, 3) @ m4[:3, :3].T + m4[:3, 3]
+    n3 = np.array(mw.inverted_safe().transposed().to_3x3(), dtype=np.float32)
+    nr = nr.reshape(n, 3) @ n3.T
+    nr /= np.maximum(np.linalg.norm(nr, axis=1, keepdims=True), 1e-9)
+    cm = world_matrix(cam)
+    cd = cam.data
+    ortho = cd.type == 'ORTHO'
+    cmi = np.array(cm.inverted_safe(), dtype=np.float32)
+    p = co @ cmi[:3, :3].T + cmi[:3, 3]
+    depth = -p[:, 2]
+    front = depth > 1e-6
+    width = cd.ortho_scale if ortho else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens
+    aspect = image_aspect(cam_image(cam), scene, load=False)
+    u = p[:, 0] / width + 0.5
+    v = p[:, 1] / width * aspect + 0.5
+    eye = np.array(cm.translation, dtype=np.float32)
+    if ortho:
+        back = np.array(cm.to_3x3().col[2], dtype=np.float32)
+        to_cam = np.broadcast_to(back / max(np.linalg.norm(back), 1e-9), (n, 3))
+        dist = np.full(n, 1e6, dtype=np.float32)
+    else:
+        to_cam = eye - co
+        dist = np.linalg.norm(to_cam, axis=1)
+        to_cam = to_cam / np.maximum(dist[:, None], 1e-9)
+    sees = front & (u > 0) & (u < 1) & (v > 0) & (v < 1) & ((nr * to_cam).sum(axis=1) > 0)
+    verts = [mw @ vt.co for vt in me.vertices]
+    bvh = BVHTree.FromPolygons(verts, [tuple(f.vertices) for f in me.polygons])
+    eps = 1e-3 * max(obj.dimensions) if max(obj.dimensions) else 1e-4
+    from mathutils import Vector
+    for i in np.flatnonzero(sees):
+        start = Vector((co[i] + nr[i] * eps).tolist())
+        hit = bvh.ray_cast(start, Vector(to_cam[i].tolist()), float(dist[i]))
+        if hit[0] is not None:
+            sees[i] = False
+    return sees
+
+
 def migrate_all():
     scene = bpy.context.scene
     migrate_material_names()
+    for obj in _setup_objects():
+        if not obj.library:
+            sync_occlusion(obj)     # Project through (off by default) drives Occlusion
     for obj in bpy.data.objects:
         if obj.type == 'MESH' and data(obj).is_setup and data(obj).shift_version < 1:
             migrate_shifts(obj, scene)
@@ -1732,4 +1801,5 @@ def setup(obj, scene):
         if not len(d.shifts):
             d.shift_version = 1
     d.is_setup = True
+    sync_occlusion(obj)
     return refresh(obj, scene)

@@ -62,10 +62,13 @@ def _draw():
 
 
 class MULTICAMPROJECT_OT_LiquifyCamera(StrokeMixin, bpy.types.Operator):
-    """Liquify this camera's photo in solo view: paint on the background, the projected mesh
-    follows live. Enter bakes the original-size result, Esc cancels (so does leaving solo)"""
+    """Nudge Projection: Photoshop's Liquify on this camera's photo, to line the photo up
+    with the mesh. Works only through the soloed camera (it solos it). Paint on the photo,
+    the projection on the mesh follows live. W Warp (push) · R Reconstruct (back to the
+    original) · S Smooth · P Pucker / B Bloat (Alt+LMB swaps them) · F or [ ] brush size ·
+    Ctrl+Z undo a stroke · Enter applies at full size · Esc cancels (so does leaving solo)"""
     bl_idname = "multicamproject.liquify_camera"
-    bl_label = "Liquify"
+    bl_label = "Nudge Projection"
 
     camera: StringProperty(options={'HIDDEN'})
 

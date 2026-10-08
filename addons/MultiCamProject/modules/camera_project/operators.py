@@ -1,6 +1,7 @@
 import os
 
 import bpy
+import numpy as np
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
 from . import core, gn_builder, paint_sync, wrapper
@@ -549,9 +550,10 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
 # so the icons do not change with Shift - the tooltips tell.
 # icon: a UI icon name, or "tool:<handle>" for one of Blender's toolbar icons
 # standard UI icons: they sit centered in a button (toolbar icons are drawn large and clip)
-CAM_BRUSHES = (('PAINT', "Paint", 'BRUSH_DATA'),
-               ('FLOOD', "Flood", 'GP_DRAW_FILL'),
-               ('ERASE', "Erase", 'EVENT_TABLET_ERASER'))
+CAM_BRUSHES = (('PAINT', "Paint Camera Projection", 'BRUSH_DATA'),
+               ('FLOOD', "Selection Fill", 'tool:brush.paint_texture.fill'),
+               ('ERASE', "Paint Original Mesh", 'tool:brush.gpencil_draw.erase'))
+MASK_KEY = "multicamproject_cam_mask"   # object: the camera whose visible faces the paint mask holds
 
 
 def flood_ready(context, obj):
@@ -585,14 +587,23 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         cam = bpy.data.objects.get(props.camera)
         slot = core.slot_of(obj, cam) if obj and cam else 0
         layer = core.slot_layer(slot) if slot else "VCMix"
+        through = obj is not None and core.data(obj).project_through
+        reach = ("Project through is on: the brush also reaches faces the mesh hides from "
+                 "this camera" if through else
+                 "Project through is off: the mesh blocks it - only the faces this camera "
+                 "really sees take paint (they become the paint mask)")
         return {
-            'PAINT': f"Paint this camera's color into {layer}.\nShift+drag while painting: smooth"
-                     + ("\nA stroke also clears cameras 1-3 under it (on faces this camera sees)"
-                        if slot > 3 else ""),
-            'FLOOD': f"Fill the selected faces with this camera's color in {layer} "
-                     "(Edit Mode, faces selected)",
-            'ERASE': "Erase the projection (the alpha of VCMix and VCMix2) - the baked "
-                     "texture shows.\nShift+click: bring the projection back",
+            'PAINT': f"Paint Camera Projection: paint where this camera's photo shows "
+                     f"({layer}).\n{reach}.\nShift+drag while painting: smooth"
+                     + ("\nA stroke also clears cameras 1-3 under it" if slot > 3 else ""),
+            'FLOOD': "Selection Fill: fill whatever is selected with this camera (Edit Mode, "
+                     "faces selected).\n" + ("Project through is on: every selected face"
+                                             if through else
+                                             "Project through is off: only the selected faces "
+                                             "this camera really sees - the mesh blocks the rest"),
+            'ERASE': "Paint Original Mesh: erase the projection so the original mesh's bake "
+                     "(BAo_) shows. Where nothing was baked from a real mesh it shows black."
+                     "\nShift+click: bring the projection back",
         }[props.mode]
 
     def invoke(self, context, event):
@@ -623,8 +634,21 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             paint_sync.begin_session(obj)   # the brush's alpha then marks the stroke
         else:
             paint_sync.end_session(obj)     # VCMix2 alpha back before VCMix strokes mirror it
+        through = core.data(obj).project_through
+        blocked = None
+        if self.mode != 'ERASE' and not through:
+            blocked = core.visible_faces(obj, cam, context.scene)    # Object Mode mesh data
         bpy.ops.object.mode_set(mode='VERTEX_PAINT')
         paint_sync.reset(obj)
+        polys = obj.data.polygons
+        if self.mode == 'PAINT':
+            if blocked is not None:     # the brush only reaches what the camera sees
+                polys.foreach_set("select", blocked.tolist())
+                obj.data.use_paint_mask = True
+                obj[MASK_KEY] = cam.name
+            elif obj.get(MASK_KEY):     # our mask from a blocked stroke: off again
+                obj.data.use_paint_mask = False
+                del obj[MASK_KEY]
 
         color = core.SLOT_COLORS[slot]
         if self.mode == 'ERASE':
@@ -634,11 +658,21 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if claims:
             context.tool_settings.vertex_paint.brush.use_alpha = True     # Affect Alpha: the marker
         if self.mode != 'ERASE':
-            # strokes stop at the visible surface - never through the mesh to its far side
-            context.tool_settings.vertex_paint.brush.use_frontface = True
+            # blocked: strokes stop at the visible surface; Project through: they go on
+            context.tool_settings.vertex_paint.brush.use_frontface = not through
         if self.mode == 'FLOOD':
+            picked = np.zeros(len(polys), dtype=bool)
+            polys.foreach_get("select", picked)
+            if blocked is not None:     # only the selected faces the camera sees
+                polys.foreach_set("select", (picked & blocked).tolist())
             obj.data.use_paint_mask = True
             bpy.ops.paint.vertex_color_set(use_alpha=True)
+            if blocked is not None:
+                polys.foreach_set("select", picked.tolist())    # the user's selection back
+                n = int(picked.sum() - (picked & blocked).sum())
+                if n:
+                    self.report({'INFO'}, f"{n} selected face(s) hidden from '{cam.name}' "
+                                          "left out (Project through fills them)")
             paint_sync.sync(obj)
         return {'FINISHED'}
 
@@ -656,8 +690,8 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
     def description(cls, context, props):
         return ("VCMix and VCMix2 alpha = 1 on the whole object - the projection shows "
                 "everywhere" if props.value >= 0.5 else
-                "Clear Alpha: VCMix and VCMix2 alpha = 0 on the whole object - the projection "
-                "is erased everywhere (Erase on the whole mesh at once)")
+                "Clear All Projection: remove the projection from the whole object - the "
+                "original mesh's bake (BAo_) shows everywhere")
 
     @classmethod
     def poll(cls, context):

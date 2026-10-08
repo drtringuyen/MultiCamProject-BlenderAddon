@@ -137,6 +137,17 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
                               description="Clip start applied to every camera on Reload All")
     clip_end: FloatProperty(name="End", default=100.0, min=0.001, unit='LENGTH',
                             description="Clip end applied to every camera on Reload All")
+    project_through: BoolProperty(
+        name="Project through", default=False,
+        update=lambda self, context: _on_project_through(self),
+        description="On: Paint and Fill reach every face, also the ones the object's own mesh "
+                    "hides from the camera. Off: the mesh blocks the projection - Paint and "
+                    "Fill only reach the faces the camera really sees")
+
+
+def _on_project_through(self):
+    from . import core
+    core.sync_occlusion(self.id_data)
 
 
 def _on_global_shift(self, context):

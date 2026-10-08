@@ -1006,11 +1006,14 @@ class MULTICAMPROJECT_OT_lasso_paste(LassoMixin, bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_lasso_camera(LassoMixin, bpy.types.Operator):
-    """Lasso this camera's photo in solo view: cut, move, rotate or scale pixels where you
-    see them, the projected mesh follows. Enter applies and ends, Esc reverts (so does
-    leaving solo), Ctrl+Z undoes a step"""
+    """Cut Projection: a lasso selection on this camera's photo, through the soloed camera
+    (it solos it). Click points around a part (click the first point or double-click to
+    close), then drag it or G / R / S to move, rotate, scale - the projection on the mesh
+    follows. Shift+D stamps a copy, X deletes the part (a transparent hole), Ctrl+C /
+    Ctrl+V copy and paste. Click outside to apply and start the next lasso, Enter applies
+    and ends, Ctrl+Z undoes a step, Esc reverts the whole session (so does leaving solo)"""
     bl_idname = "multicamproject.lasso_camera"
-    bl_label  = "Lasso"
+    bl_label  = "Cut Projection"
 
     camera: StringProperty(options={'HIDDEN'})
 

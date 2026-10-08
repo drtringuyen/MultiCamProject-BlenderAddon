@@ -6,19 +6,24 @@ from . import core
 from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
 
 
-def _draw_liquify(layout, cam):
-    """Liquify / Lasso this camera's photo in solo view (image_editor module; hidden when it
-    is off)."""
+def _liquify_loaded():
     from ... import module_manager
-    if not module_manager.is_loaded("image_editor"):
+    return bool(module_manager.is_loaded("image_editor"))
+
+
+def _draw_liquify(layout, cam):
+    """Nudge (Liquify) / Cut (Lasso) this camera's photo in solo view (image_editor module;
+    hidden when it is off)."""
+    if not _liquify_loaded():
         return
     from ..image_editor import camera_op
     op = layout.operator("multicamproject.liquify_camera", text="", icon='MOD_WARP',
                          depress=camera_op.running == cam.name)
     op.camera = cam.name
     from ..image_editor import lasso_ops
-    op = layout.operator("multicamproject.lasso_camera", text="", icon='SELECT_SET',
-                         depress=lasso_ops.running_camera() == cam.name)
+    op = layout.operator("multicamproject.lasso_camera", text="",
+                         depress=lasso_ops.running_camera() == cam.name,
+                         **_icon("tool:ops.generic.select_lasso"))
     op.camera = cam.name
 
 
@@ -46,6 +51,7 @@ def _icon(icon):
 
 
 TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
+TOOL_WIDTH = 2.0     # units per tool button: the toolbar icons (bucket, eraser, lasso) need it
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -132,8 +138,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         split = row.split(factor=self.MODE_SPLIT, align=True)     # Occlusion under Mode
         blend = split.row(align=True)
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
-        split.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion", toggle=True,
-                   icon='MOD_MASK')
+        split.prop(d, "project_through", text="Project through", toggle=True,
+                   icon='XRAY')
 
         box.separator(type='LINE')
         if not d.cameras:
@@ -279,10 +285,17 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         it = core.shift_holder(obj, cam)      # a global camera's shift is shared by every object
         if it is None:
             return
-        image_x = m[2]
-        split = col.row().split(factor=image_x, align=True)   # X starts under the image field
-        tools = split.row(align=True)            # vertex paint VCMix with this camera's color
-        tools.scale_x = tools.scale_y = TOOL_SCALE
+        # the tools at a fixed width, one square button each (the toolbar icons - bucket,
+        # eraser, lasso - are drawn as tall as the button and are clipped by a narrower one);
+        # the X / Y fields take the rest
+        n = len(CAM_BRUSHES) + 1 + 2 * _liquify_loaded()
+        ctx = bpy.context
+        unit = 20 * ctx.preferences.system.ui_scale
+        avail = max(1.0, ctx.region.width - 3.6 * unit)
+        line = col.row().split(factor=min(0.6, n * TOOL_WIDTH * unit / avail), align=True)
+        tools = line.row(align=True)            # vertex paint VCMix with this camera's color
+        tools.scale_y = TOOL_SCALE
+        tools.scale_x = TOOL_WIDTH      # icon-only buttons don't stretch: widen them
         for mode, _name, icon in CAM_BRUSHES:
             sub = tools.row(align=True)
             sub.enabled = mode != 'FLOOD' or flood
@@ -291,7 +304,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         _draw_liquify(tools, cam)
         # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
         tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
-        row = split.row(align=True)
+        row = line.row(align=True)
         row.scale_y = TOOL_SCALE                 # same height: bottoms line up with the buttons
         row.prop(it, "shift", index=0, text="X", slider=True)
         row.prop(it, "shift", index=1, text="Y", slider=True)
