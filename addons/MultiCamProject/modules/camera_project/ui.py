@@ -23,17 +23,20 @@ def _draw_liquify(layout, cam):
 
 
 def _draw_bake_row(context, layout, obj):
-    """06's bake row under the slots ([Auto Resolution v] [Bake ...] [mixture] [gear]): bake
-    right after picking cameras. Without the baking module: Bake Camera Mixture alone."""
+    """Under the slots, in one box: Processing | Final (as in 06) and 06's bake row
+    ([Auto Resolution v] [Bake ...] [mixture] [gear]) - bake right after picking cameras.
+    Without the baking module: Bake Camera Mixture alone."""
     try:
         from ..baking import common as bake_common, ui as bake_ui
     except ImportError:
         layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
                         icon='RENDER_STILL')
         return
-    layout.separator(factor=0.5)
+    box = layout.box().column()
+    if hasattr(obj, "multicamproject_view"):
+        bake_ui.draw_final_toggle(box, obj, "multicamproject_view")
     bake_ui.MULTICAMPROJECT_PT_Baking._draw_bake_button(
-        layout, bake_common.settings(context.scene), obj)
+        box, bake_common.settings(context.scene), obj)
 
 
 def _icon(icon):
@@ -135,11 +138,6 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         split.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion", toggle=True,
                    icon='MOD_MASK')
-
-        # Processing | Final, as in 06 (look at the bake without scrolling down)
-        if hasattr(obj, "multicamproject_view"):
-            col.separator(factor=0.5)
-            col.row(align=True).prop(obj, "multicamproject_view", expand=True)
 
         box.separator(type='LINE')
         if not d.cameras:
