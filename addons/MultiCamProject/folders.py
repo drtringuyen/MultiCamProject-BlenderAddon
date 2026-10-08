@@ -1,8 +1,8 @@
 """Role folders: each collection role of the Linking panel has its folder and a Reload.
 
     Objects        Scan Textures  the objects' original scan textures   (//00.Scan/01.FBX/)
-    Original Mesh  Bake Folder    the ALB_/NOR_ + work bakes            (//01.Bake/)
-    Export         Export Folder  the FBX + Textures/                   (//Export/)
+    Original Mesh  Bake Folder    the work bakes (BAo_/BNo_/BAp_/...)   (//01.Bake/)
+    Export         Export Folder  the FBX + Textures/ (ALB_/NOR_)       (//Export/)
     Cameras        Camera Photos  every camera photo                    (//00.Scan/00.Photos/)
 
 The bake and export folders are the Baking / 07 settings themselves (one setting, two
@@ -201,6 +201,9 @@ def _own_prefixes():
         return ("ALB_", "NOR_", "BAo_", "BNo_", "BNoG_", "BAp_", "BNp_")
 
 
+FINAL = ("ALB_", "NOR_")        # written into <export folder>/Textures, not the bake folder
+
+
 def _role_objects(scene, view_layer, role):
     colls = [c for c, _lc in roles.collections(scene, view_layer, role)]
     if not colls:
@@ -265,13 +268,24 @@ def set_original_normal(scene, view_layer, strength):
 
 
 def bake_images():
+    """The work bakes (the bake folder's): not ALB_/NOR_, those are the export's."""
     own = _own_prefixes()
-    return sorted((i for i in bpy.data.images if i.name.startswith(own)), key=lambda i: i.name)
+    return sorted((i for i in bpy.data.images if i.name.startswith(own)
+                   and not i.name.startswith(FINAL)), key=lambda i: i.name)
+
+
+def final_images():
+    return sorted((i for i in bpy.data.images if i.name.startswith(FINAL)), key=lambda i: i.name)
+
+
+def export_textures(top):
+    return os.path.join(top, "Textures") if top else ""
 
 
 def export_images(top):
+    """The export folder's images other than ALB_/NOR_ (those: final_images)."""
     return [i for i in bpy.data.images if _relinkable(i) and i.filepath
-            and _inside(bpy.path.abspath(i.filepath), top)]
+            and not i.name.startswith(FINAL) and _inside(bpy.path.abspath(i.filepath), top)]
 
 
 def _cameras(scene, view_layer):
@@ -366,6 +380,9 @@ def reload(scene, view_layer, role):
     else:
         images = export_images(top)
     relinked, reloaded, missing = relink(images, top)
+    if role == 'EXPORT':        # ALB_/NOR_ from <export>/Textures (also ones still in the bake folder)
+        r, n, miss = relink(final_images(), export_textures(top))
+        relinked, reloaded, missing = relinked + r, reloaded + n, missing + miss
     if missing:
         warnings.append(_missing_text(missing))
     return f"{reloaded} texture(s) reloaded, {relinked} relinked to {top}", warnings
@@ -400,12 +417,15 @@ def _file_images():
 
 def relink_missing(scene):
     """Only the images whose file is missing get it from their role's folder: textures from
-    Scan Textures, bakes from the Bake Folder, camera photos from Camera Photos. Images
-    that load fine are left alone (no reload). Returns how many were relinked."""
+    Scan Textures, work bakes from the Bake Folder, ALB_/NOR_ from <Export Folder>/Textures,
+    camera photos from Camera Photos. Images that load fine are left alone (no reload).
+    Returns how many were relinked."""
     n = 0
     for role, images in (('OBJECTS', _file_images), ('ORIGINALS', bake_images),
-                         ('CAMERAS', lambda: list(_photos()))):
+                         ('EXPORT', final_images), ('CAMERAS', lambda: list(_photos()))):
         top = folder(scene, role)
+        if role == 'EXPORT':
+            top = export_textures(top)
         if not top:
             continue
         missing = _missing(images())

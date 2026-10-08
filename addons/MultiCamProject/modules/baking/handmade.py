@@ -105,14 +105,13 @@ def _uv_normal(obj, uv_name):
 
 def _png(img, scene, kind, obj):
     """The exporter copies <texture>.png files: a packed-only or non-PNG texture is
-    written as a PNG into the bake folder. Returns a note or ''."""
+    written as a PNG into the export textures folder. Returns a note or ''."""
     path = common.image_file(img)
     if path and os.path.isfile(path) and path.lower().endswith(".png"):
         return ""
-    folder = common.output_dir(scene)
-    os.makedirs(folder, exist_ok=True)
     name = common.alb_name(obj) if kind == "ALB" else common.nor_name(obj)
-    dst = os.path.join(folder, name + ".png")
+    dst = common.texture_path(scene, name)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
     if os.path.isfile(dst):
         raise RuntimeError(f"{os.path.basename(dst)} already exists - not overwritten")
     was_packed = img.packed_file is not None
@@ -364,17 +363,17 @@ def rebake_problem(obj):
 
 
 def _target(img, name, scene):
-    """Where a rebaked texture goes: <bake folder>/<name>.png, next to every other ALB_ /
-    NOR_ (one folder to zip). A file already there that the image does not use yet is
-    copied to _previous first; the image's old file (e.g. textures/) stays where it is -
-    another .blend may use it."""
+    """Where a rebaked texture goes: <export folder>/Textures/<name>.png, next to every other
+    ALB_ / NOR_. A file already there that the image does not use yet is copied to the bake
+    folder's _previous first (never into the export); the image's old file (e.g. textures/)
+    stays where it is - another .blend may use it."""
     import shutil
     path = common.texture_path(scene, name)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     cur = common.image_file(img)
     if os.path.isfile(path) and not (cur and os.path.normcase(os.path.abspath(cur))
                                      == os.path.normcase(os.path.abspath(path))):
-        folder = os.path.join(os.path.dirname(path), PREVIOUS_DIR)
+        folder = os.path.join(common.output_dir(scene), PREVIOUS_DIR)
         os.makedirs(folder, exist_ok=True)
         dst = os.path.join(folder, f"{name}_replaced.png")
         n = 2
@@ -542,7 +541,7 @@ def rebake_steps(context, obj):
                                                 normal_space='TANGENT')
                 finally:
                     engine._uv_restore(obj, prev_uv)
-        # all baked: now the files are written - into the bake folder with every other ALB_/NOR_
+        # all baked: now the files are written - into <export>/Textures with every other ALB_/NOR_
         alb_path = _target(d.alb_image, common.alb_name(obj), scene)
         yield jobs.Step(f"Rebake: writing {os.path.basename(alb_path)}")
         tmp = bpy.data.images.new(engine.TMP_IMAGE, size, size, alpha=False, float_buffer=False)

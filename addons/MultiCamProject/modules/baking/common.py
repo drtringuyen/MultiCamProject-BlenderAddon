@@ -49,7 +49,7 @@ def nor_name(obj):
     return typed_name("NOR", obj)
 
 
-# the add-on's texture files in the bake folder: the final ALB_/NOR_ and the work textures
+# the add-on's texture files: the final ALB_/NOR_ (<export>/Textures) and the work textures
 # of the two routes - BAo_/BNo_ baked from the Original (Bake from Source), BAp_/BNp_ from
 # the Projection. Only files with these prefixes are ever cleaned up
 FINAL_PREFIXES = ("ALB_", "NOR_")
@@ -163,8 +163,23 @@ def output_dir(scene):
     return bpy.path.abspath(settings(scene).output_dir)
 
 
+EXPORT_TEXTURES = "Textures"    # <export folder>/Textures: the FBX's textures
+
+
+def final_dir(scene):
+    """Where ALB_/NOR_ are written: <export folder>/Textures, next to the FBX (the export
+    finds them there, nothing to copy). A Work Window (Receive takes them from its bake
+    folder) or no Export module: the bake folder."""
+    ex = getattr(scene, "multicamproject_export", None)
+    if ex is None or not ex.folder or is_work_window(scene):
+        return output_dir(scene)
+    return os.path.normpath(os.path.join(bpy.path.abspath(ex.folder), EXPORT_TEXTURES))
+
+
 def texture_path(scene, image_name):
-    return os.path.join(output_dir(scene), image_name + ".png")
+    """<name>.png: ALB_/NOR_ in final_dir, the work textures in the bake folder."""
+    folder = final_dir(scene) if image_name.startswith(FINAL_PREFIXES) else output_dir(scene)
+    return os.path.join(folder, image_name + ".png")
 
 
 def image_file(img):
