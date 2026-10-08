@@ -144,8 +144,8 @@ class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_CheckSlots(bpy.types.Operator):
-    """Refresh: measure the camera list again (Selected + Other Cameras), keep the picked
-    cameras that still see the object, fill empty slots from the list, then load them into
+    """Refresh: list the cameras again (Selected + Other Cameras, not measured), keep every
+    picked camera (Resort picks again), fill empty slots from the list, then load them into
     the material and GN - the object's own material in its slot, each Cam texture holding
     its camera's photo (fetched from the folder when missing)"""
     bl_idname = "multicamproject.check_slots"

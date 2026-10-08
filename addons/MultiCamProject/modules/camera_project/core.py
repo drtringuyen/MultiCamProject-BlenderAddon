@@ -1,5 +1,7 @@
-"""Camera projection logic: material, modifier wiring, camera scoring, images, slots."""
+"""Camera projection logic: material, modifier wiring, camera scoring (Resort / Measure
+Coverage only), images, slots."""
 import os
+import random
 from contextlib import contextmanager
 
 import bpy
@@ -1346,10 +1348,19 @@ def measured(d):
 
 
 def rescore(obj, scene):
-    """Score every scene camera against the object and rebuild the camera list (most
-    coverage first): measure_coverage. ~0.1 s for 600 cameras once the photo headers are
-    read (the first time on the Drive: a few seconds)."""
-    return measure_coverage(obj, scene)
+    """Rebuild the camera list: every scene camera not removed by hand. Nothing is measured
+    and no slot changes - a camera keeps the coverage it was measured with, a new one starts
+    at 0 (Resort / Measure Coverage score them). Returns the set listed."""
+    d = data(obj)
+    removed = {r.camera for r in d.removed if r.camera}
+    old = {it.camera: (it.score, it.coverage) for it in d.cameras if it.camera}
+    cams = [c for c in scene_cameras(scene) if c not in removed]
+    d.cameras.clear()
+    for c in cams:
+        it = d.cameras.add()
+        it.camera = c
+        it.score, it.coverage = old.get(c, (0.0, 0.0))
+    return set(cams)
 
 
 def measure_coverage(obj, scene):
@@ -1374,7 +1385,9 @@ def measure_coverage(obj, scene):
                   if c not in removed]
     # every camera with the object in frame is kept - also one that sees only back faces
     # (score 0, e.g. the back camera of a relief); the coverage filter only hides / skips
-    scored = sorted([sc for sc in scored if sc[1] > 0], key=lambda sc: -sc[1])
+    # a slot camera stays listed too (slots are never repicked here: Resort does that)
+    slots = set(get_slots(d))
+    scored = sorted([sc for sc in scored if sc[1] > 0 or sc[2] in slots], key=lambda sc: -sc[1])
     d.cameras.clear()
     for sc, cov, c in scored:
         it = d.cameras.add()
@@ -1397,16 +1410,16 @@ def remove_camera(obj, cam):
 
 
 def restore_cameras(obj, scene):
-    """Bring every removed camera back into the list (measured again)."""
+    """Bring every removed camera back into the list (not measured)."""
     data(obj).removed.clear()
     rescore(obj, scene)
 
 
 def auto_pick(obj, scene):
-    """Measure again, then slots by axis_pick; afterwards the slots count as not picked
-    by hand."""
+    """Resort - the only automatic pick: measure every camera, then slots by axis_pick;
+    afterwards the slots count as not picked by hand."""
     d = data(obj)
-    rescore(obj, scene)
+    measure_coverage(obj, scene)
     cams, warning = axis_pick(d, slot_count(d))
     set_slots(d, cams)
     d.user_picked = False
@@ -1454,26 +1467,36 @@ def assign_slot(obj, cam, slot, scene):
     apply_slots(obj, scene)
 
 
+def free_cameras(d, slots):
+    """Cameras with a photo for an empty slot: by coverage once measured (Resort / Measure
+    Coverage), else in random order."""
+    free = [it.camera for it in d.cameras if it.camera and it.camera not in slots
+            and passes(d, it) and image_ok(cam_image(it.camera))]
+    if not measured(d):
+        random.shuffle(free)
+    return free
+
+
 def refill_slots(d, slots, sees, warnings):
-    """Keep each slot camera that still sees the object and has a photo; the others (and
-    empty slots) get the best-coverage free camera with a photo that passes the filter."""
+    """Never repicks: every slot camera stays (Resort picks again). Only an empty slot, or
+    one whose camera is gone from the scene, gets a free camera (free_cameras)."""
+    free = free_cameras(d, slots)
     for i, cam in enumerate(slots):
-        if cam is not None and cam in sees and image_ok(cam_image(cam)):
-            continue        # the pick is kept, whatever its coverage
-        free = [it.camera for it in d.cameras if it.camera not in slots and passes(d, it)
-                and image_ok(cam_image(it.camera))]
-        new = free[0] if free else None     # the list is in coverage order
+        if cam is not None and cam in sees:
+            if not image_ok(cam_image(cam)):
+                warnings.append(f"Camera {i + 1}: '{cam.name}' has no loaded image")
+            continue
+        new = free.pop(0) if free else None
         if cam is not None:
-            why = "no longer sees the object" if cam not in sees else "has no loaded image"
-            warnings.append(f"Camera {i + 1}: '{cam.name}' {why} -> "
+            warnings.append(f"Camera {i + 1}: '{cam.name}' is gone -> "
                             f"{new.name if new else 'left empty'}")
         slots[i] = new
     return slots
 
 
 def check_slots(obj, scene):
-    """Refresh: the camera list (Selected + Other Cameras) is measured again, the Camera 1-n
-    picks stay unless they no longer see the object or have no photo, empty slots are
+    """Refresh: the camera list (Selected + Other Cameras) is made again (not measured), the
+    Camera 1-n picks stay (Resort picks again), empty slots are
     filled from the list. The object's own MCP_ goes back into its material slot (a
     duplicate keeps the original's), slot photos are fetched from the folder when missing,
     then CamTex_1..n and the GN modifier are rewired to the slots.
@@ -1532,16 +1555,14 @@ def slot_of(obj, cam):
 
 
 def change_slot_count(obj, scene):
-    """After the Cameras dropdown: empty new slots get the best-scoring unused cameras
-    with an image, then the modifier moves to the group for the new count and the
+    """After the Cameras dropdown: empty new slots get free cameras (free_cameras), then
+    the modifier moves to the group for the new count and the
     material is rebuilt for it. Slots above the count keep their camera."""
     d = data(obj)
     if not d.is_setup:
         return
     slots = get_slots(d)
-    free = [it.camera for it in d.cameras            # coverage order
-            if it.camera and it.camera not in slots and passes(d, it)
-            and image_ok(cam_image(it.camera))]
+    free = free_cameras(d, slots)
     for i, cam in enumerate(slots):
         if cam is None and free:
             slots[i] = free.pop(0)
@@ -1667,7 +1688,8 @@ def set_paint_brush(context, color=None, blend='MIX'):
 # ---------------------------------------------------------------- reload all
 
 def refresh(obj, scene):
-    """Reload All: images -> clipping -> scoring -> slot check -> material -> rewire.
+    """Reload All: images -> clipping -> camera list -> empty slots -> material -> rewire.
+    No camera is measured and no slot repicked (Resort does that).
     Returns a list of warning strings."""
     d = data(obj)
     warnings = []
@@ -1685,14 +1707,7 @@ def refresh(obj, scene):
         cam.data.clip_end = d.clip_end
 
     sees = rescore(obj, scene)
-    slots = get_slots(d)
-    if not d.user_picked:
-        slots, warning = axis_pick(d, slot_count(d))
-        if warning:
-            warnings.append(warning)
-    else:
-        slots = refill_slots(d, slots, sees, warnings)
-    set_slots(d, slots)
+    set_slots(d, refill_slots(d, get_slots(d), sees, warnings))
 
     missing = [it.camera.name for it in d.cameras
                if passes(d, it) and not image_ok(cam_image(it.camera))]

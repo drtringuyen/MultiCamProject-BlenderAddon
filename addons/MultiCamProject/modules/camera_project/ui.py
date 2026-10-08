@@ -188,7 +188,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         if body and len(d.cameras) and not core.measured(d):
             r = body.row()      # every camera shown until then: the filter needs the measure
             r.active = False
-            r.label(text="Coverage not measured - Resort, Refresh or Reload All scores it",
+            r.label(text="Coverage not measured - Resort scores the cameras and picks",
                     icon='INFO')
         if body and not total:
             body.label(text="No other camera - every camera seeing the object is in a slot",
