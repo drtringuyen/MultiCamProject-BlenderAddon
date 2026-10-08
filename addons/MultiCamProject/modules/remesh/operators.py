@@ -391,9 +391,11 @@ def dyntopo_on(obj):
 
 
 class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
-    """Decimate brush: Sculpt Mode with Blender's Density brush (collapses short edges where
-    you paint - Sculpt brushes ▸ Other). It only works with Dyntopo, so Dyntopo is switched
-    on (Blender asks first when that would lose mesh data)"""
+    """Decimate brush: Blender's Density brush in Sculpt Mode - collapses short edges where you
+    paint. While you use it, the object's modifiers are off and the view is in Solid, so you
+    see only the topology; Dyntopo is switched on. Pick another brush or tool, or leave Sculpt
+    Mode, and the modifiers come back, Dyntopo goes off and the view returns to Material
+    Preview"""
     bl_idname = "multicamproject.remesh_density_brush"
     bl_label = "Decimate Brush"
     bl_options = {'REGISTER'}
@@ -415,10 +417,14 @@ class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
         except (RuntimeError, TypeError) as e:
             self.report({'ERROR'}, f"Density brush not available: {e}")
             return {'CANCELLED'}
+        from . import decimate_session
+        # modifiers off first: Dyntopo then has nothing to warn about, and no GN / Decimate
+        # is evaluated again per stroke
+        decimate_session.start(obj)
         if not dyntopo_on(obj):
-            # Blender's own toggle: it warns when Dyntopo would drop mesh data
-            bpy.ops.sculpt.dynamic_topology_toggle('INVOKE_DEFAULT')
-        self.report({'INFO'}, "Density brush: paint to decimate (Dyntopo on)")
+            bpy.ops.sculpt.dynamic_topology_toggle()        # exec: no popup
+        self.report({'INFO'}, "Decimate Brush: modifiers off, Solid view - another brush or "
+                              "tool brings them back")
         return {'FINISHED'}
 
     def execute(self, context):

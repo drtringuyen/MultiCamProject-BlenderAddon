@@ -18,6 +18,11 @@ def _repair():
 
 @persistent
 def _on_load(_):
+    from . import decimate_session
+    try:
+        decimate_session.restore_all()      # saved mid Decimate Brush: modifiers back on
+    except Exception as e:
+        print(f"[MultiCamProject] Decimate Brush restore skipped: {e}")
     _repair()
 
 
@@ -30,6 +35,9 @@ def register():
 
 
 def unregister():
+    from . import decimate_session
+    if decimate_session.active():
+        decimate_session.stop()
     if _on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load)
     ui.unregister()

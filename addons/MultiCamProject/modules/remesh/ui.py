@@ -130,9 +130,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             prop = {'CONSTANT': "constant_detail_resolution", 'MANUAL': "constant_detail_resolution",
                     'BRUSH': "detail_percent"}.get(ts.detail_type_method, "detail_size")
             det.prop(ts, prop, text="")
+            from ... import addon_icons
             row.operator("multicamproject.remesh_density_brush",
                          text="Decimate Brush" + ("  ·  active" if on_density and dyn else ""),
-                         icon='MOD_DECIM', depress=on_density and dyn)
+                         depress=on_density and dyn, **addon_icons.kw("decimate", 'MOD_DECIM'))
             if context.mode == 'SCULPT':
                 tog = row.row(align=True)
                 tog.alert = on_density and not dyn          # the brush does nothing without it
@@ -147,7 +148,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                          text="02. Select & Set (L)" if context.mode != 'EDIT_MESH'
                          else "02. Set Selected Faces", icon='FACESEL')
             row.operator("multicamproject.remesh_set_faces", text="",
-                         icon='FACE_MAPS').action = 'CLEAR_FACE_SETS'
+                         icon='FILE_REFRESH').action = 'CLEAR_FACE_SETS'
 
         if pending:     # everything after 02 waits for the decision
             layout = layout.column()
