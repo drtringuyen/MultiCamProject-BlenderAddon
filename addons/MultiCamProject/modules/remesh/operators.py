@@ -905,21 +905,25 @@ def register():
         bpy.utils.register_class(c)
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:
-        # Sculpt + Object Mode (both buttons go to Sculpt themselves): Shift+K PolyCut tool,
-        # O Decimate Brush (Object Mode: instead of the proportional editing toggle).
-        # Sculpt: Ctrl+Shift+F the Decimate Brush detail (poll: only in its session).
-        # Edit Mode: Ctrl+Shift+L Clean Floating.
+        # Ctrl+Shift+ (free in the 3D View, none of Blender's own keys replaced):
+        #   K  PolyCut tool       Object + Sculpt Mode (the button goes to Sculpt itself)
+        #   D  Decimate Brush     Object + Sculpt Mode
+        #   F  its Dyntopo detail Sculpt, only in the Decimate Brush session (poll)
+        #   L  Clean Floating     Edit Mode
         poly, dec = (MULTICAMPROJECT_OT_RemeshEnterTool.bl_idname,
                      MULTICAMPROJECT_OT_RemeshDensityBrush.bl_idname)
-        shift, ctrl_shift = {"shift": True}, {"ctrl": True, "shift": True}
         for km_name, items in (
-                ("Sculpt", ((poly, 'K', shift), (dec, 'O', {}),
-                            (MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F', ctrl_shift))),
-                ("Object Mode", ((poly, 'K', shift), (dec, 'O', {}))),
-                ("Mesh", ((MULTICAMPROJECT_OT_RemeshCleanFloating.bl_idname, 'L', ctrl_shift),))):
+                ("Sculpt", ((poly, 'K'), (dec, 'D'),
+                            (MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F'))),
+                ("Object Mode", ((poly, 'K'), (dec, 'D'))),
+                ("Mesh", ((MULTICAMPROJECT_OT_RemeshCleanFloating.bl_idname, 'L'),))):
             km = kc.keymaps.new(name=km_name, space_type='EMPTY')
-            for idname, key, mods in items:
-                _keymaps.append((km, km.keymap_items.new(idname, key, 'PRESS', **mods)))
+            ours = {i for i, _k in items}       # left behind by a reload: not one more set
+            for kmi in [k for k in km.keymap_items if k.idname in ours]:
+                km.keymap_items.remove(kmi)
+            for idname, key in items:
+                _keymaps.append((km, km.keymap_items.new(idname, key, 'PRESS', ctrl=True,
+                                                         shift=True)))
     bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
         name="Retopo Snapping", default=True,
         description="0D: snap to the original's surface (Face Project) and the Retopology "

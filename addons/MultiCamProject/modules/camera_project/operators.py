@@ -1025,6 +1025,11 @@ def register():
         # Add-on items come first in a keymap, so here the poll decides: sidebar + solo
         # -> step the camera, anything else -> falls through to Jump to Keyframe.
         km = kc.keymaps.new(name="Frames")
+        # a reload that skipped unregister left its items behind: clear them, not one more set
+        ours = {c.bl_idname for c in (MULTICAMPROJECT_OT_SoloStep, MULTICAMPROJECT_OT_SoloFrame,
+                                      MULTICAMPROJECT_OT_SoloRemove, MULTICAMPROJECT_OT_SoloAssign)}
+        for kmi in [k for k in km.keymap_items if k.idname in ours]:
+            km.keymap_items.remove(kmi)
         # Left / Right: 5 cameras at a time (elsewhere they keep stepping frames)
         for key, step in (('UP_ARROW', -1), ('DOWN_ARROW', 1),
                           ('LEFT_ARROW', -5), ('RIGHT_ARROW', 5)):

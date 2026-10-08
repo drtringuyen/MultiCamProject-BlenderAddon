@@ -6,8 +6,11 @@
 - **Clean Floating** (trash button at the end of row 01, Edit Mode, **Ctrl+Shift+L**): select
   a bit of the one big mesh to keep - Select Linked (Normal only, seams ignored), Face then
   Edge select mode, Select Invert, delete the edges: every floating piece goes.
-- Sculpt and Object Mode keys: **Shift+K** the PolyCut tool (L picks again from there), **O**
-  the Decimate Brush (Object Mode: instead of the proportional editing toggle).
+- Keys, all Ctrl+Shift (free in the 3D View, none of Blender's own replaced): **K** the
+  PolyCut tool and **D** the Decimate Brush (Object and Sculpt Mode), **F** its detail,
+  **L** Clean Floating (Edit Mode). Written on the buttons.
+- Fix: the camera solo keys (arrows, 1-6, X, numpad .) piled up a copy per add-on reload;
+  register now clears what an earlier one left behind.
 - **Ctrl+Shift+F** in the Decimate Brush: drag the Dyntopo detail like F drags the size
   (Relative px / Brush %: the radial circle at the detail's real size;
   Constant / Manual: Blender's detail edit).

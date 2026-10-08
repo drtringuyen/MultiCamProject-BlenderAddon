@@ -114,7 +114,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row = col.row(align=True)
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
-                             text="01. Poly Cut & Seams (Shift+K · Ctrl+Click, L)",
+                             text="01. Poly Cut & Seams (Ctrl+Shift+K)",
                              icon='SCULPTMODE_HLT')
             else:
                 row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
@@ -133,10 +133,11 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             det.ui_units_x = 4.5
             prop = {'CONSTANT': "constant_detail_resolution", 'MANUAL': "constant_detail_resolution",
                     'BRUSH': "detail_percent"}.get(ts.detail_type_method, "detail_size")
-            det.prop(ts, prop, text="")     # Ctrl+Shift+F in the Decimate Brush: drag it
+            det.prop(ts, prop, text="")
             from ... import addon_icons
             row.operator("multicamproject.remesh_density_brush",
-                         text="Decimate Brush (O)" + ("  ·  active" if on_density and dyn else ""),
+                         text="Decimate · Ctrl+Shift+F detail" if on_density and dyn
+                         else "Decimate Brush (Ctrl+Shift+D)",
                          depress=on_density and dyn, **addon_icons.kw("decimate", 'MOD_DECIM'))
             if context.mode == 'SCULPT':
                 tog = row.row(align=True)
