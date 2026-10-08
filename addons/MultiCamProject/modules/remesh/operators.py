@@ -903,11 +903,15 @@ def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
     kc = bpy.context.window_manager.keyconfigs.addon
-    if kc is not None:      # Ctrl+Shift+F: the Decimate Brush detail (poll: only in its session)
+    if kc is not None:
+        # Sculpt Mode: P PolyCut tool (instead of Blender's Pinch brush), O Decimate Brush,
+        # Ctrl+Shift+F the Decimate Brush detail (poll: only in its session)
         km = kc.keymaps.new(name="Sculpt", space_type='EMPTY')
-        kmi = km.keymap_items.new(MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F', 'PRESS',
-                                  ctrl=True, shift=True)
-        _keymaps.append((km, kmi))
+        for idname, key, mods in ((MULTICAMPROJECT_OT_RemeshEnterTool.bl_idname, 'P', {}),
+                                  (MULTICAMPROJECT_OT_RemeshDensityBrush.bl_idname, 'O', {}),
+                                  (MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F',
+                                   {"ctrl": True, "shift": True})):
+            _keymaps.append((km, km.keymap_items.new(idname, key, 'PRESS', **mods)))
     bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
         name="Retopo Snapping", default=True,
         description="0D: snap to the original's surface (Face Project) and the Retopology "

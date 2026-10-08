@@ -114,7 +114,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row = col.row(align=True)
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
-                             text="01. Poly Cut & Seams (Sculpt: Ctrl+Click, L)", icon='SCULPTMODE_HLT')
+                             text="01. Poly Cut & Seams (P · Ctrl+Click, L)", icon='SCULPTMODE_HLT')
             else:
                 row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
             clean = row.row(align=True)         # Edit Mode: delete the selected floating bits
@@ -135,7 +135,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             det.prop(ts, prop, text="")     # Ctrl+Shift+F in the Decimate Brush: drag it
             from ... import addon_icons
             row.operator("multicamproject.remesh_density_brush",
-                         text="Decimate Brush" + ("  ·  active" if on_density and dyn else ""),
+                         text="Decimate Brush (O)" + ("  ·  active" if on_density and dyn else ""),
                          depress=on_density and dyn, **addon_icons.kw("decimate", 'MOD_DECIM'))
             if context.mode == 'SCULPT':
                 tog = row.row(align=True)

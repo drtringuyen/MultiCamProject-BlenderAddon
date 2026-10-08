@@ -6,6 +6,8 @@
 - **Clean Floating** (trash button at the end of row 01, Edit Mode): select a bit of each
   floating piece - Select Linked (Normal only, seams ignored), Face then Edge select mode,
   delete the edges.
+- Sculpt Mode keys: **P** the PolyCut tool (instead of Blender's Pinch brush; L picks again
+  from there), **O** the Decimate Brush.
 - **Ctrl+Shift+F** in the Decimate Brush: drag the Dyntopo detail like F drags the size
   (Relative px / Brush %: the radial circle at the detail's real size;
   Constant / Manual: Blender's detail edit).
