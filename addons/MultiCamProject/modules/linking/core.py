@@ -320,14 +320,25 @@ def send_out(context, obj, start="", save_as=""):
 
 
 def _work_bakes(scene, obj):
-    """Where a saved work window keeps its bakes: <main bake folder>/_work/<object> (never
-    overwrites the main file's own files; Clean only looks at the folder itself)."""
+    """Where a saved work window keeps its bakes: <main bake folder>/_work (never overwrites
+    the main file's own files; Clean only looks at the folder itself). No folder per object:
+    the file names carry the object's name already, and a long name twice went past
+    Windows' 260 characters (Blender then cannot write or read the file)."""
     try:
         from ..baking import common
         folder = common.output_dir(scene)
     except ImportError:
         folder = os.path.join(os.path.dirname(bpy.data.filepath), "01.Bake")
-    return os.path.join(folder, WORK_SUBDIR, bpy.path.clean_name(obj.name))
+    return os.path.join(folder, WORK_SUBDIR)
+
+
+def _bakes_dest(scene):
+    """The work window's _work folder - an older window's _work/<object> is moved up one."""
+    dest = os.path.normpath(scene.get(WORK_BAKES_KEY, "")) if scene.get(WORK_BAKES_KEY) else ""
+    if dest and os.path.basename(os.path.dirname(dest)) == WORK_SUBDIR:
+        dest = os.path.dirname(dest)
+        scene[WORK_BAKES_KEY] = dest
+    return dest
 
 
 def open_saved(obj):
@@ -511,6 +522,13 @@ def _take_later():
 
 @persistent
 def _on_load_incoming(_):
+    if bpy.data.filepath:   # a saved work window from before _work lost its <object> folder
+        try:
+            for scene in bpy.data.scenes:
+                if is_work_window(scene):
+                    _move_bakes_for_save(scene)
+        except Exception as e:
+            print(f"[MultiCamProject] work window bakes not moved: {e}")
     _take_tries[0] = 0
     bpy.app.timers.register(_take_later, first_interval=0.3)
 
@@ -829,8 +847,9 @@ def receive(context, obj, action='REPLACE'):
 
 def _move_bakes_for_save(scene):
     """Before a work window is saved: its bake folder (temp) moves to the main file's
-    _work/<object> folder and its images follow, so the saved file keeps its textures."""
-    dest = scene.get(WORK_BAKES_KEY, "")
+    _work folder and its images follow, so the saved file keeps its textures. Also on load
+    (an older window still baking into _work/<object>)."""
+    dest = _bakes_dest(scene)
     obj = work_object(scene)
     if not dest or obj is None:
         return
@@ -847,7 +866,11 @@ def _move_bakes_for_save(scene):
         if path and os.path.normcase(os.path.dirname(os.path.abspath(path))) == cur \
                 and os.path.isfile(path):
             new = os.path.join(dest, os.path.basename(path))
-            shutil.copyfile(path, new)
+            try:
+                shutil.copyfile(path, new)
+            except OSError as e:    # e.g. a path too long to read - bake it again
+                print(f"[MultiCamProject] {os.path.basename(path)} not moved: {e}")
+                continue
             engine.link_file(img, new)
     s.output_dir = os.path.join(dest, "")
 

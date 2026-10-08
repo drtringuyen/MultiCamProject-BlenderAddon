@@ -245,6 +245,16 @@ def _work_image(name, size, colorspace, is_float=False):
     return img
 
 
+MAX_PATH = 259      # Windows: Blender (and its Python) cannot write or read a longer path
+
+
+def _check_length(path):
+    if os.name == 'nt' and len(os.path.normpath(path)) > MAX_PATH:
+        raise RuntimeError(f"Path too long for Windows ({len(os.path.normpath(path))} of "
+                           f"{MAX_PATH} characters) - use a shorter bake folder or object "
+                           f"name: {os.path.normpath(path)}")
+
+
 def store_work(scene, tmp, old, name, normal=False):
     """A work texture (BAo_/BNo_/BAp_/BNp_) into <bake folder>/<name>.png - never packed:
     an albedo as an 8-bit sRGB PNG, a normal (`normal`, `tmp` a float image or an RGB array
@@ -252,6 +262,7 @@ def store_work(scene, tmp, old, name, normal=False):
     (`old`, else by name), pointed at the file. `tmp` (an image) is removed. Returns it."""
     from .normal import highpass, pngio
     path = common.texture_path(scene, name)
+    _check_length(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if normal:
         rgb = tmp if isinstance(tmp, np.ndarray) else highpass.read_pixels(tmp)
@@ -290,6 +301,7 @@ def copy_file(scene, src_img, dst_name, current, normal=False):
     if not src or not os.path.isfile(src):
         raise RuntimeError(f"'{src_img.name}' has no file - bake it again")
     path = common.texture_path(scene, dst_name)
+    _check_length(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(path)):
         shutil.copyfile(src, path)
