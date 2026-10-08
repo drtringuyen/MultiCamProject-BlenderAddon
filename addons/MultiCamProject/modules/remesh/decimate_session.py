@@ -71,6 +71,20 @@ def _still_on(obj):
     return True
 
 
+def _busy():
+    """A modal operator (a brush stroke, the F / Ctrl+Shift+F radial control...) is running:
+    switching Dyntopo under a stroke crashes Blender in its sculpt undo when the stroke ends."""
+    wm = bpy.context.window_manager
+    for win in (wm.windows if wm else ()):
+        try:
+            if any(op.bl_idname.startswith(("SCULPT_OT_", "PAINT_OT_", "WM_OT_radial_control"))
+                   for op in win.modal_operators):
+                return True
+        except (AttributeError, ReferenceError):
+            pass
+    return False
+
+
 def _watch():
     if _active is None:
         return None
@@ -79,7 +93,7 @@ def _watch():
         on = obj is not None and _still_on(obj)
     except (ReferenceError, AttributeError):
         on = False
-    if on:
+    if on or _busy():       # never end the session in the middle of a stroke
         return TICK
     stop()
     return None
