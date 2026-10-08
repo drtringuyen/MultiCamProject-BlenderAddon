@@ -23,7 +23,7 @@ def _draw_liquify(layout, cam):
     from ..image_editor import lasso_ops
     op = layout.operator("multicamproject.lasso_camera", text="",
                          depress=lasso_ops.running_camera() == cam.name,
-                         **_icon("tool:ops.generic.select_lasso"))
+                         **_icon("file:lasso"))
     op.camera = cam.name
 
 
@@ -40,8 +40,33 @@ def _draw_bake_row(context, layout, obj):
     bake_ui.draw_bake_box(context, layout, obj)
 
 
+_previews = None        # the add-on's own icons (icons/*.png), loaded on first use
+
+
+def _file_icon(name):
+    """icon_value of <add-on>/icons/<name>.png. These are Blender's toolbar icons (bucket,
+    eraser, lasso) drawn as plain square images: a toolbar icon itself sits off centre and
+    clipped in a normal button."""
+    global _previews
+    import os
+    import bpy.utils.previews
+    if _previews is None:
+        _previews = bpy.utils.previews.new()
+    if name not in _previews:
+        path = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))),
+                            "icons", name + ".png")
+        if not os.path.isfile(path):
+            return 0
+        _previews.load(name, path, 'IMAGE')
+    return _previews[name].icon_id
+
+
 def _icon(icon):
-    """Keyword for layout.operator: a UI icon name, or "tool:<handle>" for a toolbar icon."""
+    """Keyword for layout.operator: a UI icon name, "file:<name>" for one of the add-on's
+    icons, or "tool:<handle>" for a toolbar icon."""
+    if icon.startswith("file:"):
+        value = _file_icon(icon[5:])
+        return {"icon_value": value} if value else {"icon": 'QUESTION'}
     if icon.startswith("tool:"):
         value = ToolSelectPanelHelper._icon_value_from_icon_handle(icon[5:])
         if value:
@@ -51,7 +76,7 @@ def _icon(icon):
 
 
 TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
-TOOL_WIDTH = 2.0     # units per tool button: the toolbar icons (bucket, eraser, lasso) need it
+TOOL_WIDTH = 1.4     # units per tool button (square icons, centred)
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -364,5 +389,10 @@ def register():
 
 
 def unregister():
+    global _previews
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
+    if _previews is not None:
+        import bpy.utils.previews
+        bpy.utils.previews.remove(_previews)
+        _previews = None

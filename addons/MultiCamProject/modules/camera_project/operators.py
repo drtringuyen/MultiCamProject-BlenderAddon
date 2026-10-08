@@ -548,11 +548,11 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
 
 # Smooth is Shift+drag while painting (Blender keymap). A panel cannot see held keys,
 # so the icons do not change with Shift - the tooltips tell.
-# icon: a UI icon name, or "tool:<handle>" for one of Blender's toolbar icons
+# icon: a UI icon name, or "file:<name>" for one of the add-on's icons (icons/*.png)
 # standard UI icons: they sit centered in a button (toolbar icons are drawn large and clip)
 CAM_BRUSHES = (('PAINT', "Paint Camera Projection", 'BRUSH_DATA'),
-               ('FLOOD', "Selection Fill", 'tool:brush.paint_texture.fill'),
-               ('ERASE', "Paint Original Mesh", 'tool:brush.gpencil_draw.erase'))
+               ('FLOOD', "Selection Fill", 'file:fill'),
+               ('ERASE', "Paint Original Mesh", 'file:erase'))
 MASK_KEY = "multicamproject_cam_mask"   # object: the camera whose visible faces the paint mask holds
 
 
