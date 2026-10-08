@@ -76,7 +76,7 @@ def _icon(icon):
 
 
 TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
-TOOL_WIDTH = 1.4     # units per tool button (square icons, centred)
+TOOL_WIDTH = 1.0     # units per tool button: narrow, the X / Y shift fields need the room
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -310,17 +310,12 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         it = core.shift_holder(obj, cam)      # a global camera's shift is shared by every object
         if it is None:
             return
-        # the tools at a fixed width, one square button each (the toolbar icons - bucket,
-        # eraser, lasso - are drawn as tall as the button and are clipped by a narrower one);
-        # the X / Y fields take the rest
-        n = len(CAM_BRUSHES) + 1 + 2 * _liquify_loaded()
-        ctx = bpy.context
-        unit = 20 * ctx.preferences.system.ui_scale
-        avail = max(1.0, ctx.region.width - 3.6 * unit)
-        line = col.row().split(factor=min(0.6, n * TOOL_WIDTH * unit / avail), align=True)
+        # the tools as narrow icon buttons (their icons are the add-on's own, centred); the
+        # X / Y shift fields take the rest of the line
+        line = col.row(align=True)
         tools = line.row(align=True)            # vertex paint VCMix with this camera's color
         tools.scale_y = TOOL_SCALE
-        tools.scale_x = TOOL_WIDTH      # icon-only buttons don't stretch: widen them
+        tools.scale_x = TOOL_WIDTH
         for mode, _name, icon in CAM_BRUSHES:
             sub = tools.row(align=True)
             sub.enabled = mode != 'FLOOD' or flood
