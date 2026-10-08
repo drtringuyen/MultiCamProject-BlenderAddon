@@ -212,6 +212,11 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             side.operator("multicamproject.cam_step", text="", icon='TRIA_DOWN').step = 1
             side.separator()
             side.operator("multicamproject.measure_coverage", text="", icon='SORTSIZE')
+            # the solo keys (mouse over this sidebar, a camera soloed)
+            hint = body.column(align=True)
+            hint.active = False
+            hint.label(text="Solo: ↑↓ step · ←→ 5 · 1-6 slot · X remove · Num . find")
+            hint.label(text="Solo view: Ctrl+Alt+L liquify · Ctrl+Alt+K lasso")
 
     @staticmethod
     def _metrics(context, debug, n, margin=2.8, extra=0):

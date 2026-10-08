@@ -160,7 +160,8 @@ class MULTICAMPROJECT_OT_LiquifyTool(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_LiquifyKey(bpy.types.Operator):
-    """Liquify the photo in this editor: starts Liquify if needed and picks the tool (L)"""
+    """Liquify the photo in this editor: starts Liquify if needed and picks the tool
+    (Ctrl+Alt+L)"""
     bl_idname = "multicamproject.liquify_key"
     bl_label = "Liquify"
     bl_options = {'INTERNAL'}
@@ -411,7 +412,7 @@ def register():
         bpy.utils.register_class(c)
     # Enter bakes, Esc cancels, Ctrl+Z / Ctrl+Shift+Z undo / redo strokes - in any Image
     # Editor, with any tool, while a session runs (their polls fail otherwise, so the keys
-    # keep their usual job). L starts Liquify on the shown photo / picks the tool.
+    # keep their usual job). Ctrl+Alt+L starts Liquify on the shown photo / picks the tool.
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:
         km = kc.keymaps.new(name="Image", space_type='IMAGE_EDITOR')
@@ -423,7 +424,7 @@ def register():
         _keymaps.append((km, km.keymap_items.new("multicamproject.liquify_redo", 'Z', 'PRESS',
                                                  ctrl=True, shift=True, repeat=True)))
         _keymaps.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_LiquifyKey.bl_idname,
-                                                 'L', 'PRESS')))
+                                                 'L', 'PRESS', ctrl=True, alt=True)))
 
 
 def unregister():

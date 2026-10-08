@@ -41,7 +41,7 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
         s = session.active()
         if not tool.tool_active(context):
             layout.operator("multicamproject.liquify_tool", icon='BRUSH_DATA',
-                            text="Liquify Tool (L)")
+                            text="Liquify Tool (Ctrl+Alt+L)")
         if s is None:
             self._draw_idle(context, layout)
             return
@@ -140,13 +140,13 @@ def draw_lasso_settings(context, layout, img):
                     text=f"Lasso Undo ({n})" if n else "Lasso Undo")
     col = layout.column(align=True)
     col.active = False
-    col.label(text="K: lasso · click outside: apply, next")
+    col.label(text="Ctrl+Alt+K: lasso · click outside: apply, next")
     col.label(text="G R S · Shift+D stamp · X delete · Ctrl+C/V")
     col.label(text="Ctrl+Z undo · Enter apply · Esc revert all")
 
 
 class MULTICAMPROJECT_PT_LassoView3D(bpy.types.Panel):
-    """Lasso settings for the soloed camera's photo (K over the camera view)"""
+    """Lasso settings for the soloed camera's photo (Ctrl+Alt+K over the camera view)"""
     bl_label = "Lasso"
     bl_idname = "MULTICAMPROJECT_PT_lasso_view3d"
     bl_space_type = 'VIEW_3D'

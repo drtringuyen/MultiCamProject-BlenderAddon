@@ -9,6 +9,11 @@
 - Keys, all Ctrl+Shift (free in the 3D View, none of Blender's own replaced): **K** the
   PolyCut tool and **D** the Decimate Brush (Object and Sculpt Mode), **F** its detail,
   **L** Clean Floating (Edit Mode). Written on the buttons.
+- **Ctrl+Alt+L** Liquify, **Ctrl+Alt+K** Lasso (were L / K) - Image Editor and a soloed
+  camera view; free in every editor, so nothing of Blender's is covered any more.
+- 02 Select & Set button removed (L with the PolyCut tool, after a PolyCut, Edit Mode's
+  right-click / Face menu open it); Clear all Face Sets moved onto the 01 row.
+- Camera list: a grey hint line with the solo keys.
 - Fix: the camera solo keys (arrows, 1-6, X, numpad .) piled up a copy per add-on reload;
   register now clears what an earlier one left behind.
 - **Ctrl+Shift+F** in the Decimate Brush: drag the Dyntopo detail like F drags the size

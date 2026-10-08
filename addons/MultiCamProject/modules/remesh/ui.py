@@ -106,7 +106,6 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             # 01 / 02: the PolyCut tool and Set Faces
             col = rest.column(align=True)
             col.scale_y = 1.25
-            in_mesh_mode = context.mode in {'SCULPT', 'EDIT_MESH'}
             # PolyCut is a Sculpt Mode tool; Edit Mode keeps Blender's own L (Select Linked)
             active = (context.workspace.tools.from_space_view3d_mode('SCULPT', create=False)
                       if context.mode == 'SCULPT' else None)
@@ -118,6 +117,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                              icon='SCULPTMODE_HLT')
             else:
                 row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
+            # 02 Set Faces has no button: L with the tool, after each PolyCut, or Edit Mode's
+            # right-click / Face menu. Here: every face set cleared, Clean Floating
+            row.operator("multicamproject.remesh_set_faces", text="",
+                         icon='FILE_REFRESH').action = 'CLEAR_FACE_SETS'
             clean = row.row(align=True)         # Edit Mode: keep the selected mesh, rest goes
             clean.enabled = context.mode == 'EDIT_MESH'
             clean.operator("multicamproject.remesh_clean_floating", text="", icon='TRASH')
@@ -144,16 +147,6 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 tog.alert = on_density and not dyn          # the brush does nothing without it
                 tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
                              depress=dyn)
-            col = layout.column(align=True)     # 02 (Protect) stays usable while deciding
-            col.scale_y = 1.25
-            row = col.row(align=True)
-            sub = row.row(align=True)
-            sub.enabled = in_mesh_mode
-            sub.operator("multicamproject.remesh_set_faces",
-                         text="02. Select & Set (L)" if context.mode != 'EDIT_MESH'
-                         else "02. Set Selected Faces", icon='FACESEL')
-            row.operator("multicamproject.remesh_set_faces", text="",
-                         icon='FILE_REFRESH').action = 'CLEAR_FACE_SETS'
 
         if pending:     # everything after 02 waits for the decision
             layout = layout.column()

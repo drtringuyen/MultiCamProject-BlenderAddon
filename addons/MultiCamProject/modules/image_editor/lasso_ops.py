@@ -3,7 +3,7 @@ lasso_ops.py — Photoshop-style lasso cut / move for a photo, as a session like
 
 Ported from DomeAnimatic (modules/painting_cel/lasso_transform_ops.py), where the
 target is the active cel layer. Here it is a photo, in either of two views:
-  * Image Editor (K)         — the image the editor shows. Picking another image
+  * Image Editor (Ctrl+Alt+K)       — the image the editor shows. Picking another image
                                in the header while a piece floats retargets it.
   * soloed camera (K in the  — the camera's background photo, where you see it in
     3D Viewport, or the        the 3D Viewport (camview maps the mouse onto it).
@@ -731,7 +731,7 @@ class LassoMixin:
             return self._paste_over(context)
         elif et == 'X' and not event.ctrl:
             return self._delete_selection(context)
-        elif et == 'K':
+        elif et == 'K':                 # K or Ctrl+Alt+K again: apply, lasso the next
             return self._apply_and_continue(context)
         elif self._view == 'CAMERA':
             return {'RUNNING_MODAL'}   # keep the mesh safe from the viewport's keys
@@ -962,8 +962,8 @@ class LassoMixin:
 # ── Operators ─────────────────────────────────────────────────────────────────
 
 class MULTICAMPROJECT_OT_lasso(LassoMixin, bpy.types.Operator):
-    """Lasso pixels of the image in this editor and cut, move, rotate or scale them (K).
-    Click outside a piece applies it, Enter applies and ends, Esc reverts the session,
+    """Lasso pixels of the image in this editor and cut, move, rotate or scale them
+    (Ctrl+Alt+K). Click outside a piece applies it, Enter applies and ends, Esc reverts the session,
     Ctrl+Z undoes a step"""
     bl_idname = "multicamproject.lasso"
     bl_label  = "Lasso Cut"
@@ -1006,8 +1006,8 @@ class MULTICAMPROJECT_OT_lasso_paste(LassoMixin, bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_lasso_camera(LassoMixin, bpy.types.Operator):
-    """Cut Projection: a lasso selection on this camera's photo, through the soloed camera
-    (it solos it). Click points around a part (click the first point or double-click to
+    """Cut Projection (Ctrl+Alt+K in a solo view): a lasso selection on this camera's photo,
+    through the soloed camera (it solos it). Click points around a part (click the first point or double-click to
     close), then drag it or G / R / S to move, rotate, scale - the projection on the mesh
     follows. Shift+D stamps a copy, X deletes the part (a transparent hole), Ctrl+C /
     Ctrl+V copy and paste. Click outside to apply and start the next lasso, Enter applies
@@ -1099,11 +1099,11 @@ def register():
     if kc:
         km  = kc.keymaps.new(name='Image', space_type='IMAGE_EDITOR')
         _KEYMAPS.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_lasso.bl_idname,
-                                                 'K', 'PRESS')))
+                                                 'K', 'PRESS', ctrl=True, alt=True)))
         # Ctrl+V — paste the lasso clipboard as a new floating selection
         _KEYMAPS.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_lasso_paste.bl_idname,
                                                  'V', 'PRESS', ctrl=True)))
-        # K in a soloed camera view: camera_op.MULTICAMPROJECT_OT_CameraKey
+        # Ctrl+Alt+K in a soloed camera view: camera_op.MULTICAMPROJECT_OT_CameraKey
 
 
 def unregister():

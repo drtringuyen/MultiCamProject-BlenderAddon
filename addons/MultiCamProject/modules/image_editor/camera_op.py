@@ -1,8 +1,8 @@
 """Liquify in the 3D Viewport, through a soloed camera: the brush paints on the camera's
 background photo where you see it (camview maps the mouse onto the photo).
 
-Started from the Liquify button of a camera row (Camera Project panel), or L over a soloed
-camera view (K there starts the lasso, lasso_ops.py): solos the camera if needed and starts
+Started from the Liquify button of a camera row (Camera Project panel), or Ctrl+Alt+L over a
+soloed camera view (Ctrl+Alt+K there starts the lasso, lasso_ops.py): solos the camera if needed and starts
 (or joins) the Liquify session on its photo. Enter bakes, Esc cancels -
 and so does leaving solo for any reason (another camera, leaving camera view or local view,
 another image on the camera, the area closing). Plain middle mouse is blocked: orbiting would
@@ -62,8 +62,8 @@ def _draw():
 
 
 class MULTICAMPROJECT_OT_LiquifyCamera(StrokeMixin, bpy.types.Operator):
-    """Nudge Projection: Photoshop's Liquify on this camera's photo, to line the photo up
-    with the mesh. Works only through the soloed camera (it solos it). Paint on the photo,
+    """Nudge Projection (Ctrl+Alt+L in a solo view): Photoshop's Liquify on this camera's
+    photo, to line the photo up with the mesh. Works only through the soloed camera (it solos it). Paint on the photo,
     the projection on the mesh follows live. W Warp (push) · R Reconstruct (back to the
     original) · S Smooth · P Pucker / B Bloat (Alt+LMB swaps them) · F or [ ] brush size ·
     Ctrl+Z undo a stroke · Enter applies at full size · Esc cancels (so does leaving solo)"""
@@ -315,7 +315,7 @@ class MULTICAMPROJECT_OT_LiquifyCamera(StrokeMixin, bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_CameraKey(bpy.types.Operator):
-    """L: Liquify, K: Lasso the soloed camera's photo"""
+    """Ctrl+Alt+L: Liquify, Ctrl+Alt+K: Lasso the soloed camera's photo"""
     bl_idname = "multicamproject.camera_key"
     bl_label = "Liquify / Lasso Soloed Camera"
     bl_options = {'INTERNAL'}
@@ -355,11 +355,12 @@ def register():
     _draw_handle = bpy.types.SpaceView3D.draw_handler_add(_draw, (), 'WINDOW', 'POST_PIXEL')
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc:      # None in background mode
-        # "Frames" is handled before the mode keymaps (Object Mode binds K), and its
-        # add-on items come first: the poll lets the keys through outside a solo view.
+        # "Frames" is handled before the mode keymaps and its add-on items come first: the
+        # poll lets the keys through outside a solo view. Ctrl+Alt: free in every mode.
         km = kc.keymaps.new(name="Frames")
         for key, tool_name in (('L', 'LIQUIFY'), ('K', 'LASSO')):
-            kmi = km.keymap_items.new(MULTICAMPROJECT_OT_CameraKey.bl_idname, key, 'PRESS')
+            kmi = km.keymap_items.new(MULTICAMPROJECT_OT_CameraKey.bl_idname, key, 'PRESS',
+                                      ctrl=True, alt=True)
             kmi.properties.tool = tool_name
             _keymaps.append((km, kmi))
 
