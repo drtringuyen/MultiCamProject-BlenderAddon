@@ -117,6 +117,9 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                              text="01. Poly Cut & Seams (Sculpt: Ctrl+Click, L)", icon='SCULPTMODE_HLT')
             else:
                 row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
+            clean = row.row(align=True)         # Edit Mode: delete the selected floating bits
+            clean.enabled = context.mode == 'EDIT_MESH'
+            clean.operator("multicamproject.remesh_clean_floating", text="", icon='TRASH')
             # the decimate brush: Blender's Density brush, which only works with Dyntopo
             # [Dyntopo detail] [Decimate Brush] [Dyntopo toggle]: the detail field follows the
             # Detailing method (Relative: pixels, Constant / Manual: resolution, Brush: percent)
@@ -129,7 +132,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             det.ui_units_x = 4.5
             prop = {'CONSTANT': "constant_detail_resolution", 'MANUAL': "constant_detail_resolution",
                     'BRUSH': "detail_percent"}.get(ts.detail_type_method, "detail_size")
-            det.prop(ts, prop, text="")
+            det.prop(ts, prop, text="")     # Ctrl+Shift+F in the Decimate Brush: drag it
             from ... import addon_icons
             row.operator("multicamproject.remesh_density_brush",
                          text="Decimate Brush" + ("  ·  active" if on_density and dyn else ""),

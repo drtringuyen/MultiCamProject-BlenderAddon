@@ -431,6 +431,62 @@ class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
         return self.invoke(context, None)
 
 
+class MULTICAMPROJECT_OT_RemeshDetailSize(bpy.types.Operator):
+    """Decimate Brush: change the Dyntopo detail like F changes the brush size (drag, click to
+    confirm, right click / Esc to cancel). Ctrl+Shift+F while the Decimate Brush is active"""
+    bl_idname = "multicamproject.remesh_detail_size"
+    bl_label = "Decimate Brush Detail"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        from . import decimate_session
+        obj = context.active_object
+        return (context.mode == 'SCULPT' and dyntopo_on(obj)
+                and decimate_session.active() == obj.name)
+
+    def invoke(self, context, event):
+        ts = context.tool_settings.sculpt
+        if ts.detail_type_method in {'RELATIVE', 'BRUSH'}:     # pixels / percent: the F circle
+            prop = "detail_size" if ts.detail_type_method == 'RELATIVE' else "detail_percent"
+            bpy.ops.wm.radial_control('INVOKE_DEFAULT',
+                                      data_path_primary=f"tool_settings.sculpt.{prop}")
+        else:   # Constant / Manual (a resolution, not a size on screen): Blender's detail edit
+            bpy.ops.sculpt.dyntopo_detail_size_edit('INVOKE_DEFAULT')
+        return {'FINISHED'}         # the radial control runs on as its own modal
+
+
+class MULTICAMPROJECT_OT_RemeshCleanFloating(bpy.types.Operator):
+    """Clean Floating: the selection grows to everything linked to it (Select Linked, split
+    only where the normals turn sharply - seams do not stop it), Face then Edge select mode,
+    and those edges and their faces are deleted. Edit Mode, select a bit of each floating piece"""
+    bl_idname = "multicamproject.remesh_clean_floating"
+    bl_label = "Clean Floating"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
+            cls.poll_message_set("Edit Mode: select a bit of each floating piece")
+            return False
+        return True
+
+    def execute(self, context):
+        obj = context.active_object
+        if obj.data.total_vert_sel == 0:
+            self.report({'WARNING'}, "Select a bit of each floating piece first")
+            return {'CANCELLED'}
+        before = len(obj.data.polygons)
+        bpy.ops.mesh.select_linked(delimit={'NORMAL'})
+        bpy.ops.mesh.select_mode(type='FACE')
+        bpy.ops.mesh.select_mode(type='EDGE')
+        bpy.ops.mesh.delete(type='EDGE')
+        obj.update_from_editmode()
+        self.report({'INFO'}, f"Clean Floating: {before - len(obj.data.polygons):,} faces deleted")
+        return {'FINISHED'}
+
+
 def _mouse_ray(context, event):
     region, rv3d = context.region, context.region_data
     if region is None or rv3d is None or region.type != 'WINDOW':
@@ -529,8 +585,12 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
                 marks.edit_select_face_set(bm, self.face_set)
                 bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
             faces = marks.edit_region(bm)
+            if not faces:       # a closed ring of edges (e.g. seams): the faces inside it
+                faces = marks.edit_inside_loop(bm)
+                if faces:
+                    bmesh.update_edit_mesh(obj.data, loop_triangles=False, destructive=False)
             if not faces:
-                self.report({'WARNING'}, "Select faces first")
+                self.report({'WARNING'}, "Select faces, or a closed ring of edges around them")
                 return {'CANCELLED'}
             marks.overlay_show(obj, faces, self.action, bm=bm)
         else:
@@ -602,7 +662,8 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
             if self.face_set:               # redo / run without the dialog
                 marks.edit_select_face_set(bm, self.face_set)
             n = marks.apply_edit_mode(obj, bm, marks.edit_region(bm), self.action, self.seam)
-            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=self.action == 'DELETE')
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True,
+                                   destructive=self.action in {'DELETE', 'CLOSE_HOLE'})
         else:
             fs = self._sculpt_face_set(obj)
             if not fs:
@@ -818,6 +879,7 @@ class MULTICAMPROJECT_OT_UnlinkOriginal(bpy.types.Operator):
 
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
+            MULTICAMPROJECT_OT_RemeshDetailSize, MULTICAMPROJECT_OT_RemeshCleanFloating,
             MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
             MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap,
@@ -831,9 +893,18 @@ def _face_menu(self, context):
     self.layout.operator(MULTICAMPROJECT_OT_RemeshSetFaces.bl_idname, icon='MOD_REMESH')
 
 
+_keymaps = []
+
+
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc is not None:      # Ctrl+Shift+F: the Decimate Brush detail (poll: only in its session)
+        km = kc.keymaps.new(name="Sculpt", space_type='EMPTY')
+        kmi = km.keymap_items.new(MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F', 'PRESS',
+                                  ctrl=True, shift=True)
+        _keymaps.append((km, kmi))
     bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
         name="Retopo Snapping", default=True,
         description="0D: snap to the original's surface (Face Project) and the Retopology "
@@ -849,6 +920,12 @@ def register():
 
 
 def unregister():
+    for km, kmi in _keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except (ReferenceError, RuntimeError):
+            pass
+    _keymaps.clear()
     del bpy.types.Scene.multicamproject_retopo_snap
     del bpy.types.Scene.multicamproject_retopo_plane
     core.unregister()

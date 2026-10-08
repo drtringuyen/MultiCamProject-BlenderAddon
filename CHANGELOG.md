@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Clean Floating, Decimate Brush detail key, Close Hole (2026-10-08)
+- **Clean Floating** (trash button at the end of row 01, Edit Mode): select a bit of each
+  floating piece - Select Linked (Normal only, seams ignored), Face then Edge select mode,
+  delete the edges.
+- **Ctrl+Shift+F** in the Decimate Brush: drag the Dyntopo detail like F drags the size
+  (Relative px / Brush %: the radial circle; Constant / Manual: Blender's detail edit).
+- **02 Select & Set > Close Hole**: the region is deleted, the hole filled with one cap and
+  the cap triangulated; the seam option goes on the cap's outline. In Edit Mode a closed
+  ring of selected edges (e.g. a seam loop) is enough - the smaller side gets selected.
+
 ### EXPORT header: Room and Room Template buttons (2026-10-07)
 - Two more hide / show buttons after Cameras: **ROOM** (house) and **ROOM_Template** (box),
   found by their collection names; a button shows only when its collection is in the scene.

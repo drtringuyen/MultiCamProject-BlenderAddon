@@ -5,6 +5,7 @@
   Protect     -> vertex group vg_Protect = 1 (the Decimate leaves it as it is)
   Unprotect   -> out of vg_Protect
   Delete      -> the faces are deleted right away
+  Close Hole  -> deleted, the hole filled with one cap, the cap triangulated
   Seam only   -> nothing but the seam option
   Clear all Face Sets -> the whole mesh back to one face set (the region does not matter)
 
@@ -32,6 +33,8 @@ ACTIONS = (('PROJECTED', "Projected", "VCMix + VCMix2 alpha = 1: the camera proj
            ('UNPROTECT', "Unprotect", "Out of vg_Protect: the Decimate reduces them again",
             'UNLOCKED', 3),
            ('DELETE', "Delete", "Delete these faces now", 'TRASH', 4),
+           ('CLOSE_HOLE', "Close Hole", "Delete these faces, fill the hole they leave with one "
+            "cap and triangulate it (the seam option goes on the cap's outline)", 'MOD_TRIANGULATE', 7),
            ('SEAM_ONLY', "Seam only", "Only the seam option below", 'MOD_UVPROJECT', 5),
            ('CLEAR_FACE_SETS', "Clear all Face Sets", "The whole mesh back to one face set "
             "(every PolyCut region and Sculpt face set goes; seams stay)", 'FACE_MAPS', 6))
@@ -42,6 +45,7 @@ SEAMS = (('MARK', "Mark Seam", "The outline becomes a UV seam"),
 
 COLORS = {'PROJECTED': (0.2, 0.55, 1.0), 'BAKED': (0.9, 0.6, 0.2), 'PROTECT': (0.3, 0.9, 0.4),
           'UNPROTECT': (0.7, 0.7, 0.7), 'DELETE': (1.0, 0.2, 0.2), 'SEAM_ONLY': (1.0, 0.3, 0.9),
+          'CLOSE_HOLE': (1.0, 0.55, 0.1),
           'CLEAR_FACE_SETS': (0.6, 0.6, 0.6)}
 
 MASK_ACTIONS = {'PROJECTED': 1.0, 'BAKED': 0.0}
@@ -145,12 +149,15 @@ def apply_object_mode(obj, faces, action, seam):
             vg.add(verts, 1.0, 'REPLACE')
         else:
             vg.remove(verts)
-    elif action == 'DELETE':
+    elif action in {'DELETE', 'CLOSE_HOLE'}:
         bm = bmesh.new()
         bm.from_mesh(me)
         bm.faces.ensure_lookup_table()
-        bmesh.ops.delete(bm, geom=[bm.faces[i] for i in np.flatnonzero(faces).tolist()],
-                         context='FACES')
+        region = [bm.faces[i] for i in np.flatnonzero(faces).tolist()]
+        if action == 'DELETE':
+            bmesh.ops.delete(bm, geom=region, context='FACES')
+        else:
+            close_hole(bm, region)
         bm.to_mesh(me)
         bm.free()
     me.update()
@@ -242,7 +249,71 @@ def apply_edit_mode(obj, bm, faces, action, seam):
                 del v[deform][vg.index]
     elif action == 'DELETE':
         bmesh.ops.delete(bm, geom=faces, context='FACES')
+    elif action == 'CLOSE_HOLE':
+        for f in close_hole(bm, faces):
+            f.select_set(True)          # the new cap stays selected
     return n
+
+
+def close_hole(bm, faces):
+    """Delete the faces, fill the hole they leave (one cap per closed outline) and
+    triangulate the cap. A part of the outline on the mesh's open border stays open.
+    Returns the cap's triangles."""
+    region = set(faces)
+    outline = list({e for f in faces for e in f.edges
+                    if any(g not in region for g in e.link_faces)})
+    bmesh.ops.delete(bm, geom=list(faces), context='FACES')
+    outline = [e for e in outline if e.is_valid]
+    if not outline:
+        return []
+    caps = bmesh.ops.holes_fill(bm, edges=outline, sides=0)["faces"]
+    if not caps:
+        return []
+    return bmesh.ops.triangulate(bm, faces=caps, quad_method='BEAUTY',
+                                 ngon_method='BEAUTY')["faces"]
+
+
+def edit_inside_loop(bm):
+    """Edit Mode, no face selected but a closed ring of edges: the faces on its smaller side
+    (flood fill that does not cross a selected edge) get selected. Returns them, [] when the
+    edges do not close a region."""
+    ring = {e for e in bm.edges if e.select}
+    if not ring:
+        return []
+    # all regions grow one face per turn: the first one that runs out is the smallest, and
+    # the rest of a big scan is never walked. Regions that meet are merged.
+    owner, parts, todo = {}, {}, {}
+    for i, f in enumerate({f for e in ring for f in e.link_faces}):
+        owner[f], parts[i], todo[i] = i, [f], [f]
+    inside = None
+    while inside is None and len(parts) > 1:
+        for i in list(parts):
+            if i not in parts:
+                continue                    # merged this turn
+            if not todo[i]:
+                inside = parts[i]
+                break
+            f = todo[i].pop()
+            for e in f.edges:
+                if e in ring:
+                    continue
+                for g in e.link_faces:
+                    j = owner.get(g)
+                    if j is None:
+                        owner[g] = i
+                        parts[i].append(g)
+                        todo[i].append(g)
+                    elif j != i:            # the same region: j joins i
+                        for h in parts[j]:
+                            owner[h] = i
+                        parts[i] += parts.pop(j)
+                        todo[i] += todo.pop(j)
+    if inside is None:
+        return []           # the ring is open: both sides are one region
+    for f in inside:
+        f.select_set(True)
+    bm.select_flush(True)
+    return inside
 
 
 def edit_select_face_set(bm, face_set):
