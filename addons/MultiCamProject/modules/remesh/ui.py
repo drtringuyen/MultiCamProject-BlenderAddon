@@ -114,10 +114,11 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row = col.row(align=True)
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
-                             text="01. Poly Cut & Seams (P · Ctrl+Click, L)", icon='SCULPTMODE_HLT')
+                             text="01. Poly Cut & Seams (Shift+K · Ctrl+Click, L)",
+                             icon='SCULPTMODE_HLT')
             else:
                 row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
-            clean = row.row(align=True)         # Edit Mode: delete the selected floating bits
+            clean = row.row(align=True)         # Edit Mode: keep the selected mesh, rest goes
             clean.enabled = context.mode == 'EDIT_MESH'
             clean.operator("multicamproject.remesh_clean_floating", text="", icon='TRASH')
             # the decimate brush: Blender's Density brush, which only works with Dyntopo

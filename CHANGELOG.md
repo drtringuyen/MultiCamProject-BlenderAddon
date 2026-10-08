@@ -3,11 +3,11 @@
 ## Unreleased
 
 ### Clean Floating, Decimate Brush detail key, Close Hole (2026-10-08)
-- **Clean Floating** (trash button at the end of row 01, Edit Mode): select a bit of each
-  floating piece - Select Linked (Normal only, seams ignored), Face then Edge select mode,
-  delete the edges.
-- Sculpt Mode keys: **P** the PolyCut tool (instead of Blender's Pinch brush; L picks again
-  from there), **O** the Decimate Brush.
+- **Clean Floating** (trash button at the end of row 01, Edit Mode, **Ctrl+Shift+L**): select
+  a bit of the one big mesh to keep - Select Linked (Normal only, seams ignored), Face then
+  Edge select mode, Select Invert, delete the edges: every floating piece goes.
+- Sculpt and Object Mode keys: **Shift+K** the PolyCut tool (L picks again from there), **O**
+  the Decimate Brush (Object Mode: instead of the proportional editing toggle).
 - **Ctrl+Shift+F** in the Decimate Brush: drag the Dyntopo detail like F drags the size
   (Relative px / Brush %: the radial circle at the detail's real size;
   Constant / Manual: Blender's detail edit).

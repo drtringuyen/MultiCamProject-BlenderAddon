@@ -460,9 +460,9 @@ class MULTICAMPROJECT_OT_RemeshDetailSize(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_RemeshCleanFloating(bpy.types.Operator):
-    """Clean Floating: the selection grows to everything linked to it (Select Linked, split
-    only where the normals turn sharply - seams do not stop it), Face then Edge select mode,
-    and those edges and their faces are deleted. Edit Mode, select a bit of each floating piece"""
+    """Clean Floating (Ctrl+Shift+L): select a bit of the one big mesh to keep - the selection
+    grows to everything linked to it (Select Linked, Normal delimit, seams do not stop it),
+    Face then Edge select mode, the selection is inverted and every floating piece is deleted"""
     bl_idname = "multicamproject.remesh_clean_floating"
     bl_label = "Clean Floating"
     bl_options = {'REGISTER', 'UNDO'}
@@ -471,19 +471,20 @@ class MULTICAMPROJECT_OT_RemeshCleanFloating(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         if obj is None or obj.type != 'MESH' or context.mode != 'EDIT_MESH':
-            cls.poll_message_set("Edit Mode: select a bit of each floating piece")
+            cls.poll_message_set("Edit Mode: select a bit of the mesh to keep")
             return False
         return True
 
     def execute(self, context):
         obj = context.active_object
         if obj.data.total_vert_sel == 0:
-            self.report({'WARNING'}, "Select a bit of each floating piece first")
+            self.report({'WARNING'}, "Select a bit of the mesh to keep first")
             return {'CANCELLED'}
         before = len(obj.data.polygons)
         bpy.ops.mesh.select_linked(delimit={'NORMAL'})
         bpy.ops.mesh.select_mode(type='FACE')
         bpy.ops.mesh.select_mode(type='EDGE')
+        bpy.ops.mesh.select_all(action='INVERT')    # everything but the kept mesh
         bpy.ops.mesh.delete(type='EDGE')
         obj.update_from_editmode()
         self.report({'INFO'}, f"Clean Floating: {before - len(obj.data.polygons):,} faces deleted")
@@ -904,14 +905,21 @@ def register():
         bpy.utils.register_class(c)
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:
-        # Sculpt Mode: P PolyCut tool (instead of Blender's Pinch brush), O Decimate Brush,
-        # Ctrl+Shift+F the Decimate Brush detail (poll: only in its session)
-        km = kc.keymaps.new(name="Sculpt", space_type='EMPTY')
-        for idname, key, mods in ((MULTICAMPROJECT_OT_RemeshEnterTool.bl_idname, 'P', {}),
-                                  (MULTICAMPROJECT_OT_RemeshDensityBrush.bl_idname, 'O', {}),
-                                  (MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F',
-                                   {"ctrl": True, "shift": True})):
-            _keymaps.append((km, km.keymap_items.new(idname, key, 'PRESS', **mods)))
+        # Sculpt + Object Mode (both buttons go to Sculpt themselves): Shift+K PolyCut tool,
+        # O Decimate Brush (Object Mode: instead of the proportional editing toggle).
+        # Sculpt: Ctrl+Shift+F the Decimate Brush detail (poll: only in its session).
+        # Edit Mode: Ctrl+Shift+L Clean Floating.
+        poly, dec = (MULTICAMPROJECT_OT_RemeshEnterTool.bl_idname,
+                     MULTICAMPROJECT_OT_RemeshDensityBrush.bl_idname)
+        shift, ctrl_shift = {"shift": True}, {"ctrl": True, "shift": True}
+        for km_name, items in (
+                ("Sculpt", ((poly, 'K', shift), (dec, 'O', {}),
+                            (MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F', ctrl_shift))),
+                ("Object Mode", ((poly, 'K', shift), (dec, 'O', {}))),
+                ("Mesh", ((MULTICAMPROJECT_OT_RemeshCleanFloating.bl_idname, 'L', ctrl_shift),))):
+            km = kc.keymaps.new(name=km_name, space_type='EMPTY')
+            for idname, key, mods in items:
+                _keymaps.append((km, km.keymap_items.new(idname, key, 'PRESS', **mods)))
     bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
         name="Retopo Snapping", default=True,
         description="0D: snap to the original's surface (Face Project) and the Retopology "
