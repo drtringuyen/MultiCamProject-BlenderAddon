@@ -27,16 +27,12 @@ def _draw_bake_row(context, layout, obj):
     ([Auto Resolution v] [Bake ...] [mixture] [gear]) - bake right after picking cameras.
     Without the baking module: Bake Camera Mixture alone."""
     try:
-        from ..baking import common as bake_common, ui as bake_ui
+        from ..baking import ui as bake_ui
     except ImportError:
         layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
                         icon='RENDER_STILL')
         return
-    box = layout.box().column()
-    if hasattr(obj, "multicamproject_view"):
-        bake_ui.draw_final_toggle(box, obj, "multicamproject_view")
-    bake_ui.MULTICAMPROJECT_PT_Baking._draw_bake_button(
-        box, bake_common.settings(context.scene), obj)
+    bake_ui.draw_bake_box(context, layout, obj)
 
 
 def _icon(icon):

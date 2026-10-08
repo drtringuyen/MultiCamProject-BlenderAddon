@@ -218,13 +218,8 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 warn = box.row()
                 warn.alert = True
                 warn.label(text=f"{why[:1].upper()}{why[1:]} - bake from source again", icon='ERROR')
-            if d.ba_far_share > 0.02 and d.ba_fit_cage > d.cage:
-                row = box.row(align=True)
-                warn = row.row(align=True)
-                warn.alert = True
-                warn.label(text=f"{d.ba_far_share:.0%} beyond the Cage (up to {d.ba_far_max:.2f} m)",
-                           icon='ERROR')
-                row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
+            from ..baking import ui as bake_ui
+            bake_ui.draw_fit_cage(box, obj)
 
 
 def register():

@@ -29,6 +29,29 @@ def draw_final_toggle(layout, data, prop):
     layout.row(align=True).prop(data, prop, expand=True)
 
 
+def draw_fit_cage(layout, obj):
+    """[x% beyond the Cage (up to n m)] [Fit Cage n]: only when the last Bake from Source
+    left a share of the surface outside the Cage (04, and the bake box of 05 / 06)."""
+    d = common.data(obj)
+    if not (d.ba_far_share > 0.02 and d.ba_fit_cage > d.cage):
+        return
+    row = layout.row(align=True)
+    warn = row.row(align=True)
+    warn.alert = True
+    warn.label(text=f"{d.ba_far_share:.0%} beyond the Cage (up to {d.ba_far_max:.2f} m)",
+               icon='ERROR')
+    row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
+
+
+def draw_bake_box(context, layout, obj):
+    """One box, the same in 05 and 06: Processing | Final, Fit Cage (when needed), then the
+    bake row ([Auto Resolution v] [Bake ...] [mixture] [gear])."""
+    box = layout.box().column()
+    draw_final_toggle(box, obj, "multicamproject_view")
+    draw_fit_cage(box, obj)
+    MULTICAMPROJECT_PT_Baking._draw_bake_button(box, common.settings(context.scene), obj)
+
+
 LABEL_UNITS = 5.2      # the label column of the Baking panel's settings rows
 
 
@@ -91,7 +114,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         d = common.data(obj)
         top = layout.column()      # no indent: the Baking panel reads better flush
 
-        draw_final_toggle(top, obj, "multicamproject_view")
+        if d.handmade:      # no bake box: Processing | Final stays on top
+            draw_final_toggle(top, obj, "multicamproject_view")
         self._draw_materials(top, obj)
         if d.handmade:
             self._draw_handmade(context, layout, top, obj)
@@ -148,7 +172,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             for label, size, sec in others:
                 t.label(text=f"NOR {_res(size)}  ·  {label}  ·  {sec:.1f} s", icon='TIME')
 
-        self._draw_bake_button(layout, s, obj)
+        draw_bake_box(context, layout, obj)
         why = normal.problem(obj, context.scene, s.nor_source)
         if (why and s.bake_what != 'ALBEDO'
                 and not (s.bake_what == 'BOTH' and why == "Bake the albedo first")):
