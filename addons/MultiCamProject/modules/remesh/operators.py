@@ -431,8 +431,8 @@ class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
         return self.invoke(context, None)
 
 
-_DETAIL_SCALE = {'RELATIVE': ("detail_size", 10.0),      # 0.5-40 px   -> 5-400 px circle
-                 'BRUSH': ("detail_percent", 4.0)}       # 0.5-100 %   -> 2-400 px circle
+_DETAIL_SCALE = {'RELATIVE': ("detail_size", 40.0),      # 0.5-40 px   -> 20-1600 px circle
+                 'BRUSH': ("detail_percent", 16.0)}      # 0.5-100 %   -> 8-1600 px circle
 
 
 def _detail_px_update(wm, context):
@@ -914,7 +914,7 @@ def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
     bpy.types.WindowManager.multicamproject_detail_px = FloatProperty(
-        name="Decimate Brush Detail", subtype='PIXEL', min=2.0, max=400.0,
+        name="Decimate Brush Detail", subtype='PIXEL', min=2.0, max=1600.0,
         update=_detail_px_update, options={'SKIP_SAVE'})
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:      # Ctrl+Shift+F: the Decimate Brush detail (poll: only in its session)
