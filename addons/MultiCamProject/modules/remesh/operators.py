@@ -443,12 +443,17 @@ class MULTICAMPROJECT_OT_RemeshDetailSize(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        from . import decimate_session
-        obj = context.active_object
-        return (context.mode == 'SCULPT' and dyntopo_on(obj)
-                and decimate_session.active() == obj.name)
+        # the brush itself, not the session record: an add-on reload clears that
+        ts = context.tool_settings.sculpt
+        return (context.mode == 'SCULPT' and dyntopo_on(context.active_object)
+                and ts.brush is not None
+                and getattr(ts.brush, "sculpt_brush_type", "") == 'SIMPLIFY')
 
     def invoke(self, context, event):
+        from . import decimate_session
+        obj = context.active_object
+        if decimate_session.active() != obj.name:
+            decimate_session.start(obj)     # a reload ended it: modifiers off again
         ts = context.tool_settings.sculpt
         prop = _DETAIL_PROP.get(ts.detail_type_method)
         if prop:        # pixels / percent: the F circle, at the detail's real size
