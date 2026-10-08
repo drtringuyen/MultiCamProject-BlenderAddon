@@ -7,7 +7,8 @@
   floating piece - Select Linked (Normal only, seams ignored), Face then Edge select mode,
   delete the edges.
 - **Ctrl+Shift+F** in the Decimate Brush: drag the Dyntopo detail like F drags the size
-  (Relative px / Brush %: the radial circle; Constant / Manual: Blender's detail edit).
+  (Relative px / Brush %: the radial circle, drawn 10x / 4x so it is big enough to drag;
+  Constant / Manual: Blender's detail edit).
 - **02 Select & Set > Close Hole**: the region is deleted, the hole filled with one cap and
   the cap triangulated; the seam option goes on the cap's outline. In Edit Mode a closed
   ring of selected edges (e.g. a seam loop) is enough - the smaller side gets selected.

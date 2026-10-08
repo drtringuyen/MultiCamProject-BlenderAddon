@@ -1,7 +1,7 @@
 import bmesh
 import bpy
 import gpu
-from bpy.props import BoolProperty, EnumProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, FloatProperty, IntProperty
 from bpy_extras import view3d_utils
 from gpu_extras.batch import batch_for_shader
 from mathutils import Vector
@@ -431,6 +431,17 @@ class MULTICAMPROJECT_OT_RemeshDensityBrush(bpy.types.Operator):
         return self.invoke(context, None)
 
 
+_DETAIL_SCALE = {'RELATIVE': ("detail_size", 10.0),      # 0.5-40 px   -> 5-400 px circle
+                 'BRUSH': ("detail_percent", 4.0)}       # 0.5-100 %   -> 2-400 px circle
+
+
+def _detail_px_update(wm, context):
+    ts = context.tool_settings.sculpt
+    prop, scale = _DETAIL_SCALE.get(ts.detail_type_method, (None, 1.0))
+    if prop is not None:
+        setattr(ts, prop, wm.multicamproject_detail_px / scale)
+
+
 class MULTICAMPROJECT_OT_RemeshDetailSize(bpy.types.Operator):
     """Decimate Brush: change the Dyntopo detail like F changes the brush size (drag, click to
     confirm, right click / Esc to cancel). Ctrl+Shift+F while the Decimate Brush is active"""
@@ -447,10 +458,13 @@ class MULTICAMPROJECT_OT_RemeshDetailSize(bpy.types.Operator):
 
     def invoke(self, context, event):
         ts = context.tool_settings.sculpt
-        if ts.detail_type_method in {'RELATIVE', 'BRUSH'}:     # pixels / percent: the F circle
-            prop = "detail_size" if ts.detail_type_method == 'RELATIVE' else "detail_percent"
+        if ts.detail_type_method in _DETAIL_SCALE:      # pixels / percent: the F circle
+            # the circle's radius is the value in pixels: 20 px is tiny - a scaled stand-in
+            # is dragged (DETAIL_PX) and writes the real detail back
+            prop, scale = _DETAIL_SCALE[ts.detail_type_method]
+            context.window_manager.multicamproject_detail_px = getattr(ts, prop) * scale
             bpy.ops.wm.radial_control('INVOKE_DEFAULT',
-                                      data_path_primary=f"tool_settings.sculpt.{prop}")
+                                      data_path_primary="window_manager.multicamproject_detail_px")
         else:   # Constant / Manual (a resolution, not a size on screen): Blender's detail edit
             bpy.ops.sculpt.dyntopo_detail_size_edit('INVOKE_DEFAULT')
         return {'FINISHED'}         # the radial control runs on as its own modal
@@ -899,6 +913,9 @@ _keymaps = []
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    bpy.types.WindowManager.multicamproject_detail_px = FloatProperty(
+        name="Decimate Brush Detail", subtype='PIXEL', min=2.0, max=400.0,
+        update=_detail_px_update, options={'SKIP_SAVE'})
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:      # Ctrl+Shift+F: the Decimate Brush detail (poll: only in its session)
         km = kc.keymaps.new(name="Sculpt", space_type='EMPTY')
@@ -926,6 +943,7 @@ def unregister():
         except (ReferenceError, RuntimeError):
             pass
     _keymaps.clear()
+    del bpy.types.WindowManager.multicamproject_detail_px
     del bpy.types.Scene.multicamproject_retopo_snap
     del bpy.types.Scene.multicamproject_retopo_plane
     core.unregister()
