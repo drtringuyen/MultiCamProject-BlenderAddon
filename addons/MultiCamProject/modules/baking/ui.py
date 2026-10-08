@@ -281,6 +281,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         draw_object_size(row, obj)
         row.separator(factor=0.5)
         row.operator("multicamproject.bake", text=f"Bake {parts}", icon='RENDER_STILL')
+        if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
+                and getattr(obj, "multicamproject_cam", None) is not None
+                and obj.multicamproject_cam.is_setup):
+            row.operator("multicamproject.bake_view_mix", text="", icon='GROUP_VCOL')
         row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')
 
 

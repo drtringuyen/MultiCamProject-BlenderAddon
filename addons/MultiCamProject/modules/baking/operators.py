@@ -31,6 +31,23 @@ def _to_object_mode(context):
         bpy.ops.object.mode_set(mode='OBJECT')
 
 
+ANY_MODE = {'OBJECT', 'EDIT_MESH', 'SCULPT', 'PAINT_VERTEX', 'PAINT_TEXTURE', 'PAINT_WEIGHT'}
+
+
+def _any_mode(context):
+    """The Bake button: also from Sculpt / Paint / Edit Mode (it bakes in Object Mode and
+    goes back to the mode afterwards)."""
+    return context.mode in ANY_MODE and not jobs.busy()
+
+
+def _leave_mode(context):
+    """Object Mode for the bake; the mode it was in comes back when the job ends."""
+    obj = context.active_object
+    jobs.return_mode = ((obj.name, obj.mode) if obj is not None and context.mode != 'OBJECT'
+                        else None)
+    _to_object_mode(context)
+
+
 def _split_handmade(context):
     """(handmade meshes in a UV edit, the meshes 06 bakes). A handmade mesh without
     uv_old has nothing to bake (its textures are on uv_normal already): left out."""
@@ -419,7 +436,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_or_edit(context):
+        if not _any_mode(context):
             return False
         hand, objs = _split_handmade(context)
         if not objs and not hand:
@@ -450,7 +467,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        _to_object_mode(context)
+        _leave_mode(context)
         s = common.settings(context.scene)
         hand, objs = _split_handmade(context)
         albedo = s.bake_what in {'ALBEDO', 'BOTH'}

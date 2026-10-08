@@ -22,6 +22,20 @@ def _draw_liquify(layout, cam):
     op.camera = cam.name
 
 
+def _draw_bake_row(context, layout, obj):
+    """06's bake row under the slots ([Auto Resolution v] [Bake ...] [mixture] [gear]): bake
+    right after picking cameras. Without the baking module: Bake Camera Mixture alone."""
+    try:
+        from ..baking import common as bake_common, ui as bake_ui
+    except ImportError:
+        layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
+                        icon='RENDER_STILL')
+        return
+    layout.separator(factor=0.5)
+    bake_ui.MULTICAMPROJECT_PT_Baking._draw_bake_button(
+        layout, bake_common.settings(context.scene), obj)
+
+
 def _icon(icon):
     """Keyword for layout.operator: a UI icon name, or "tool:<handle>" for a toolbar icon."""
     if icon.startswith("tool:"):
@@ -122,6 +136,11 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         split.prop(core.input_socket(mod, "Occlusion"), "value", text="Occlusion", toggle=True,
                    icon='MOD_MASK')
 
+        # Processing | Final, as in 06 (look at the bake without scrolling down)
+        if hasattr(obj, "multicamproject_view"):
+            col.separator(factor=0.5)
+            col.row(align=True).prop(obj, "multicamproject_view", expand=True)
+
         box.separator(type='LINE')
         if not d.cameras:
             box.label(text="No camera sees this object - Reload All", icon='INFO')
@@ -146,8 +165,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         if body:
             for item in top:
                 self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
-            body.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
-                          icon='RENDER_STILL')
+            _draw_bake_row(context, body, obj)
         # always drawn, also when every camera is in a slot: its header holds the coverage
         # filter, Restore Removed and Measure
         header, body = box.panel("multicamproject_all_cams", default_closed=False)

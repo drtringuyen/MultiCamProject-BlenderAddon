@@ -16,6 +16,8 @@ def _setup_poll(context):
 
 
 LIST_MODES = {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX', 'SCULPT'}
+# Bake Camera Mixture: from these too (applied in Object Mode, then back)
+BAKE_MODES = LIST_MODES | {'PAINT_TEXTURE', 'PAINT_WEIGHT'}
 
 
 def _list_poll(context):
@@ -727,7 +729,9 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _setup_poll(context) and core.get_modifier(context.active_object) is not None
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH' and context.mode in BAKE_MODES
+                and core.data(obj).is_setup and core.get_modifier(obj) is not None)
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(
@@ -736,6 +740,17 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
             confirm_text="Bake")
 
     def execute(self, context):
+        """From Sculpt / Paint / Edit Mode too: applied in Object Mode, then back."""
+        mode = context.active_object.mode
+        if mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        try:
+            return self._bake(context)
+        finally:
+            if mode != 'OBJECT':
+                bpy.ops.object.mode_set(mode=mode)
+
+    def _bake(self, context):
         obj = context.active_object
         me = obj.data
         mod = core.get_modifier(obj)

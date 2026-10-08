@@ -268,6 +268,22 @@ def _restore_views(saved):
 # ---------------------------------------------------------------- the runner
 
 _pending = None     # (title, names, gen, finish) for the runner's invoke
+return_mode = None  # (object name, mode) the Bake left (Sculpt / Paint / Edit): back to it at the end
+
+
+def _back_to_mode():
+    """The mode the Bake button was pressed in, on the same active object."""
+    global return_mode
+    name, mode = return_mode or (None, None)
+    return_mode = None
+    obj = bpy.data.objects.get(name) if name else None
+    ctx = bpy.context
+    if obj is None or mode in {None, 'OBJECT'} or ctx.view_layer.objects.active != obj:
+        return
+    try:
+        bpy.ops.object.mode_set(mode=mode)
+    except RuntimeError as e:
+        print(f"[MultiCamProject] back to {mode} skipped: {e}")
 PREVIEW_WAIT = 30.0     # seconds at most to wait for material previews after a bake
 
 
@@ -286,6 +302,7 @@ def start(op, context, title, names, gen, finish, light=()):
             op.report({sev}, text)
         if error is not None:
             op.report({'ERROR'}, f"{type(error).__name__}: {error}")
+        _back_to_mode()
         return {'FINISHED'} if error is None else {'CANCELLED'}
     if busy():
         op.report({'WARNING'}, "A bake / export is already running")
@@ -415,6 +432,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
             lines = list(lines) + [('ERROR', f"{type(error).__name__}: {error}")]
         for sev, text in lines:
             self.report({sev}, text)
+        _back_to_mode()
         _redraw()
         try:
             bpy.ops.ed.undo_push(message="MultiCamProject bake / export")
