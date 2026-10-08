@@ -86,12 +86,16 @@ class MULTICAMPROJECT_OT_WorkReceive(bpy.types.Operator):
             self.report({'WARNING'}, "Nothing new sent back - press Send Back in the work window")
             return {'CANCELLED'}
         try:
-            faces = core.receive(context, obj, self.action)
+            faces, notes = core.receive(context, obj, self.action)
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         verb = "added" if self.action == 'ADD' else "received"
-        self.report({'INFO'}, f"'{obj.name}': {faces:,} faces {verb} (still linked: X ends it)")
+        level = 'WARNING' if any(n.startswith("missing") for n in notes) else 'INFO'
+        self.report({level}, " · ".join([f"'{obj.name}': {faces:,} faces {verb}"] + notes
+                                        + ["still linked: X ends it"]))
+        for area in context.screen.areas if context.screen else ():
+            area.tag_redraw()       # the EXPORT list / Bake panel show the new status
         return {'FINISHED'}
 
 

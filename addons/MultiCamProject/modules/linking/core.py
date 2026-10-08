@@ -722,14 +722,17 @@ def _take_cameras(obj, scene, man):
 
 def _take_textures(obj, scene, man):
     """The bakes made in the window over the object's own files (the old ones to the Recycle
-    Bin), its images pointed at them. Returns the pointers taken."""
+    Bin), its images pointed at them. Returns (pointers taken, file names sent but gone)."""
     from ..baking import common, engine
     from ..export import fixes
     d = common.data(obj)
-    taken = []
+    taken, gone = [], []
     for ptr, fn, normal in TEXTURES:
         src = man.get("textures", {}).get(ptr)
-        if not src or not os.path.isfile(src):
+        if not src:
+            continue
+        if not os.path.isfile(src):
+            gone.append(os.path.basename(src))
             continue
         name = getattr(common, fn)(obj)
         dst = common.texture_path(scene, name)
@@ -752,7 +755,29 @@ def _take_textures(obj, scene, man):
             setattr(d, k, v)
         except (AttributeError, TypeError):
             pass
-    return taken
+    return taken, gone
+
+
+TAKEN_LABELS = {"ba_image": "BAo_", "bn_image": "BNo_", "bap_image": "BAp_",
+                "bnp_image": "BNp_", "bng_image": "BNoG_", "alb_image": "ALB_",
+                "nor_image": "NOR_"}
+
+
+def _status_text(obj, scene):
+    """The object's stage as the EXPORT list shows it (after Receive), with what is outdated."""
+    try:
+        from ..baking import fingerprint
+        from ..export import status
+    except ImportError:
+        return ""
+    st = status.object_status(obj, scene, {})
+    text = status.STAGES[st.stage][0]
+    if st.stage == 'OUTDATED':
+        why = [n for n, out in (("ALB_", fingerprint.is_outdated(obj)),
+                                ("BAo_", fingerprint.original_outdated(obj)),
+                                ("BAp_", fingerprint.projection_outdated(obj))) if out]
+        text += f" ({', '.join(why)})" if why else ""
+    return text
 
 
 def _restamp(obj, man, taken):
@@ -761,8 +786,14 @@ def _restamp(obj, man, taken):
     from ..baking import common, fingerprint
     d = common.data(obj)
     fresh, stamps = man.get("fresh", {}), man.get("stamps", {})
+
+    def keep_time(stamp, window):
+        """This file's state, the window's bake time: a BAo_ / BAp_ the window did not bake
+        again keeps its stamp, so an ALB_ made from it is not read as outdated."""
+        t = window.partition(":")[2]
+        return f"{stamp.partition(':')[0]}:{t}" if t else stamp
     if fresh.get("ba"):
-        d.ba_fingerprint = fingerprint.stamp_source(obj)
+        d.ba_fingerprint = keep_time(fingerprint.stamp_source(obj), stamps.get("ba_fingerprint", ""))
     elif "ba_image" in taken:
         d.ba_fingerprint, d.ba_parts = stamps.get("ba_fingerprint", ""), stamps.get("ba_parts", "")
     if fresh.get("bng"):
@@ -771,7 +802,8 @@ def _restamp(obj, man, taken):
     elif "bng_image" in taken:
         d.bng_fingerprint = stamps.get("bng_fingerprint", "")
     if fresh.get("bp"):
-        d.bp_fingerprint = fingerprint.stamp_projection(obj)
+        d.bp_fingerprint = keep_time(fingerprint.stamp_projection(obj),
+                                     stamps.get("bp_fingerprint", ""))
     elif "bap_image" in taken:
         d.bp_fingerprint = stamps.get("bp_fingerprint", "")
     if fresh.get("bnp"):
@@ -829,9 +861,9 @@ def receive(context, obj, action='REPLACE'):
         _swap_mesh(obj, me)
         _take_modifiers(obj, man)
         _take_cameras(obj, scene, man)
-        taken = []
+        taken, gone = [], []
         try:
-            taken = _take_textures(obj, scene, man)
+            taken, gone = _take_textures(obj, scene, man)
         except ImportError:
             pass
         _refresh(obj, scene)
@@ -841,8 +873,17 @@ def receive(context, obj, action='REPLACE'):
             cache.clear()
         except ImportError:
             pass
+        notes = [("Textures: " + ", ".join(TAKEN_LABELS[p] for p in taken)) if taken
+                 else "No new textures"]
+        if gone:
+            notes.append("missing (bake again in the window): " + ", ".join(gone))
+        stage = _status_text(obj, scene)
+        if stage:
+            notes.append(f"status: {stage}")
+        _stamp_record(obj, received=man["time"])
+        return faces, notes
     _stamp_record(obj, received=man["time"])   # linked on: the next Send Back is new
-    return faces
+    return faces, []
 
 
 # ---------------------------------------------------------------- work window: saved
