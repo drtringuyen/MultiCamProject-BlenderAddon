@@ -734,9 +734,10 @@ def _take_textures(obj, scene, man):
         name = getattr(common, fn)(obj)
         dst = common.texture_path(scene, name)
         os.makedirs(os.path.dirname(dst), exist_ok=True)
-        if os.path.isfile(dst):
-            fixes.to_recycle_bin([dst])
-        shutil.copyfile(src, dst)
+        if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(dst)):
+            if os.path.isfile(dst):     # the window baked into the same folder: already there
+                fixes.to_recycle_bin([dst])
+            shutil.copyfile(src, dst)
         img = getattr(d, ptr) or bpy.data.images.get(name)
         if img is None:
             img = bpy.data.images.load(dst, check_existing=False)
