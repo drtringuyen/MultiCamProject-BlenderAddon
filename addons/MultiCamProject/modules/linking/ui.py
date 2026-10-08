@@ -230,7 +230,7 @@ def draw_work(layout, context):
     elif target:
         info.label(text="Not saved yet - Send Back works without it", icon='WINDOW')
     else:
-        info.label(text="Unsaved · saving keeps it linked (bakes -> bake folder/_work)",
+        info.label(text="Unsaved · saving keeps it linked (bakes -> bake folder)",
                    icon='WINDOW')
 
 

@@ -15,7 +15,7 @@ Main file    -> Receive: Replace (default) swaps the mesh data, removes the modi
                 the materials and stamps what was up to date there. Add joins the window's
                 mesh instead (nothing else). The link stays: every new Send Back can be
                 received; X ends it. Send Out is blocked while linked.
-Saved window -> its bakes move to <main bake folder>/_work/<object>/ (the temp folder is
+Saved window -> its bakes move to the main bake folder (the temp folder is
                 cleaned) and it tells the main file where it is (window.json): the row's
                 open button opens it again, still linked.
 The link is the send-out id: on the main object (OUT_KEY) and in the window's scene.
@@ -39,14 +39,14 @@ WORK_KEY = "multicamproject_work_of"        # work window scene: the main .blend
 WORK_OBJECT_KEY = "multicamproject_work_object"     # work window scene: the object's name
 WORK_ID_KEY = "multicamproject_work_id"     # work window scene: the send-out id
 WORK_SAVE_AS_KEY = "multicamproject_work_save_as"   # work window scene: where Ctrl+S saves it
-WORK_BAKES_KEY = "multicamproject_work_bakes"   # work window scene: main bake folder/_work/<obj>
+WORK_BAKES_KEY = "multicamproject_work_bakes"   # work window scene: the main bake folder
 WINDOW_FILE = "window.json"     # the saved work file's path, written by the window
 LAST_WINDOW_KEY = "multicamproject_out_last"    # main object: its work file after X
 WORK_TAKEN_KEY = "multicamproject_work_incoming"    # work window scene: last mesh taken (time)
 INCOMING_FILE = "incoming.blend"    # the main file's current mesh for an existing work file
 INCOMING_JSON = "incoming.json"
 OLD_COLLECTION = "old version"      # work window: the replaced versions (hidden)
-WORK_SUBDIR = "_work"           # in the main bake folder: saved work windows' bakes
+WORK_SUBDIR = "_work"           # older work windows baked into <bake folder>/_work(/<object>)
 MANIFEST = "manifest.json"
 MESH_FILE = "mesh.blend"
 OPEN_FILE = "open.blend"
@@ -320,23 +320,24 @@ def send_out(context, obj, start="", save_as=""):
 
 
 def _work_bakes(scene, obj):
-    """Where a saved work window keeps its bakes: <main bake folder>/_work (never overwrites
-    the main file's own files; Clean only looks at the folder itself). No folder per object:
-    the file names carry the object's name already, and a long name twice went past
-    Windows' 260 characters (Blender then cannot write or read the file)."""
+    """Where a saved work window keeps its bakes: the main file's bake folder itself (the
+    same file names as the main file's - only the Export textures matter)."""
     try:
         from ..baking import common
-        folder = common.output_dir(scene)
+        return common.output_dir(scene)
     except ImportError:
-        folder = os.path.join(os.path.dirname(bpy.data.filepath), "01.Bake")
-    return os.path.join(folder, WORK_SUBDIR)
+        return os.path.join(os.path.dirname(bpy.data.filepath), "01.Bake")
 
 
 def _bakes_dest(scene):
-    """The work window's _work folder - an older window's _work/<object> is moved up one."""
+    """The work window's bake folder - an older window's _work or _work/<object> moves up
+    to the main bake folder (a long object name twice went past Windows' 260 characters)."""
     dest = os.path.normpath(scene.get(WORK_BAKES_KEY, "")) if scene.get(WORK_BAKES_KEY) else ""
     if dest and os.path.basename(os.path.dirname(dest)) == WORK_SUBDIR:
         dest = os.path.dirname(dest)
+    if dest and os.path.basename(dest) == WORK_SUBDIR:
+        dest = os.path.dirname(dest)
+    if dest and dest != scene.get(WORK_BAKES_KEY):
         scene[WORK_BAKES_KEY] = dest
     return dest
 
@@ -522,7 +523,7 @@ def _take_later():
 
 @persistent
 def _on_load_incoming(_):
-    if bpy.data.filepath:   # a saved work window from before _work lost its <object> folder
+    if bpy.data.filepath:   # a saved work window still baking into _work(/<object>)
         try:
             for scene in bpy.data.scenes:
                 if is_work_window(scene):
@@ -847,8 +848,8 @@ def receive(context, obj, action='REPLACE'):
 
 def _move_bakes_for_save(scene):
     """Before a work window is saved: its bake folder (temp) moves to the main file's
-    _work folder and its images follow, so the saved file keeps its textures. Also on load
-    (an older window still baking into _work/<object>)."""
+    bake folder and its images follow, so the saved file keeps its textures. Also on load
+    (an older window still baking into _work or _work/<object>)."""
     dest = _bakes_dest(scene)
     obj = work_object(scene)
     if not dest or obj is None:
