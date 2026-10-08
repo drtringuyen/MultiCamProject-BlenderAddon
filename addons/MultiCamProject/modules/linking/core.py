@@ -624,6 +624,7 @@ def send_back(context):
                                                     "bp_fingerprint", "bnp_fingerprint",
                                                     "fingerprint", "ba_parts")}
         man["meta"] = {k: getattr(d, k) for k in META}
+        man["size"] = {"tex_size": d.tex_size, "resolution": common.resolution(obj, scene)}
     except ImportError:
         pass
     tmp = os.path.join(folder, MANIFEST + ".tmp")
@@ -755,7 +756,66 @@ def _take_textures(obj, scene, man):
             setattr(d, k, v)
         except (AttributeError, TypeError):
             pass
+    real = _sizes_from_files(d, taken)
+    _take_size(obj, scene, man.get("size"), real)
     return taken, gone
+
+
+# the size each texture records (the window's note can be wrong: the window and this file
+# bake into the same folder, so a later bake here may have replaced the window's files)
+SIZE_OF = {"ba_image": "ba_size", "bap_image": "bp_size", "alb_image": "alb_size",
+           "nor_image": "nor_size"}
+
+
+def _png_size(path):
+    """(width, height) from a PNG's header (no decode), None when it isn't one."""
+    import struct
+    try:
+        with open(path, "rb") as f:
+            head = f.read(24)
+    except OSError:
+        return None
+    if len(head) < 24 or head[:8] != b"\x89PNG\r\n\x1a\n":
+        return None
+    return struct.unpack(">II", head[16:24])
+
+
+def _sizes_from_files(d, taken):
+    """The *_size of every texture taken = its file's real width. Returns that size when
+    the files agree on one (else 0)."""
+    from ..baking import common
+    seen = set()
+    for ptr in taken:
+        wh = _png_size(common.image_file(getattr(d, ptr)))
+        if wh is None:
+            continue
+        seen.add(wh[0])
+        if ptr in SIZE_OF:
+            setattr(d, SIZE_OF[ptr], wh[0])
+    return seen.pop() if len(seen) == 1 else 0
+
+
+def _take_size(obj, scene, size, real=0):
+    """The texture size the bakes have: the window's own pick, or - on Auto - the size of
+    the files taken (`real`, else the window's resolution) when it differs from this file's
+    resolution, as the object's own size: bakes up to date in the window don't read
+    'baked at 1K, set to 8K' here."""
+    from ..baking import common
+    if not size and not real:
+        return
+    d = common.data(obj)
+    if real:        # the files decide: Auto when they match this file's resolution
+        want = 'AUTO' if common.settings(scene).resolution == real else str(real)
+    else:
+        want = size.get("tex_size", 'AUTO')
+        res = size.get("resolution")
+        if want == 'AUTO' and res and common.resolution(obj, scene) != res:
+            want = str(res)
+    if want != d.tex_size:
+        try:
+            d.tex_size = want
+        except TypeError:       # a resolution this file's list doesn't offer
+            pass
 
 
 TAKEN_LABELS = {"ba_image": "BAo_", "bn_image": "BNo_", "bap_image": "BAp_",
