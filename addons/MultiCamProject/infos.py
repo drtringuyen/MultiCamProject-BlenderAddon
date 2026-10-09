@@ -183,6 +183,17 @@ class MULTICAMPROJECT_OT_ToggleLinking(bpy.types.Operator):
         module_manager.toggle("linking")
         return {'FINISHED'}
 
+
+class MULTICAMPROJECT_OT_ToggleEstimation(bpy.types.Operator):
+    """Toggle Estimation module on/off"""
+    bl_idname = "multicamproject.toggle_estimation"
+    bl_label = "Estimation"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("estimation")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
@@ -196,9 +207,11 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleRemesh)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleImageEditor)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleLinking)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleEstimation)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleEstimation)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleLinking)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleImageEditor)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleRemesh)
