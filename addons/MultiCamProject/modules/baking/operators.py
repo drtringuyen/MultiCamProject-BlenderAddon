@@ -738,13 +738,61 @@ class MULTICAMPROJECT_OT_MaterialRefresh(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def renamable_uv(obj):
+    """The UV map 'Rename to uv_normal' takes: the active one (else the first) that is not
+    the add-on's (UV_cam*, uv_old). None when there is uv_normal already or no such map."""
+    if obj is None or obj.type != 'MESH' or common.has_uv_normal(obj):
+        return None
+    uvs = [u for u in obj.data.uv_layers
+           if not u.name.startswith("UV_cam") and u.name != handmade.UV_OLD]
+    active = obj.data.uv_layers.active
+    return active if active in uvs else (uvs[0] if uvs else None)
+
+
+class MULTICAMPROJECT_OT_RenameUVNormal(bpy.types.Operator):
+    """Use the UV map the mesh already has as uv_normal (renamed, not unwrapped again).
+    It must be non-overlapping and inside 0-1 for the bakes. A scan UV renamed here no
+    longer shows the original scan textures in the Processing material - BAo_ does"""
+    bl_idname = "multicamproject.rename_uv_normal"
+    bl_label = "Rename UV to uv_normal"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if renamable_uv(context.active_object) is None:
+            cls.poll_message_set("No UV map to rename (or uv_normal is there already)")
+            return False
+        return True
+
+    def execute(self, context):
+        obj = context.active_object
+        uv = renamable_uv(obj)
+        old = uv.name
+        uv.name = common.UV_NORMAL
+        from . import cache
+        cache.clear(obj)
+        self.report({'INFO'}, f"{obj.name}: '{old}' is uv_normal now")
+        return {'FINISHED'}
+
+
+def draw_uv_fix(layout, obj):
+    """Under a 'No uv_normal' warning: Rename the mesh's UV map, or (none) Make by Smart UV."""
+    uv = renamable_uv(obj)
+    if uv is not None:
+        layout.operator(MULTICAMPROJECT_OT_RenameUVNormal.bl_idname,
+                        text=f"Rename '{uv.name}' to uv_normal", icon='UV')
+    elif hasattr(bpy.types, "MULTICAMPROJECT_OT_export_make_uv"):     # the export module
+        layout.operator("multicamproject.export_make_uv", text="Make uv_normal (Smart UV)",
+                        icon='UV').scope = 'SELECTED'
+
+
 _classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
             MULTICAMPROJECT_OT_MaterialRefresh, MULTICAMPROJECT_OT_HandmadeEditUV,
             MULTICAMPROJECT_OT_HandmadeRebake, MULTICAMPROJECT_OT_HandmadeFinishUV,
-            MULTICAMPROJECT_OT_HandmadeCancelUV)
+            MULTICAMPROJECT_OT_HandmadeCancelUV, MULTICAMPROJECT_OT_RenameUVNormal)
 
 
 def register():

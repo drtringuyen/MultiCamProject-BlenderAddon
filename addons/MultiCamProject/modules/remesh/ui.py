@@ -196,10 +196,9 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             sub = box.row()
             sub.alert = True
             sub.label(text=why, icon='ERROR')
-            if (not obj.data.uv_layers.get("uv_normal") and dec is None
-                    and hasattr(bpy.types, "MULTICAMPROJECT_OT_export_make_uv")):
-                box.operator("multicamproject.export_make_uv", text="Make uv_normal (Smart UV)",
-                             icon='UV').scope = 'SELECTED'
+            if not obj.data.uv_layers.get("uv_normal") and dec is None:
+                from ..baking import operators as bops
+                bops.draw_uv_fix(box, obj)
         else:
             collapsed = common.uv_collapsed_text(obj)       # baking would give a black BA_
             if collapsed:

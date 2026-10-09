@@ -131,10 +131,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             box.alert = True
             box.label(text=f"No '{common.UV_NORMAL}' UV map", icon='ERROR')
             box.label(text="Unwrap it (non-overlapping, inside 0-1), or:")
-            if hasattr(bpy.types, "MULTICAMPROJECT_OT_export_make_uv"):     # the export module
-                box.alert = False
-                box.operator("multicamproject.export_make_uv", text="Make uv_normal (Smart UV)",
-                             icon='UV').scope = 'SELECTED'
+            box.alert = False
+            operators.draw_uv_fix(box, obj)
         elif d.fingerprint and fingerprint.is_outdated(obj):
             box = top.box()
             box.alert = True
