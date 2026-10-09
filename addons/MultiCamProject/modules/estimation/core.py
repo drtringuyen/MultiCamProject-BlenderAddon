@@ -196,3 +196,44 @@ def display_names(scene, names):
     for n in rest:
         out[n] = n[len(cut):] or n
     return out
+
+
+ORDER = {DONE: 0, OVER: 1, NEW: 2}      # the list: green, orange, black - by area in each
+
+
+class Line:
+    """One object of the list as shown now."""
+    __slots__ = ("name", "label", "area", "budget", "now", "state")
+
+    def __init__(self, name, label, area, budget, now, state):
+        self.name, self.label, self.area = name, label, area
+        self.budget, self.now, self.state = budget, now, state
+
+    @property
+    def delta(self):
+        """Triangles left (+) or to remove (-)."""
+        return self.budget - self.now
+
+
+def delta_text(d):
+    """'+23K' / '-5.3K'."""
+    return f"+{short(d)}" if d >= 0 else f"-{short(-d)}"
+
+
+def table(context):
+    """The list as the panel and the viewport overlay show it: [Line], green -> orange ->
+    black, biggest area first in each. Fills STATE (the rows' colour blocks)."""
+    from ... import roles
+    s = getattr(context.scene, "multicamproject_estimation", None)
+    if s is None or not s.rows:
+        return []
+    export = roles.find(context.scene, 'EXPORT')
+    labels = display_names(context.scene, [r.name for r in s.rows])
+    out = []
+    for r in s.rows:
+        state, now = row_state(context, r, export)
+        out.append(Line(r.name, labels[r.name], r.area, r.budget, now, state))
+    out.sort(key=lambda ln: (ORDER[ln.state], -ln.area))
+    STATE.clear()
+    STATE.update({ln.name: ln.state for ln in out})
+    return out

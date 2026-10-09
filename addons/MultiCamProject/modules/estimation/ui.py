@@ -3,19 +3,31 @@ import bpy
 from . import core
 
 
-def _line(col, block=None):
-    """(name cell, number cells): the name gets a third of the width, the 4 numbers share
-    the rest equally. `block`: the row whose colour block goes in front (a gap otherwise,
-    so the columns stay in line)."""
-    row = col.row(align=True)
+def _block(row, item):
+    """A colour block cell: `item`'s state colour, or a gap (header / total rows)."""
     cell = row.row(align=True)
     cell.ui_units_x = 0.7
-    if block is not None:
-        cell.prop(block, "color", text="")
+    if item is not None:
+        cell.prop(item, "color", text="")
     else:
         cell.label(text="")
-    split = row.split(factor=0.34, align=True)
+
+
+def _line(col, item=None):
+    """(name cell, number cells) between two colour blocks: the name gets a third of the
+    width, the 4 numbers share the rest equally."""
+    row = col.row(align=True)
+    _block(row, item)
+    split = row.row(align=True).split(factor=0.34, align=True)
+    _block(row, item)
     return split.row(align=True), split.row(align=True)
+
+
+def _delta(nums, d):
+    """The To Go cell: '+23K' (green square) or '-5.3K' in red."""
+    cell = nums.row(align=True)
+    cell.alert = d < 0
+    cell.label(text=core.delta_text(d), icon='STRIP_COLOR_04' if d >= 0 else 'STRIP_COLOR_01')
 
 
 class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
@@ -41,55 +53,51 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(s, "budget")
         row.prop(s, "minimum")
-        row = layout.row()
+        row = layout.row(align=True)
         row.scale_y = 1.3
         coll = core.objects_collection(context)
-        row.enabled = coll is not None
-        row.operator("multicamproject.estimation_calculate",
+        sub = row.row(align=True)
+        sub.enabled = coll is not None
+        sub.operator("multicamproject.estimation_calculate",
                      text=f"Calculate {coll.name}" if coll else "No OBJECTS collection",
                      icon='FILE_REFRESH')
+        row.prop(s, "show_overlay", text="", icon='OVERLAY')
         if not s.rows:
             return
         if s.calculated_budget != s.budget:
             layout.label(text="Budget changed: Calculate again", icon='ERROR')
 
-        total_area = sum(r.area for r in s.rows)
-        from ... import roles
-        export = roles.find(context.scene, 'EXPORT')
-        states = {r.name: core.row_state(context, r, export) for r in s.rows}
-        core.STATE.clear()
-        core.STATE.update({n: st for n, (st, _now) in states.items()})
-        names = core.display_names(context.scene, [r.name for r in s.rows])
+        lines = core.table(context)
+        rows = {r.name: r for r in s.rows}
         box = layout.box()
         col = box.column(align=True)
         name, nums = _line(col)
         name.label(text="Object")
-        for text in ("Area", "Budget", "Now", "Remove"):
+        for text in ("Area", "Budget", "Now", "To Go"):
             nums.label(text=text)
-        for r in s.rows:
-            state, now = states[r.name]
-            name, nums = _line(col, r)
-            obj = context.scene.objects.get(r.name)
+        for ln in lines:
+            name, nums = _line(col, rows[ln.name])
+            obj = context.scene.objects.get(ln.name)
             name.alignment = 'LEFT'
-            name.operator("multicamproject.estimation_select", text=names[r.name],
-                          emboss=False, icon=core.ICONS[state],
+            name.operator("multicamproject.estimation_select", text=ln.label,
+                          emboss=False, icon=core.ICONS[ln.state],
                           depress=obj is not None and obj == context.active_object
-                          ).object_name = r.name
-            nums.label(text=f"{r.area:.2f} m²")
-            nums.label(text=core.short(r.budget))
-            nums.label(text=core.short(now))
-            nums.label(text=f"{core.removable(r.budget, now) * 100:.0f}%")
+                          ).object_name = ln.name
+            nums.label(text=f"{ln.area:.2f} m²")
+            nums.label(text=core.short(ln.budget))
+            nums.label(text=core.short(ln.now))
+            _delta(nums, ln.delta)
 
-        tris = sum(now for _st, now in states.values())
-        budget = sum(r.budget for r in s.rows)
+        tris = sum(ln.now for ln in lines)
+        budget = sum(ln.budget for ln in lines)
         col.separator()
         name, nums = _line(col)
-        name.label(text=f"{len(s.rows)} objects")
-        nums.label(text=f"{total_area:.2f} m²")
+        name.label(text=f"{len(lines)} objects")
+        nums.label(text=f"{sum(ln.area for ln in lines):.2f} m²")
         nums.label(text=core.short(budget))
         nums.label(text=core.short(tris))
-        nums.label(text=f"{core.removable(budget, tris) * 100:.0f}%")
-        count = [st for st, _now in states.values()]
+        _delta(nums, budget - tris)
+        count = [ln.state for ln in lines]
         legend = box.row(align=True)
         legend.active = False
         legend.label(text=f"{count.count(core.DONE)} on budget", icon=core.ICONS[core.DONE])
