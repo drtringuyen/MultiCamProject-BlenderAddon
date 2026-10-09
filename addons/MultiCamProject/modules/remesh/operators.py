@@ -507,6 +507,23 @@ class MULTICAMPROJECT_OT_RemeshCleanFloating(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_HideFaces(bpy.types.Operator):
+    """Hide (H in Edit Mode): Face select mode first - only whole selected faces are
+    hidden, no stray vertices / edges around them - then Blender's Hide"""
+    bl_idname = "multicamproject.hide_faces"
+    bl_label = "Hide Faces"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return context.mode == 'EDIT_MESH'
+
+    def execute(self, context):
+        if tuple(context.tool_settings.mesh_select_mode) != (False, False, True):
+            bpy.ops.mesh.select_mode(type='FACE')
+        return bpy.ops.mesh.hide(unselected=False)
+
+
 def _mouse_ray(context, event):
     region, rv3d = context.region, context.region_data
     if region is None or rv3d is None or region.type != 'WINDOW':
@@ -900,7 +917,7 @@ class MULTICAMPROJECT_OT_UnlinkOriginal(bpy.types.Operator):
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_Remesh,
             MULTICAMPROJECT_OT_RemeshEnterTool, MULTICAMPROJECT_OT_RemeshDensityBrush,
             MULTICAMPROJECT_OT_RemeshDetailSize, MULTICAMPROJECT_OT_RemeshCleanFloating,
-            MULTICAMPROJECT_OT_RemeshPick,
+            MULTICAMPROJECT_OT_HideFaces, MULTICAMPROJECT_OT_RemeshPick,
             MULTICAMPROJECT_OT_RemeshSetFaces, MULTICAMPROJECT_OT_RemeshApplyDecimate,
             MULTICAMPROJECT_OT_RemeshUseExisting, MULTICAMPROJECT_OT_RemeshSnap,
             MULTICAMPROJECT_OT_ResetObject, MULTICAMPROJECT_OT_RetopoEmpty,
@@ -926,6 +943,7 @@ def register():
         #   D  Decimate Brush     Object + Sculpt Mode
         #   F  its Dyntopo detail Sculpt, only in the Decimate Brush session (poll)
         #   L  Clean Floating     Edit Mode
+        # and H in Edit Mode: Face mode, then Hide (Blender's H, one step more)
         poly, dec = (MULTICAMPROJECT_OT_RemeshEnterTool.bl_idname,
                      MULTICAMPROJECT_OT_RemeshDensityBrush.bl_idname)
         for km_name, items in (
@@ -940,6 +958,12 @@ def register():
             for idname, key in items:
                 _keymaps.append((km, km.keymap_items.new(idname, key, 'PRESS', ctrl=True,
                                                          shift=True)))
+        km = kc.keymaps.new(name="Mesh", space_type='EMPTY')
+        for kmi in [k for k in km.keymap_items
+                    if k.idname == MULTICAMPROJECT_OT_HideFaces.bl_idname]:
+            km.keymap_items.remove(kmi)
+        _keymaps.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_HideFaces.bl_idname, 'H',
+                                                 'PRESS')))
     bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
         name="Retopo Snapping", default=True,
         description="0D: snap to the original's surface (Face Project) and the Retopology "
