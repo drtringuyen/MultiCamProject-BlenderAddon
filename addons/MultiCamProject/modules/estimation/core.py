@@ -279,3 +279,16 @@ def _frame_bounds(r3d, obj):
     radius = max((c - center).length for c in corners)
     r3d.view_location = center
     r3d.view_distance = max(radius * 2.5, 0.1)
+
+
+def window_budget(context):
+    """A work window: (its object's budget, triangles now), None without a budget."""
+    target = context.scene.get(TARGET_KEY, 0)
+    try:
+        from ..linking import core as lk
+    except ImportError:
+        return None
+    obj = lk.work_object(context.scene)
+    if not target or obj is None:
+        return None
+    return target, tris_now(context, obj)

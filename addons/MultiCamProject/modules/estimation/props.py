@@ -18,6 +18,15 @@ def _on_row(self, context):
         core.focus(context, self.rows[self.active_index].name)
 
 
+def _budget_color(self):
+    """A work window's Send Back blocks: green within the budget, orange over it."""
+    from . import core
+    b = core.window_budget(bpy.context)
+    if b is None:
+        return core.COLORS[core.NEW]
+    return core.COLORS[core.DONE if b[1] <= b[0] else core.OVER]
+
+
 class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
     # name = the object's name
     area: FloatProperty()           # world space, m²
@@ -52,9 +61,13 @@ def register():
         bpy.utils.register_class(cls)
     bpy.types.Scene.multicamproject_estimation = PointerProperty(
         type=MULTICAMPROJECT_EstimationSettings)
+    bpy.types.Scene.multicamproject_budget_color = FloatVectorProperty(
+        size=3, subtype='COLOR_GAMMA', get=_budget_color, options={'SKIP_SAVE'},
+        description="Green: the object is within its budget · Orange: over it")
 
 
 def unregister():
+    del bpy.types.Scene.multicamproject_budget_color
     del bpy.types.Scene.multicamproject_estimation
     for cls in reversed(CLASSES):
         bpy.utils.unregister_class(cls)

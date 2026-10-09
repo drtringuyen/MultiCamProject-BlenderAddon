@@ -207,18 +207,29 @@ def draw_main(layout, context, obj):
                  icon='X').object_name = obj.name
 
 
-def _send_back_text(context):
-    """'Send Back to Main File · 38K / 33K tris': the object now / its Estimation budget."""
-    text = ops.MULTICAMPROJECT_OT_WorkSendBack.bl_label
-    target = context.scene.get("multicamproject_work_target", 0)    # estimation.core.TARGET_KEY
-    obj = core.work_object(context.scene)
-    if not target or obj is None:
-        return text
+def _budget(context):
+    """(budget, triangles now) of the window's object, None without one."""
     try:
         from ..estimation import core as est
     except ImportError:
+        return None
+    return est.window_budget(context)
+
+
+def _send_back_text(context, budget):
+    """'Send Back to Main File · 33K / 38K tris': its Estimation budget / the object now."""
+    text = ops.MULTICAMPROJECT_OT_WorkSendBack.bl_label
+    if budget is None:
         return text
-    return f"{text} · {est.short(est.tris_now(context, obj))} / {est.short(target)} tris"
+    from ..estimation import core as est
+    return f"{text} · {est.short(budget[0])} / {est.short(budget[1])} tris"
+
+
+def _budget_block(row):
+    """A green (within the budget) / orange (over) block beside Send Back."""
+    cell = row.row(align=True)
+    cell.ui_units_x = 1
+    cell.prop(bpy.context.scene, "multicamproject_budget_color", text="")
 
 
 def draw_work(layout, context):
@@ -230,8 +241,14 @@ def draw_work(layout, context):
               icon='LINKED')
     row = box.row(align=True)
     row.scale_y = 1.4
+    budget = _budget(context)
+    colored = budget is not None and hasattr(scene, "multicamproject_budget_color")
+    if colored:
+        _budget_block(row)
     row.operator(ops.MULTICAMPROJECT_OT_WorkSendBack.bl_idname, icon='EXPORT',
-                 text=_send_back_text(context))
+                 text=_send_back_text(context, budget))
+    if colored:
+        _budget_block(row)
     info = box.column(align=True)
     info.active = False
     info.label(text="Mesh, painting, cameras + bakes made here · Send Back any time",
