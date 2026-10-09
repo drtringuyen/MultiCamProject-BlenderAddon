@@ -153,6 +153,21 @@ def _start_bake(op, context, title, objs, albedo, nor_source, what):
                       lambda r, e: [('INFO', t) for t in log] + finish(r, e))
 
 
+def _originals_loaded(obj):
+    """An offloaded Bake Source (linking/originals.py) is loaded for the bake."""
+    from ... import module_manager
+    if not module_manager.is_loaded("linking"):
+        return []
+    from ..linking import originals
+    return originals.ensure_loaded(obj)
+
+
+def _originals_offload(objs, scene):
+    if objs:
+        from ..linking import originals
+        originals.offload_quiet(objs, scene)
+
+
 def _source_steps(context, objs):
     done, failed = [], []
     for obj in objs:
@@ -160,10 +175,12 @@ def _source_steps(context, objs):
             jobs.skip_rest()
             break
         jobs.item_start(obj.name)
+        loaded = _originals_loaded(obj)
         try:
             yield from engine.bake_from_source_steps(context, obj)
             done.append(obj)
             jobs.item_end(obj.name)
+            _originals_offload(loaded, context.scene)   # back into their files
         except Exception as e:
             failed.append((obj.name, str(e)))
             jobs.item_end(obj.name, str(e))

@@ -40,6 +40,18 @@ def _delta(nums, d):
 _LINES = {}     # row name -> core.Line of this draw (filter_items -> draw_item)
 
 
+def _draw_links(layout, name):
+    """Prototype: the original's Load / Offload, then Send Out / Receive, at the row's end."""
+    from ... import module_manager
+    obj = bpy.data.objects.get(name)
+    if obj is None or not module_manager.is_loaded("linking"):
+        return
+    from ..linking import originals, ui as link_ui
+    right = layout.row(align=True)
+    originals.draw_toggle(right, obj)
+    link_ui.draw_row_button(right, obj)
+
+
 class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
     """The objects, green -> orange -> black: a click on a row focuses its object."""
 
@@ -63,6 +75,7 @@ class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
         for text in (f"{ln.area:.2f} m²", core.short(ln.budget), core.short(ln.now)):
             _cell(nums, text)
         _delta(nums, ln.delta)
+        _draw_links(layout, item.name)
 
     def draw_filter(self, context, layout):
         pass            # always sorted by state, then area
@@ -128,6 +141,10 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         legend.label(text=f"{count.count(core.DONE)} on budget", icon=core.ICONS[core.DONE])
         legend.label(text=f"{count.count(core.OVER)} over", icon=core.ICONS[core.OVER])
         legend.label(text=f"{count.count(core.NEW)} not worked on", icon=core.ICONS[core.NEW])
+        from ... import module_manager
+        if module_manager.is_loaded("linking"):
+            from ..linking import originals
+            originals.draw_all(box, context)
         if budget > s.calculated_budget:
             box.label(text=f"Minimums alone exceed the budget ({core.short(budget)})",
                       icon='ERROR')

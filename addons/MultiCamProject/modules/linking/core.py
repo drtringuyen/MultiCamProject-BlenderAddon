@@ -289,6 +289,15 @@ def send_out(context, obj, start="", save_as=""):
     if obj.mode != 'OBJECT':
         obj.update_from_editmode()
     _clear_old_jobs()
+    from . import originals
+    loaded = originals.ensure_loaded(obj)       # the window gets the full original
+    try:
+        return _send_out(context, obj, start, save_as)
+    finally:
+        originals.offload_quiet(loaded, context.scene)
+
+
+def _send_out(context, obj, start, save_as):
     job_id = uuid.uuid4().hex[:12]
     os.makedirs(bakes_dir(job_id), exist_ok=True)
     lib = os.path.join(job_dir(job_id), OPEN_FILE)

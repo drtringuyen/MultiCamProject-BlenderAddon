@@ -385,8 +385,8 @@ def _free_projection_faces(obj):
 def repair_original(obj):
     """Keep a Remesh original drawable without its GN modifiers: its own UVs back (not
     Final's uv_normal) and no face on the projection material. Safe to run again."""
-    if obj.type != 'MESH' or obj.library or obj.mode != 'OBJECT':
-        return 0
+    if obj.type != 'MESH' or obj.library or obj.data.library or obj.mode != 'OBJECT':
+        return 0            # (an offloaded original: its mesh is linked, read-only)
     _restore_uvs(obj)
     return _free_projection_faces(obj)
 
@@ -670,6 +670,9 @@ def make_copy(context, obj, retopo=False, decimate=True):
     the work window adds it and applies it, so the main file never evaluates it."""
     if is_handmade(obj):
         raise RuntimeError(HANDMADE_TEXT)
+    if module_manager.is_loaded("linking"):     # an offloaded scan: its mesh back first
+        from ..linking import originals
+        originals.ensure_loaded(obj)
     scene = context.scene
     warnings = []
     name, mesh_name = obj.name, obj.data.name
