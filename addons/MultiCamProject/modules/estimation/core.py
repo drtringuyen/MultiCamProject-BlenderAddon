@@ -150,3 +150,49 @@ def tris_now(context, obj):
         return len(obj.evaluated_get(context.evaluated_depsgraph_get()).data.loop_triangles)
     except Exception:
         return base_tris(obj)
+
+
+# ---------------------------------------------------------------- the list's states
+
+DONE, OVER, NEW = 'DONE', 'OVER', 'NEW'
+# the colour block in front of a row (sRGB) and its icon
+COLORS = {DONE: (0.20, 0.75, 0.25), OVER: (1.0, 0.50, 0.05), NEW: (0.0, 0.0, 0.0)}
+ICONS = {DONE: 'STRIP_COLOR_04', OVER: 'STRIP_COLOR_02', NEW: 'RADIOBUT_OFF'}
+STATE = {}      # row name -> state, filled by the panel's draw (read by the row's colour)
+
+
+def row_state(context, row, export):
+    """(state, triangles now): worked on = in EXPORT, counted as shown now (DONE within its
+    budget, else OVER); not touched yet = NEW with the Calculate's count."""
+    obj = context.scene.objects.get(row.name)
+    if obj is None or export is None or obj.name not in export.all_objects:
+        return NEW, row.tris
+    now = tris_now(context, obj)
+    return (DONE if now <= row.budget else OVER), now
+
+
+def display_names(scene, names):
+    """Shorter names for the list: 'ENV_04_KR_BoysBR.07_Window' -> '07_Window', and the
+    prefix every other name shares ('BRBroom_') dropped."""
+    try:
+        from ..baking import naming
+        sc = naming.scheme(scene)
+    except ImportError:
+        naming = sc = None
+    out, rest = {}, []
+    for n in names:
+        p = naming.parse(n, sc) if naming is not None else None
+        if p is not None:
+            out[n] = f"{p[0]:02d}_{p[1]}"
+        else:
+            rest.append(n)
+    cut = ""
+    if len(rest) > 1:
+        common = rest[0]
+        for n in rest[1:]:
+            while not n.startswith(common):
+                common = common[:-1]
+        cut = common[:common.rfind("_") + 1]     # whole words only
+    for n in rest:
+        out[n] = n[len(cut):] or n
+    return out
