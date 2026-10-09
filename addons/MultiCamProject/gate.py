@@ -23,8 +23,6 @@ def ready(scene):
     props = getattr(scene, "multicamproject_props", None)
     if props is None or _work_window(scene):
         return True
-    if not hasattr(bpy.types, "MULTICAMPROJECT_OT_auto_fill_folders"):
-        return prefix_ok(scene)         # linking module off: no Setup File IO to run
     return props.file_io_done and prefix_ok(scene)
 
 
@@ -57,7 +55,7 @@ def draw_start(layout, context):
         field.prop(es, "name_prefix", text="", placeholder="Name Prefix: 00_30stBR")
     sub = row.row(align=True)
     sub.enabled = prefix_ok(scene)
-    sub.operator("multicamproject.auto_fill_folders", text="Setup File IO", icon='VIEWZOOM')
+    sub.operator("multicamproject.project_setup", text="Setup File IO", icon='VIEWZOOM')
     hint = layout.row()
     hint.active = False
     hint.label(text="Name Prefix like 00_30stBR, then Setup File IO - the add-on unlocks"

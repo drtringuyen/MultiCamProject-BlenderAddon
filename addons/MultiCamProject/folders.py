@@ -557,24 +557,26 @@ def wire_scan_materials(scene, view_layer):
     return out
 
 
-def auto_fill(scene, view_layer):
+def auto_fill(scene, view_layer, pickers=True, create=True, dirs=True, wire=True,
+              relink=True):
     """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT and the template
     collection ROOM_Template (template_mesh.py) made when they are not in the scene, then every
-    role's folder (missing bake / export folders are made). Returns report lines."""
+    role's folder (missing bake / export folders are made). Each step can be left out (the
+    Project Setup popup). Returns report lines."""
     lines = []
-    filled = roles.autofill(scene)
+    filled = roles.autofill(scene) if pickers else []
     if filled:
         lines.append("Collections: " + ", ".join(roles.ROLES[r][1] for r in filled))
     made = []
-    for role in roles.CREATABLE:       # Original Mesh / EXPORT: made when not in the scene
+    for role in roles.CREATABLE if create else ():  # Original Mesh / EXPORT, when missing
         if not roles.collections(scene, view_layer, role):
             made.append(roles.ensure(scene, role).name)
-    room = template_mesh.ensure(scene)
+    room = template_mesh.ensure(scene) if create else None
     if room:
         made.append(f"{template_mesh.NAME} ({len(room)} objects)")
     if made:
         lines.append("Added to the scene: " + ", ".join(made))
-    for role in roles.ORDER:
+    for role in roles.ORDER if dirs else ():
         pg, attr = holder(scene, role)
         if pg is None:
             lines.append(f"{LABELS[role]}: {attr}")
@@ -587,11 +589,11 @@ def auto_fill(scene, view_layer):
         found = f" ({n}/{total} files)" if total else ""
         lines.append(f"{LABELS[role]}: {value}{found}")
     _DIRS.clear()
-    wired = wire_scan_materials(scene, view_layer)
+    wired = wire_scan_materials(scene, view_layer) if wire else []
     if wired:
         lines.append(f"{len(wired)} material(s) wired to the Principled BSDF: "
                      + ", ".join(wired[:5]) + (" ..." if len(wired) > 5 else ""))
-    n = relink_missing(scene)
+    n = relink_missing(scene) if relink else 0
     if n:
         lines.append(f"{n} missing texture(s) / photo(s) relinked")
     return lines

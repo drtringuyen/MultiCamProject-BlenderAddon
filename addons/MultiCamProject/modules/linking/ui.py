@@ -83,7 +83,9 @@ def draw_roles(layout, context):
     props = scene.multicamproject_props
     wide = context.region.width / context.preferences.system.ui_scale > 560
     box = layout.box().column(align=True)
-    box.label(text="Collections + Folders", icon='OUTLINER_COLLECTION')
+    head = box.row(align=True)
+    head.label(text="Collections + Folders", icon='OUTLINER_COLLECTION')
+    head.operator("multicamproject.project_setup", text="Project Setup", icon='PREFERENCES')
     for role in roles.ORDER:
         attr, label, icon, _names = roles.ROLES[role]
         row = box.row(align=True)
