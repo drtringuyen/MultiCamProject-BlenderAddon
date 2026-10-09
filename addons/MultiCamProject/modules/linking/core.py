@@ -292,12 +292,12 @@ def send_out(context, obj, start="", save_as=""):
     from . import originals
     loaded = originals.ensure_loaded(obj)       # the window gets the full original
     try:
-        return _send_out(context, obj, start, save_as)
+        return _send_out(context, obj, start, save_as, main)
     finally:
         originals.offload_quiet(loaded, context.scene)
 
 
-def _send_out(context, obj, start, save_as):
+def _send_out(context, obj, start, save_as, main):
     job_id = uuid.uuid4().hex[:12]
     os.makedirs(bakes_dir(job_id), exist_ok=True)
     lib = os.path.join(job_dir(job_id), OPEN_FILE)
