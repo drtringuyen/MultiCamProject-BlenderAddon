@@ -307,7 +307,8 @@ def send_out(context, obj, start="", save_as=""):
         "render": [scene.render.resolution_x, scene.render.resolution_y,
                    scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
         "unit_system": scene.unit_settings.system,
-        "unit_scale": scene.unit_settings.scale_length, "start": start, "save_as": save_as}
+        "unit_scale": scene.unit_settings.scale_length, "start": start, "save_as": save_as,
+        "target": _target(context, obj)}
     settings_path = os.path.join(job_dir(job_id), SETTINGS_FILE)
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f)
@@ -317,6 +318,16 @@ def send_out(context, obj, start="", save_as=""):
     script = os.path.join(os.path.dirname(__file__), "build.py")
     subprocess.Popen([bpy.app.binary_path, "--python", script, "--", settings_path])
     return job_id
+
+
+def _target(context, obj):
+    """obj's triangle budget from the Estimation (0 = none / module off)."""
+    try:
+        from ..estimation import core as est
+        return est.target_of(context, obj)
+    except Exception as e:      # never stop a Send Out over the estimate
+        print(f"[MultiCamProject] {obj.name}: no Estimation budget: {e}")
+        return 0
 
 
 def _work_bakes(scene, obj):

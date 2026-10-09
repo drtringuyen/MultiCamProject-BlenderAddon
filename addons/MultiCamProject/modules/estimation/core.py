@@ -1,7 +1,22 @@
-"""Area, triangle count and the area-split budget of the OBJECTS collection's meshes."""
+"""Area, triangle count and the area-split budget of the OBJECTS collection's meshes.
+Send Out passes an object's budget to its work window (TARGET_KEY), which sets the Decimate
+to it and shows it on Send Back."""
 import numpy as np
 
 from ... import roles
+
+TARGET_KEY = "multicamproject_work_target"  # work window scene: the object's budget (tris)
+
+
+def short(n):
+    """150000 -> '150K', 2400 -> '2.4K', 830 -> '830'."""
+    if n >= 1000000:
+        return f"{n / 1000000:.2f}M"
+    if n >= 10000:
+        return f"{n / 1000:.0f}K"
+    if n >= 1000:
+        return f"{n / 1000:.1f}K"
+    return str(n)
 
 
 def objects_collection(context):
@@ -66,3 +81,72 @@ def split(areas, budget, minimum):
 def removable(budget, tris):
     """Fraction of the triangles that can go (0 when already within the budget)."""
     return max(0.0, 1.0 - budget / tris) if tris else 0.0
+
+
+def calculate(context):
+    """Measure the OBJECTS collection's meshes and split the Budget among them into the
+    scene's rows. Returns the collection (None = no OBJECTS: the rows stay)."""
+    s = context.scene.multicamproject_estimation
+    coll = objects_collection(context)
+    if coll is None:
+        return None
+    dg = context.evaluated_depsgraph_get()
+    found = [(obj, *measure(obj, dg)) for obj in coll.all_objects if obj.type == 'MESH']
+    found.sort(key=lambda f: -f[1])
+    budgets = split([a for _o, a, _t in found], s.budget, s.minimum)
+    s.rows.clear()
+    for (obj, area, tris), budget in zip(found, budgets):
+        row = s.rows.add()
+        row.name, row.area, row.tris, row.budget = obj.name, area, tris, budget
+    s.collection_name, s.calculated_budget = coll.name, s.budget
+    return coll
+
+
+def _row(s, obj):
+    """obj's row - by its name, else by its scan's (a 0C copy has the scan's area; the scan
+    keeps its name and leaves OBJECTS)."""
+    from ..remesh import workflow as wf
+    src = wf.bake_source_of(obj)
+    for name in (obj.name, src.name if src is not None else None):
+        if name and s.rows.get(name) is not None:
+            return s.rows[name]
+    return None
+
+
+def target_of(context, obj):
+    """obj's budget in triangles for Send Out (0 = none): the last Calculate's, calculated
+    first when obj is not in it."""
+    s = getattr(context.scene, "multicamproject_estimation", None)
+    if s is None:                       # the module is off
+        return 0
+    row = _row(s, obj)
+    if row is None and calculate(context) is not None:
+        row = _row(s, obj)
+    return row.budget if row is not None else 0
+
+
+def base_tris(obj):
+    """Triangles of obj's own mesh (before its modifiers)."""
+    me = obj.data
+    me.calc_loop_triangles()
+    return len(me.loop_triangles)
+
+
+def fit_decimate(obj, target):
+    """The work window opens: obj's Decimate (not applied yet) set to reach `target`
+    triangles. Returns the ratio (None = no Decimate)."""
+    from ..remesh import workflow as wf
+    dec = wf.decimate_modifier(obj)
+    tris = base_tris(obj)
+    if dec is None or not target or not tris:
+        return None
+    dec.ratio = min(1.0, target / tris)
+    return dec.ratio
+
+
+def tris_now(context, obj):
+    """Triangles of obj as shown (its modifiers included)."""
+    try:
+        return len(obj.evaluated_get(context.evaluated_depsgraph_get()).data.loop_triangles)
+    except Exception:
+        return base_tris(obj)

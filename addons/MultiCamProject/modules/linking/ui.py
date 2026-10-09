@@ -205,6 +205,20 @@ def draw_main(layout, context, obj):
                  icon='X').object_name = obj.name
 
 
+def _send_back_text(context):
+    """'Send Back to Main File · 38K / 33K tris': the object now / its Estimation budget."""
+    text = ops.MULTICAMPROJECT_OT_WorkSendBack.bl_label
+    target = context.scene.get("multicamproject_work_target", 0)    # estimation.core.TARGET_KEY
+    obj = core.work_object(context.scene)
+    if not target or obj is None:
+        return text
+    try:
+        from ..estimation import core as est
+    except ImportError:
+        return text
+    return f"{text} · {est.short(est.tris_now(context, obj))} / {est.short(target)} tris"
+
+
 def draw_work(layout, context):
     """A work window: where it came from, Send Back, where its bakes go."""
     box = layout.box().column(align=True)
@@ -214,7 +228,8 @@ def draw_work(layout, context):
               icon='LINKED')
     row = box.row(align=True)
     row.scale_y = 1.4
-    row.operator(ops.MULTICAMPROJECT_OT_WorkSendBack.bl_idname, icon='EXPORT')
+    row.operator(ops.MULTICAMPROJECT_OT_WorkSendBack.bl_idname, icon='EXPORT',
+                 text=_send_back_text(context))
     info = box.column(align=True)
     info.active = False
     info.label(text="Mesh, painting, cameras + bakes made here · Send Back any time",

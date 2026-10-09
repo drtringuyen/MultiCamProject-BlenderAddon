@@ -12,25 +12,12 @@ class MULTICAMPROJECT_OT_EstimationCalculate(bpy.types.Operator):
     bl_options = {'REGISTER'}
 
     def execute(self, context):
-        s = context.scene.multicamproject_estimation
-        coll = core.objects_collection(context)
+        coll = core.calculate(context)
         if coll is None:
             self.report({'ERROR'}, "No OBJECTS collection (pick it in IO Folders & Collections)")
             return {'CANCELLED'}
-        dg = context.evaluated_depsgraph_get()
-        found = []
-        for obj in coll.all_objects:
-            if obj.type == 'MESH':
-                area, tris = core.measure(obj, dg)
-                found.append((obj, area, tris))
-        found.sort(key=lambda f: -f[1])
-        budgets = core.split([a for _o, a, _t in found], s.budget, s.minimum)
-        s.rows.clear()
-        for (obj, area, tris), budget in zip(found, budgets):
-            row = s.rows.add()
-            row.name, row.area, row.tris, row.budget = obj.name, area, tris, budget
-        s.collection_name, s.calculated_budget = coll.name, s.budget
-        self.report({'INFO'}, f"{len(found)} objects in {coll.name}")
+        n = len(context.scene.multicamproject_estimation.rows)
+        self.report({'INFO'}, f"{n} objects in {coll.name}")
         return {'FINISHED'}
 
 

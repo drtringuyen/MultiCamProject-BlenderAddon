@@ -321,6 +321,12 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
         for line in folders.auto_fill(context.scene, context.view_layer):
             self.report({'INFO'}, line)
         context.scene.multicamproject_props.file_io_done = True     # the add-on unlocks
+        from ... import module_manager
+        if module_manager.is_loaded("estimation"):
+            from ..estimation import core as est
+            if est.calculate(context) is not None:
+                n = len(context.scene.multicamproject_estimation.rows)
+                self.report({'INFO'}, f"Polycount Estimation: {n} objects")
         return {'FINISHED'}
 
 

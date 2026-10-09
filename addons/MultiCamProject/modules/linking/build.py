@@ -20,6 +20,7 @@ with open(sys.argv[sys.argv.index("--") + 1], encoding="utf-8") as _f:
 SCENE_KEYS = {"main": "multicamproject_work_of", "object": "multicamproject_work_object",
               "id": "multicamproject_work_id", "work_bakes": "multicamproject_work_bakes",
               "save_as": "multicamproject_work_save_as"}
+TARGET_KEY = "multicamproject_work_target"      # estimation.core.TARGET_KEY
 
 
 def _world(o):
@@ -43,6 +44,19 @@ def _add_decimate(obj):
             wf.ensure_stack(obj)
     except Exception as e:
         print(f"[MultiCamProject] work window: Decimate not added: {e}")
+
+
+def _fit_decimate(obj):
+    """The Decimate set to the object's budget from the main file's Estimation."""
+    if obj is None or not settings.get("target"):
+        return
+    try:
+        wf = importlib.import_module(f"{settings['addon']}.modules.remesh.workflow")
+        est = importlib.import_module(f"{settings['addon']}.modules.estimation.core")
+        if wf.decimate_pending(obj):
+            est.fit_decimate(obj, settings["target"])
+    except Exception as e:
+        print(f"[MultiCamProject] work window: Decimate not set to the budget: {e}")
 
 
 def _mute_pending(obj):
@@ -201,6 +215,7 @@ def _build():
     obj = bpy.data.objects.get(settings["object"])
     if settings.get("start") == 'REMESH':
         _add_decimate(obj)      # 0C's window button: the Decimate lives only here
+    _fit_decimate(obj)          # its ratio: the Estimation's budget for the object
     _mute_pending(obj)          # before anything evaluates: an undecided Decimate's GN is off
     _apply_world(keep)
     # the `transform` empty, other parents and anything else that came along: not needed
@@ -209,6 +224,7 @@ def _build():
     bpy.data.orphans_purge(do_recursive=True)
     for k, key in SCENE_KEYS.items():
         scene[key] = settings.get(k, "")
+    scene[TARGET_KEY] = int(settings.get("target") or 0)
     _scene_settings(scene)
     r = scene.render
     r.resolution_x, r.resolution_y, r.pixel_aspect_x, r.pixel_aspect_y = settings["render"]
