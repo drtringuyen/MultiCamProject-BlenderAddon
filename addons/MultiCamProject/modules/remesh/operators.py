@@ -467,7 +467,8 @@ class MULTICAMPROJECT_OT_RemeshDetailSize(bpy.types.Operator):
 class MULTICAMPROJECT_OT_RemeshCleanFloating(bpy.types.Operator):
     """Clean Floating (Ctrl+Shift+L): select a bit of the one big mesh to keep - the selection
     grows to everything linked to it (Select Linked, Normal delimit, seams do not stop it),
-    Face then Edge select mode, the selection is inverted and every floating piece is deleted"""
+    Face then Edge select mode, the selection is inverted and every floating piece is deleted,
+    then every loose vertex and edge (the select mode comes back as it was)"""
     bl_idname = "multicamproject.remesh_clean_floating"
     bl_label = "Clean Floating"
     bl_options = {'REGISTER', 'UNDO'}
@@ -485,14 +486,24 @@ class MULTICAMPROJECT_OT_RemeshCleanFloating(bpy.types.Operator):
         if obj.data.total_vert_sel == 0:
             self.report({'WARNING'}, "Select a bit of the mesh to keep first")
             return {'CANCELLED'}
-        before = len(obj.data.polygons)
+        obj.update_from_editmode()
+        before = len(obj.data.polygons), len(obj.data.vertices)
+        mode = tuple(context.tool_settings.mesh_select_mode)
         bpy.ops.mesh.select_linked(delimit={'NORMAL'})
         bpy.ops.mesh.select_mode(type='FACE')
         bpy.ops.mesh.select_mode(type='EDGE')
         bpy.ops.mesh.select_all(action='INVERT')    # everything but the kept mesh
         bpy.ops.mesh.delete(type='EDGE')
+        # what Edge mode can't select: vertices without an edge (and edges without a face)
+        bpy.ops.mesh.select_mode(type='VERT')
+        bpy.ops.mesh.select_all(action='SELECT')
+        bpy.ops.mesh.delete_loose(use_verts=True, use_edges=True, use_faces=False)
+        bpy.ops.mesh.select_all(action='DESELECT')
+        context.tool_settings.mesh_select_mode = mode   # the select mode as it was
         obj.update_from_editmode()
-        self.report({'INFO'}, f"Clean Floating: {before - len(obj.data.polygons):,} faces deleted")
+        faces = before[0] - len(obj.data.polygons)
+        verts = before[1] - len(obj.data.vertices)
+        self.report({'INFO'}, f"Clean Floating: {faces:,} faces, {verts:,} vertices deleted")
         return {'FINISHED'}
 
 
