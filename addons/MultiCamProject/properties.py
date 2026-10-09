@@ -1,5 +1,13 @@
 import bpy
-from bpy.props import BoolProperty, FloatProperty, IntProperty, PointerProperty, StringProperty
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty,
+                       StringProperty)
+
+from .quality import ITEMS as QUALITY_ITEMS
+
+
+def _on_quality(self, context):
+    from . import quality
+    quality.apply(context.scene)
 
 
 class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
@@ -44,6 +52,12 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="The window buttons of 0C / 0D: the new object becomes ENV_<prefix>."
                     "<next ##>_<this name>, its work window saved as <this name>.blend in the "
                     "Bake Folder")
+    quality: EnumProperty(
+        name="Quality", default='FINAL',
+        items=QUALITY_ITEMS,
+        update=lambda self, context: _on_quality(self, context),
+        description="Preview: the add-on's materials as flat color, no lighting or normal "
+                    "maps, textures capped at 2K. Final: full quality, up to 8K")
     file_io_done: BoolProperty(
         name="File IO Set Up", default=False,
         description="Setup File IO ran in this file (gate.py: the add-on unlocks)")

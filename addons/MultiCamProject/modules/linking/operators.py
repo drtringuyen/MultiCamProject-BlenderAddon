@@ -300,8 +300,10 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
     """Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS), create
     Original Mesh / EXPORT when they are not in the scene, and set
     every folder to the one holding most of its files - the default folder (or a folder in
-    it), else where the files are now. Missing bake / export folders are made, and every
-    image material of the file is wired image -> Principled BSDF -> Output (not Emission)"""
+    it), else where the files are now. Missing bake / export folders are made, every
+    image material of the file is wired image -> Principled BSDF -> Output (not Emission),
+    the viewport set up for speed (Preview, EEVEE samples / shadows) and the Polycount
+    Estimation calculated"""
     bl_idname = "multicamproject.auto_fill_folders"
     bl_label = "Auto Detect and Fill Folders"
     bl_options = {'REGISTER', 'UNDO'}
@@ -321,6 +323,9 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
         for line in folders.auto_fill(context.scene, context.view_layer):
             self.report({'INFO'}, line)
         context.scene.multicamproject_props.file_io_done = True     # the add-on unlocks
+        from ... import quality
+        for line in quality.setup_file(context.scene):
+            self.report({'INFO'}, line)
         from ... import module_manager
         if module_manager.is_loaded("estimation"):
             from ..estimation import core as est

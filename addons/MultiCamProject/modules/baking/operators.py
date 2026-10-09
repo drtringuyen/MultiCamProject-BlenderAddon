@@ -247,19 +247,19 @@ class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
 class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
     """Switch between the projection setup and the baked result (GN-Final)"""
     bl_idname = "multicamproject.bake_set_final"
-    bl_label = "Projection / Final"
+    bl_label = "Processing / Baked"
     bl_options = {'REGISTER', 'UNDO'}
 
-    state: BoolProperty(name="Final", default=True)
+    state: BoolProperty(name="Baked", default=True)
     scope: EnumProperty(items=SCOPES, default='SELECTED')
 
     @classmethod
     def description(cls, context, props):
         who = "every mesh in EXPORT" if props.scope == 'EXPORT' else "the selected meshes"
         if props.state:
-            return (f"Final for {who}: the baked MAT_, Color and uv_normal only - the projection "
+            return (f"Baked for {who}: the baked MAT_, Color and uv_normal only - the projection "
                     "is switched off")
-        return f"Projection for {who}: the camera projection setup, editable again"
+        return f"Processing for {who}: the camera projection setup, editable again"
 
     @classmethod
     def poll(cls, context):
@@ -277,7 +277,7 @@ class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
 
 class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
     """Bake the Processing material (BAo_ + projection, by the Bake Route) into ALB_<name> on uv_normal and
-    build MAT_. Each object then switches to Final"""
+    build MAT_. Each object then switches to Baked"""
     bl_idname = "multicamproject.bake_albedo"
     bl_label = "Bake Albedo"
     bl_options = {'REGISTER', 'UNDO'}

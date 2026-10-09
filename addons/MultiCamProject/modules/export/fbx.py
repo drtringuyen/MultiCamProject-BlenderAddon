@@ -203,7 +203,11 @@ def export_steps(context, fix_log=()):
         owned.add(scene, list(copies.values()))    # a later export may replace them
         yield jobs.Step("Evaluating the Final meshes", 0.4)
         from ..baking import material as bake_material
-        with common.shown(context, objs), bake_material.normals_on(objs):
+        from ... import quality
+        mats = [m for o in objs for m in quality.object_materials(o)]
+        with common.shown(context, objs), bake_material.normals_on(objs), quality.final(mats), \
+                gn_final.albedo_on(objs, scene):
+            context.view_layer.update()         # Color sampled from ALB in the copies
             made = make_copies(context, objs, copies, coll, temps)
         context.view_layer.update()
         originals = list(objs) + [o.data for o in objs]

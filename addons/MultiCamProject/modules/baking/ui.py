@@ -25,8 +25,12 @@ def draw_object_size(layout, obj):
 
 
 def draw_final_toggle(layout, data, prop):
-    """Projection | Final as a two-state toggle: the current state stays highlighted."""
-    layout.row(align=True).prop(data, prop, expand=True)
+    """[Preview / Final] Processing | Baked: the file's quality (an icon), then the view as
+    a two-state toggle - the current state stays highlighted."""
+    from ... import quality
+    row = layout.row(align=True)
+    quality.draw_toggle(row, bpy.context)
+    row.prop(data, prop, expand=True)
 
 
 def draw_fit_cage(layout, obj):

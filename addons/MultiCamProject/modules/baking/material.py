@@ -120,6 +120,8 @@ def build(obj, scene, place_slots=True):
         b.link(nm.outputs["Normal"], bsdf.inputs["Normal"])
     d.material = mat
     apply_normal_visibility(obj)
+    from ... import quality
+    quality.sync_material(mat)      # Preview: its Emission output active
     if place_slots:
         place(obj)
     return mat

@@ -621,6 +621,8 @@ def build_material(obj, warnings=None):
             if n.type == 'NORMAL_MAP':
                 n.inputs["Strength"].default_value = 0.0
     _place(nt, kept)
+    from ... import quality
+    quality.sync_material(mat)      # Preview: its Emission output active
     return mat
 
 

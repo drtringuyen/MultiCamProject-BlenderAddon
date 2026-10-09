@@ -345,6 +345,14 @@ def _flat_group():
 
 
 def uv_render(context, obj, size, emit=True):
+    """_uv_render with obj's MCP_ / MAT_ on their BSDF output and no texture cap (Preview
+    must not reach a bake)."""
+    from ... import quality
+    with quality.final(quality.object_materials(obj)):
+        return _uv_render(context, obj, size, emit)
+
+
+def _uv_render(context, obj, size, emit=True):
     """obj as its materials show it, rendered by EEVEE on uv_normal: (size, size, 4) linear
     floats, rows bottom-up, alpha > 0 where a face covers the pixel. `emit`: every material
     shows its color as Emission (the Diffuse Color a Cycles bake would read); else the

@@ -165,8 +165,8 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
 
 VIEW_ITEMS = (('PROJECTION', "Processing", "The Processing material (MCP_): the camera "
                                           "projection setup, editable", 'CAMERA_DATA', 0),
-              ('FINAL', "Final", "The baked result: MAT_, Color and uv_normal only - the projection "
-                                 "is switched off", 'SHADING_TEXTURE', 1))
+              ('FINAL', "Baked", "The baked result: MAT_, Color and uv_normal only - the "
+                                 "projection is switched off", 'SHADING_TEXTURE', 1))
 
 
 def _get_obj_view(self):
