@@ -23,11 +23,49 @@ def _line(col, item=None):
     return split.row(align=True), split.row(align=True)
 
 
+def _cell(layout, text, icon='NONE'):
+    """A centred cell."""
+    cell = layout.row(align=True)
+    cell.alignment = 'CENTER'
+    cell.label(text=text, icon=icon)
+
+
 def _delta(nums, d):
     """The To Go cell: '+23K' (green square) or '-5.3K' in red."""
     cell = nums.row(align=True)
     cell.alert = d < 0
-    cell.label(text=core.delta_text(d), icon='STRIP_COLOR_04' if d >= 0 else 'STRIP_COLOR_01')
+    _cell(cell, core.delta_text(d), 'STRIP_COLOR_04' if d >= 0 else 'STRIP_COLOR_01')
+
+
+_LINES = {}     # row name -> core.Line of this draw (filter_items -> draw_item)
+
+
+class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
+    """The objects, green -> orange -> black: a click on a row focuses its object."""
+
+    def filter_items(self, context, data, propname):
+        items = getattr(data, propname)
+        lines = core.table(context)
+        _LINES.clear()
+        _LINES.update({ln.name: ln for ln in lines})
+        place = {ln.name: i for i, ln in enumerate(lines)}
+        order = [place.get(it.name, len(lines) + i) for i, it in enumerate(items)]
+        return [self.bitflag_filter_item] * len(items), order
+
+    def draw_item(self, context, layout, data, item, icon, active_data, active_propname,
+                  index=0):
+        ln = _LINES.get(item.name)
+        if ln is None:
+            layout.label(text=item.name)
+            return
+        name, nums = _line(layout.column(align=True), item)
+        name.label(text=ln.label, icon=core.ICONS[ln.state])
+        for text in (f"{ln.area:.2f} m²", core.short(ln.budget), core.short(ln.now)):
+            _cell(nums, text)
+        _delta(nums, ln.delta)
+
+    def draw_filter(self, context, layout):
+        pass            # always sorted by state, then area
 
 
 class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
@@ -66,35 +104,23 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         if s.calculated_budget != s.budget:
             layout.label(text="Budget changed: Calculate again", icon='ERROR')
 
-        lines = core.table(context)
-        rows = {r.name: r for r in s.rows}
         box = layout.box()
         col = box.column(align=True)
         name, nums = _line(col)
         name.label(text="Object")
         for text in ("Area", "Budget", "Now", "To Go"):
-            nums.label(text=text)
-        for ln in lines:
-            name, nums = _line(col, rows[ln.name])
-            obj = context.scene.objects.get(ln.name)
-            name.alignment = 'LEFT'
-            name.operator("multicamproject.estimation_select", text=ln.label,
-                          emboss=False, icon=core.ICONS[ln.state],
-                          depress=obj is not None and obj == context.active_object
-                          ).object_name = ln.name
-            nums.label(text=f"{ln.area:.2f} m²")
-            nums.label(text=core.short(ln.budget))
-            nums.label(text=core.short(ln.now))
-            _delta(nums, ln.delta)
-
+            _cell(nums, text)
+        box.template_list("MULTICAMPROJECT_UL_Estimation", "", s, "rows", s, "active_index",
+                          rows=len(s.rows), maxrows=len(s.rows))
+        lines = core.table(context)
+        col = box.column(align=True)
         tris = sum(ln.now for ln in lines)
         budget = sum(ln.budget for ln in lines)
-        col.separator()
         name, nums = _line(col)
         name.label(text=f"{len(lines)} objects")
-        nums.label(text=f"{sum(ln.area for ln in lines):.2f} m²")
-        nums.label(text=core.short(budget))
-        nums.label(text=core.short(tris))
+        for text in (f"{sum(ln.area for ln in lines):.2f} m²", core.short(budget),
+                     core.short(tris)):
+            _cell(nums, text)
         _delta(nums, budget - tris)
         count = [ln.state for ln in lines]
         legend = box.row(align=True)
@@ -135,9 +161,14 @@ def _draw_window(layout, context):
                icon='INFO')
 
 
+CLASSES = (MULTICAMPROJECT_UL_Estimation, MULTICAMPROJECT_PT_Estimation)
+
+
 def register():
-    bpy.utils.register_class(MULTICAMPROJECT_PT_Estimation)
+    for cls in CLASSES:
+        bpy.utils.register_class(cls)
 
 
 def unregister():
-    bpy.utils.unregister_class(MULTICAMPROJECT_PT_Estimation)
+    for cls in reversed(CLASSES):
+        bpy.utils.unregister_class(cls)

@@ -22,28 +22,19 @@ class MULTICAMPROJECT_OT_EstimationCalculate(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_EstimationSelect(bpy.types.Operator):
-    """Select this object and make it active"""
+    """Focus this object: selected, active and framed in the 3D View (shown when it was
+    hidden)"""
     bl_idname = "multicamproject.estimation_select"
-    bl_label = "Select Object"
+    bl_label = "Focus Object"
     bl_options = {'REGISTER', 'UNDO'}
 
     object_name: StringProperty()
 
     def execute(self, context):
-        obj = context.scene.objects.get(self.object_name)
-        if obj is None:
-            self.report({'WARNING'}, f"{self.object_name} is not in this scene")
+        why = core.focus(context, self.object_name)
+        if why:
+            self.report({'WARNING'}, why)
             return {'CANCELLED'}
-        if context.mode != 'OBJECT':
-            bpy.ops.object.mode_set(mode='OBJECT')
-        for o in context.selected_objects:
-            o.select_set(False)
-        try:
-            obj.select_set(True)
-        except RuntimeError:
-            self.report({'WARNING'}, f"{obj.name} is hidden or excluded")
-            return {'CANCELLED'}
-        context.view_layer.objects.active = obj
         return {'FINISHED'}
 
 

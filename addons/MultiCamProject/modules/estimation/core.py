@@ -237,3 +237,45 @@ def table(context):
     STATE.clear()
     STATE.update({ln.name: ln.state for ln in out})
     return out
+
+
+def focus(context, name):
+    """The list's clicked object: the only selected, active and framed in the 3D View. One
+    in a hidden collection (OBJECTS usually is) stays hidden - its place is framed. Returns
+    a message when it can't be focused."""
+    import bpy
+    obj = context.scene.objects.get(name)
+    vl = context.view_layer
+    if obj is None or vl.objects.get(obj.name) != obj:
+        return f"{name} is not in this view layer"
+    if context.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    if obj.hide_get():
+        obj.hide_set(False)
+    for o in vl.objects:
+        if o.select_get():
+            o.select_set(False)
+    obj.select_set(True)
+    vl.objects.active = obj
+    screen = context.window.screen if context.window else context.screen
+    areas = [context.area] if context.area is not None and context.area.type == 'VIEW_3D'         else [a for a in (screen.areas if screen else []) if a.type == 'VIEW_3D'][:1]
+    for area in areas:
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        if region is None:
+            continue
+        if obj.visible_get():
+            with context.temp_override(area=area, region=region):
+                bpy.ops.view3d.view_selected()
+        else:
+            _frame_bounds(area.spaces.active.region_3d, obj)
+    return ""
+
+
+def _frame_bounds(r3d, obj):
+    """View Selected by hand (it skips hidden objects): the view centred on obj's bounds."""
+    from mathutils import Vector
+    corners = [obj.matrix_world @ Vector(c) for c in obj.bound_box]
+    center = sum(corners, Vector()) / 8
+    radius = max((c - center).length for c in corners)
+    r3d.view_location = center
+    r3d.view_distance = max(radius * 2.5, 0.1)

@@ -11,6 +11,13 @@ def _row_color(self):
     return core.COLORS[core.STATE.get(self.name, core.NEW)]
 
 
+def _on_row(self, context):
+    """A click on a row of the list focuses its object."""
+    from . import core
+    if 0 <= self.active_index < len(self.rows):
+        core.focus(context, self.rows[self.active_index].name)
+
+
 class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
     # name = the object's name
     area: FloatProperty()           # world space, m²
@@ -32,6 +39,7 @@ class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):
         description="No object gets fewer triangles than this, however small its area. "
                     "The rest of the budget is split by area among the others")
     rows: CollectionProperty(type=MULTICAMPROJECT_EstimationRow)
+    active_index: IntProperty(default=-1, update=_on_row)
     collection_name: StringProperty()   # the OBJECTS collection of the last Calculate
     calculated_budget: IntProperty()    # the Budget the rows were split with
 
