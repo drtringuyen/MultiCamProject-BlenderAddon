@@ -1,7 +1,7 @@
 """Estimation settings and the last Calculate's rows - on the Scene, so they belong to the
 file. The rows are a snapshot: Calculate again after the meshes change."""
 import bpy
-from bpy.props import (BoolProperty, CollectionProperty, FloatProperty, FloatVectorProperty,
+from bpy.props import (CollectionProperty, FloatProperty, FloatVectorProperty,
                        IntProperty, PointerProperty, StringProperty)
 
 
@@ -9,13 +9,6 @@ def _row_color(self):
     """The row's colour block: its state as the panel last drew it (read-only)."""
     from . import core
     return core.COLORS[core.STATE.get(self.name, core.NEW)]
-
-
-def _redraw(self, context):
-    for win in context.window_manager.windows:
-        for area in win.screen.areas:
-            if area.type == 'VIEW_3D':
-                area.tag_redraw()
 
 
 class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
@@ -38,10 +31,6 @@ class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):
         name="Minimum", default=200, min=0, soft_max=5000,
         description="No object gets fewer triangles than this, however small its area. "
                     "The rest of the budget is split by area among the others")
-    show_overlay: BoolProperty(
-        name="Show in Viewport", default=False, update=_redraw,
-        description="The list as a coloured table in the 3D Viewport's corner (green: on "
-                    "budget, orange: over, black: not worked on)")
     rows: CollectionProperty(type=MULTICAMPROJECT_EstimationRow)
     collection_name: StringProperty()   # the OBJECTS collection of the last Calculate
     calculated_budget: IntProperty()    # the Budget the rows were split with

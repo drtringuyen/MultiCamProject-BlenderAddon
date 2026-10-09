@@ -61,7 +61,6 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         sub.operator("multicamproject.estimation_calculate",
                      text=f"Calculate {coll.name}" if coll else "No OBJECTS collection",
                      icon='FILE_REFRESH')
-        row.prop(s, "show_overlay", text="", icon='OVERLAY')
         if not s.rows:
             return
         if s.calculated_budget != s.budget:

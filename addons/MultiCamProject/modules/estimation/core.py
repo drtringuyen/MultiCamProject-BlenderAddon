@@ -221,7 +221,7 @@ def delta_text(d):
 
 
 def table(context):
-    """The list as the panel and the viewport overlay show it: [Line], green -> orange ->
+    """The list as the panel shows it: [Line], green -> orange ->
     black, biggest area first in each. Fills STATE (the rows' colour blocks)."""
     from ... import roles
     s = getattr(context.scene, "multicamproject_estimation", None)
