@@ -10,6 +10,8 @@ Only the chosen Switch branch is evaluated, so Final off costs nothing.
 GN cannot drop the old material slots or "every UV except X": the exporter trims those
 on temporary copies.
 """
+import contextlib
+
 import bpy
 
 from ..camera_project import core as cp
@@ -22,6 +24,7 @@ MOD_NAME = "GN-Final"
 VERSION = 1             # bump when the node layout changes
 _VERSION_KEY = "multicamproject_final_version"
 COLOR_SOURCES = (('SCAN_ATTRIBUTE', "Scan Attribute"), ('FROM_ALB', "From ALB"))
+_albedo_on = False      # True only inside albedo_on() (an export)
 
 
 def _remove(b, geo, name, loc, wildcard=False, name_socket=None):
@@ -193,16 +196,68 @@ def color_source(obj, scene):
     return common.settings(scene).color_source
 
 
+def uses_alb(obj, scene):
+    """Color comes from ALB: chosen, a low poly, or the scan attribute is missing."""
+    s = common.settings(scene)
+    return (color_source(obj, scene) == 'FROM_ALB'
+            or obj.data.color_attributes.get(s.scan_color_name) is None)
+
+
+@contextlib.contextmanager
+def albedo_on(objs, scene):
+    """ALB on GN-Final for the time of an export, then off again. GN made the images
+    float (4x the memory): their buffers are freed, the next draw reads the 8-bit file."""
+    global _albedo_on
+    _albedo_on = True
+    try:
+        for o in objs:
+            write_inputs(o, scene)
+        yield
+    finally:
+        _albedo_on = False
+        for o in objs:
+            try:
+                write_inputs(o, scene)
+            except ReferenceError:
+                pass
+        free_float_albedo()
+
+
+def free_float_albedo():
+    """Drop the float copy GN made of an 8-bit ALB_ (unsaved paint is kept)."""
+    for obj in bpy.data.objects:
+        if obj.library or obj.type != 'MESH':
+            continue
+        img = common.data(obj).alb_image
+        if img is not None and img.has_data and img.is_float and not img.is_dirty \
+                and img.source == 'FILE':
+            img.buffers_free()
+
+
+def drop_albedo():
+    """(2026-10-09) GN-Final wrappers that still hold ALB let it go: GN turned every 8K ALB
+    into a 1 GB float image just to color a few corners. A no-op once done."""
+    for obj in bpy.data.objects:
+        mod = None if obj.library else get_modifier(obj)
+        if mod is None or mod.node_group is None:
+            continue
+        try:
+            if cp.get_input(mod, "Albedo") is not None:
+                cp.set_input(mod, "Albedo", None)
+        except (KeyError, AttributeError):
+            pass
+    free_float_albedo()
+
+
 def write_inputs(obj, scene):
     """Push the object's bake results and the scene settings into GN-Final."""
     mod = ensure_modifier(obj)
     d, s = common.data(obj), common.settings(scene)
     cp.set_input(mod, "Baked Material", d.material)
-    # GN samples the image as floats (1 GB at 8K): only hand it over when it is used
+    # GN samples the image as floats (1 GB at 8K): only hand it over while an export
+    # evaluates the Color (albedo_on), never in the viewport
     source = color_source(obj, scene)
-    scan_missing = obj.data.color_attributes.get(s.scan_color_name) is None
-    uses_alb = source == 'FROM_ALB' or scan_missing
-    cp.set_input(mod, "Albedo", d.alb_image if uses_alb else None)
+    cp.set_input(mod, "Albedo", d.alb_image if _albedo_on and uses_alb(obj, scene) else None)
     cp.set_input(mod, "Keep UV", common.UV_NORMAL)
     cp.set_input(mod, "Scan Color", s.scan_color_name)
     cp.set_input(mod, "Scan UV", scan_uv(obj))

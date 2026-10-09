@@ -56,6 +56,7 @@ def _migrate():
     from . import gn_final
     try:
         gn_final.migrate_wrappers()
+        gn_final.drop_albedo()
         _migrate_bake_source()
         _migrate_cage()
         from . import migrate_route

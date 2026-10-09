@@ -187,6 +187,64 @@ def clear_custom_normals(obj):
     return not me.has_custom_normals
 
 
+_KEPT_NORMALS = set()      # meshes (pointer) whose normals differ per corner: not checked again
+
+
+def _per_vertex_normals(me):
+    """The custom normals as one per vertex (n, 3), or None when the corners of a vertex
+    differ. A scan from FBX has the same normal on every corner of a vertex: stored on the
+    points it shades exactly the same at 1/6 of the memory."""
+    attr = me.attributes.get("custom_normal")
+    if attr is None or attr.domain != 'CORNER' or attr.data_type != 'FLOAT_VECTOR':
+        return None
+    n = len(me.loops)
+    cn = np.empty(n * 3, dtype=np.float32)
+    attr.data.foreach_get("vector", cn)
+    cn = cn.reshape(-1, 3)
+    cv = np.empty(n, dtype=np.int32)
+    me.loops.foreach_get("vertex_index", cv)
+    per_v = np.zeros((len(me.vertices), 3), dtype=np.float32)
+    per_v[cv] = cn
+    if n and np.einsum("ij,ij->i", per_v[cv], cn).min() < 0.9999:
+        return None
+    return per_v
+
+
+def slim_scan(obj):
+    """(2026-10-09) A scan (no GN modifier: not one of the add-on's low polys) without what
+    it carries for nothing: per-corner custom normals that are the same on every corner of a
+    vertex go to the points (same shading, ~20% of the mesh), and the UV selection flags go.
+    Object Mode. Returns True when something changed."""
+    if (obj.type != 'MESH' or obj.library or obj.data.library or obj.mode != 'OBJECT'
+            or any(m.type == 'NODES' for m in obj.modifiers)):
+        return False
+    me = obj.data
+    changed = False
+    for name in [a.name for a in me.attributes if a.name.startswith(".uv_select")]:
+        me.attributes.remove(me.attributes[name])
+        changed = True
+    key = me.as_pointer()
+    attr = me.attributes.get("custom_normal")
+    if attr is not None and attr.domain == 'CORNER' and key not in _KEPT_NORMALS:
+        per_v = _per_vertex_normals(me)
+        if per_v is None:
+            _KEPT_NORMALS.add(key)
+        else:
+            me.attributes.remove(attr)
+            me.attributes.new("custom_normal", 'FLOAT_VECTOR', 'POINT').data.foreach_set(
+                "vector", per_v.ravel())
+            changed = True
+    return changed
+
+
+def slim_scans():
+    """On load: every scan mesh (slim_scan). A no-op once done."""
+    slimmed = [o.name for o in bpy.data.objects if slim_scan(o)]
+    if slimmed:
+        print(f"[MultiCamProject] Scan meshes slimmed (normals per vertex, no UV selection): "
+              f"{', '.join(slimmed)}")
+
+
 def apply_decimate(context, obj):
     """03: apply the Decimate (the stack before it is empty). Returns (faces before, after)."""
     dec = decimate_modifier(obj)
@@ -647,6 +705,7 @@ def make_copy(context, obj, retopo=False, decimate=True):
 
     _remove_gn(obj)                     # before the copy's setup: its wrappers are free again
     repair_original(obj)                # its own UVs, no face on the projection material
+    slim_scan(obj)                      # normals per vertex: the same shading, less memory
     if hasattr(obj, "multicamproject_cam"):
         obj.multicamproject_cam.is_setup = False    # no longer a projection object
     release_materials(obj)

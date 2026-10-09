@@ -8,6 +8,7 @@ def _repair():
     from . import workflow
     try:
         workflow.repair_originals()     # originals made before the repairs existed
+        workflow.slim_scans()           # scan normals per vertex (~20% of a scan)
         for obj in bpy.data.objects:    # undecided Decimates made before the decide-first
             if workflow.decimate_pending(obj):     # flow: their GN modifiers muted too
                 workflow.set_gn(obj, False)
