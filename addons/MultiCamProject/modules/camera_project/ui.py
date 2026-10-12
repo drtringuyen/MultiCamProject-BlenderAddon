@@ -384,10 +384,15 @@ class MULTICAMPROJECT_UL_cameras(bpy.types.UIList):
             _filter_opened.add(self.list_id)
             self.use_filter_show = True
         pattern = self.filter_name.lower()
-        flags = [self.bitflag_filter_item
-                 if it.camera and it.camera not in slots and core.passes(data, it)
-                 and core.searched(data, it) and pattern in it.camera.name.lower() else 0
-                 for it in items]
+        search = data.cam_search.lower()
+        ok = core.coverage_test(data)       # once per list, not per camera
+        flags = []
+        for it in items:
+            cam = it.camera
+            name = cam.name.lower() if cam else ""
+            flags.append(self.bitflag_filter_item
+                         if cam and cam not in slots and ok(it) and search in name
+                         and pattern in name else 0)
         # most coverage first, by name before a measure (the order the arrow keys step through)
         order = bpy.types.UI_UL_list.sort_items_helper(
             [(i, core.sort_key(it)) for i, it in enumerate(items)], lambda e: e[1])

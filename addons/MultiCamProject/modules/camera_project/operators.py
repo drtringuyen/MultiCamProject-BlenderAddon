@@ -193,7 +193,8 @@ class MULTICAMPROJECT_OT_MeasureCoverage(bpy.types.Operator):
         obj = context.active_object
         core.measure_coverage(obj, context.scene)
         d = core.data(obj)
-        shown = sum(core.passes(d, it) for it in d.cameras)
+        ok = core.coverage_test(d)
+        shown = sum(ok(it) for it in d.cameras)
         self.report({'INFO'}, f"{len(d.cameras)} camera(s) see '{obj.name}', "
                               f"{shown} pass the coverage filter")
         return {'FINISHED'}

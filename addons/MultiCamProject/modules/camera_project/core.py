@@ -1455,8 +1455,18 @@ def min_coverage(d):
 
 
 def passes(d, item):
-    """Before the list is scored every camera passes (the filter needs the coverage)."""
-    return not measured(d) or item.coverage >= min_coverage(d)
+    """Before the list is scored every camera passes (the filter needs the coverage). For a
+    whole list use coverage_test: measured() looks at every camera."""
+    return coverage_test(d)(item)
+
+
+def coverage_test(d):
+    """passes() for many items: the list is checked once, not once per camera (with ~600
+    cameras that was 360,000 checks per redraw)."""
+    if not measured(d):
+        return lambda item: True
+    low = min_coverage(d)
+    return lambda item: item.coverage >= low
 
 
 def searched(d, item):
@@ -1469,10 +1479,12 @@ def display_order(obj):
     coverage filter and the search, most coverage first (by name before a measure)."""
     d = data(obj)
     slots = get_slots(d)
+    ok = coverage_test(d)
+    search = d.cam_search.lower()
     items = [it for it in d.cameras if it.camera]
     top = sorted((it for it in items if it.camera in slots), key=lambda it: slots.index(it.camera))
-    rest = sorted((it for it in items if it.camera not in slots and passes(d, it)
-                   and searched(d, it)), key=sort_key)
+    rest = sorted((it for it in items if it.camera not in slots and ok(it)
+                   and search in it.camera.name.lower()), key=sort_key)
     return top, rest
 
 
@@ -1494,7 +1506,8 @@ def axis_pick(d, n):
     the next best by coverage fill up. Returns (cameras, warning or '')."""
     items = [it for it in d.cameras if it.camera and it.coverage > 0
              and image_ok(cam_image(it.camera))]
-    ok = [it for it in items if passes(d, it)]
+    test = coverage_test(d)
+    ok = [it for it in items if test(it)]
     picked, below = [], 0
 
     def best_along(pool, axis):
@@ -1652,8 +1665,9 @@ def assign_slot(obj, cam, slot, scene):
 def free_cameras(d, slots):
     """Cameras with a photo for an empty slot: by coverage once measured (Resort / Measure
     Coverage), else in random order."""
+    ok = coverage_test(d)
     free = [it.camera for it in d.cameras if it.camera and it.camera not in slots
-            and passes(d, it) and image_ok(cam_image(it.camera))]
+            and ok(it) and image_ok(cam_image(it.camera))]
     if not measured(d):
         random.shuffle(free)
     return free
@@ -1893,8 +1907,9 @@ def refresh(obj, scene):
     sees = rescore(obj, scene)
     set_slots(d, refill_slots(d, get_slots(d), sees, warnings))
 
+    ok = coverage_test(d)
     missing = [it.camera.name for it in d.cameras
-               if passes(d, it) and not image_ok(cam_image(it.camera))]
+               if ok(it) and not image_ok(cam_image(it.camera))]
     if missing:
         warnings.append(f"{len(missing)} camera(s) without image: {', '.join(missing[:5])}"
                         + ("..." if len(missing) > 5 else ""))
