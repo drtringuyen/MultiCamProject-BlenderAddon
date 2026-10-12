@@ -13,9 +13,11 @@ to that step on its own - no stored step to keep in sync, no timer.
   07 Generate Normal  NOR_ fresh
   08 Lock Finish      by hand only
   09 Export           never locked (nor is Polycount Estimation)"""
+import time
 from collections import namedtuple
 
 import bpy
+from bpy.app.handlers import persistent
 
 from . import gate
 
@@ -117,9 +119,41 @@ def nor_fresh(obj):
     return alb_fresh(obj) and not normal.nor_outdated(obj)
 
 
-def state(obj, scene=None):
-    """The object's workflow, which steps are done ({1..8}) and its stage."""
+# ---------------------------------------------------------------- the panels' memo
+# A sidebar redraw asks for the same object's state ~30 times (Stage cells, step locks,
+# headers) and scrolling redraws it many times a second. The answers are kept until anything
+# changes (depsgraph update, undo, load) or for MEMO_TTL at most (files on disk: the bake
+# cache reads them again after 2 s anyway).
+
+MEMO_TTL = 1.0
+_memo = {}
+
+
+def memo(key, fn):
+    """fn() kept under `key` until the next change (forget) or MEMO_TTL."""
+    now = time.monotonic()
+    hit = _memo.get(key)
+    if hit is not None and now - hit[0] < MEMO_TTL:
+        return hit[1]
+    val = fn()
+    _memo[key] = (now, val)
+    return val
+
+
+def forget(*_args):
+    _memo.clear()
+
+
+def state(obj, scene=None, fresh=False):
+    """The object's workflow, which steps are done ({1..8}) and its stage. Memoized for the
+    panels (memo); `fresh`: computed now (operators)."""
     scene = scene or bpy.context.scene
+    if fresh or obj is None:
+        return _state(obj, scene)
+    return memo(("state", obj.name, scene.name), lambda: _state(obj, scene))
+
+
+def _state(obj, scene):
     d = _bake(obj)
     done = set()
     if gate.ready(scene):
@@ -199,9 +233,15 @@ def draw_stage(layout, context, obj, units=3.6):
     col.ui_units_x = units
     if stg == 'LOCKED' and locked_missing(obj, context.scene):
         col.alert = True
-        col.label(text="Missing", icon='ERROR')
-        return
-    col.label(text=STAGES[stg][0], icon=STAGES[stg][1])
+    # the square is the lock toggle: green (Baked) locks, the lock unlocks; else a label
+    if stg in {'BAKED', 'LOCKED'} and hasattr(bpy.types, "MULTICAMPROJECT_OT_lock_finish"):
+        op = col.operator("multicamproject.lock_finish", text="", emboss=False,
+                          icon=STAGES[stg][1], depress=stg == 'LOCKED')
+        op.action = 'LOCK' if stg == 'BAKED' else 'UNLOCK'
+        op.object_name = obj.name
+    else:
+        col.label(text="", icon=STAGES[stg][1])
+    col.label(text="Missing" if col.alert else STAGES[stg][0])
 
 
 # ---------------------------------------------------------------- 08 Lock Finish
@@ -248,3 +288,25 @@ def protected_files():
         for scene in o.users_scene:
             out.update(os.path.normcase(os.path.abspath(p)) for _k, p in published(o, scene))
     return out
+
+
+_HANDLERS = (bpy.app.handlers.depsgraph_update_post, bpy.app.handlers.undo_post,
+             bpy.app.handlers.redo_post, bpy.app.handlers.load_post)
+
+
+@persistent
+def _on_change(*_args):
+    _memo.clear()
+
+
+def register():
+    for lst in _HANDLERS:
+        if _on_change not in lst:
+            lst.append(_on_change)
+
+
+def unregister():
+    for lst in _HANDLERS:
+        if _on_change in lst:
+            lst.remove(_on_change)
+    _memo.clear()

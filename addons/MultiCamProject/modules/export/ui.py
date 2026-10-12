@@ -178,7 +178,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
             self._draw_info(layout, scene, es)
             layout.label(text="Select meshes and click Add", icon='INFO')
             return
-        objs, per, grouped = status.scene_status(scene)
+        objs, per, grouped = status.scene_status(scene, cached=True)
         _ROW_STATUS.clear()
         _ROW_STATUS.update(per)
 

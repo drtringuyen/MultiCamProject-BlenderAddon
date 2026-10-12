@@ -58,8 +58,12 @@ def object_status(obj, scene, plan):
     return Status(stage_of(obj, issues), issues)
 
 
-def scene_status(scene):
-    """{object name: Status} for the EXPORT meshes, and the issues grouped by code."""
+def scene_status(scene, cached=False):
+    """{object name: Status} for the EXPORT meshes, and the issues grouped by code.
+    `cached` (the panel): kept until anything changes (steps.memo)."""
+    if cached:
+        from ... import steps
+        return steps.memo(("export_status", scene.name), lambda: scene_status(scene))
     from . import fixes
     objs = common.export_objects(scene)
     plan = (fixes.planned_names(objs, naming.scheme(scene))

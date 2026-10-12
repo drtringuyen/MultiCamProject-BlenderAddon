@@ -35,8 +35,15 @@ def model_path():
     return os.path.join(MODELS, MODEL_FILE)
 
 
+_runtime = []
+
+
 def has_runtime():
-    return importlib.util.find_spec("onnxruntime") is not None
+    """onnxruntime importable - looked up once (a search of every sys.path folder); an
+    install clears it."""
+    if not _runtime:
+        _runtime.append(importlib.util.find_spec("onnxruntime") is not None)
+    return _runtime[0]
 
 
 def missing():
@@ -68,6 +75,8 @@ def install_runtime():
     if target not in sys.path:
         sys.path.append(target)
     importlib.invalidate_caches()
+    _runtime.clear()
+    _avail[0] = 0.0
     return has_runtime(), f"onnxruntime installed into {target}"
 
 
@@ -77,11 +86,19 @@ def install_model(src):
     os.makedirs(folder, exist_ok=True)
     dst = os.path.join(folder, MODEL_FILE)
     shutil.copyfile(src, dst)
+    _avail[0] = 0.0
     return dst
 
 
+_avail = [0.0, False]       # (when, result): the model file is looked for every 10 s at most
+
+
 def available():
-    return has_runtime() and os.path.isfile(model_path())
+    import time
+    now = time.monotonic()
+    if now - _avail[0] > 10.0:
+        _avail[:] = [now, has_runtime() and os.path.isfile(model_path())]
+    return _avail[1]
 
 
 def _session():

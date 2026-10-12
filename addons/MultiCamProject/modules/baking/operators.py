@@ -812,25 +812,36 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
                ('UNLOCK', "Unlock", "Back to Baked: the steps can change it again"),
                ('REBAKE', "Unlock & Rebake", "Unlock, then bake ALB_ (05) and NOR_ (07) again")),
         default='LOCK', options={'SKIP_SAVE'})
+    object_name: bpy.props.StringProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+        description="The object (a list row's toggle); empty = the active object")
 
     @classmethod
     def description(cls, context, props):
+        if props.object_name:
+            return {'LOCK': f"Lock Finish {props.object_name}: copy ALB_ / NOR_ into Export, "
+                            "then nothing changes it",
+                    'UNLOCK': f"Unlock {props.object_name}: back to Baked"}.get(
+                        props.action, cls.__doc__)
         return {'LOCK': cls.__doc__, 'UNLOCK': "Unlock: back to Baked - the steps can change "
                                                "the object again",
                 'REBAKE': "Unlock, then bake ALB_ (05) and NOR_ (07) again"}[props.action]
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return (_object_mode(context) and obj is not None and obj.type == 'MESH'
-                and not obj.library)
+        return _object_mode(context)
 
     def execute(self, context):
         from ... import steps
-        obj = context.active_object
+        obj = (bpy.data.objects.get(self.object_name) if self.object_name
+               else context.active_object)
+        if obj is None or obj.type != 'MESH' or obj.library:
+            self.report({'WARNING'}, "No mesh to lock")
+            return {'CANCELLED'}
         d = common.data(obj)
+        steps.forget()
         if self.action == 'LOCK':
-            if 7 not in steps.state(obj, context.scene).done:
+            if 7 not in steps.state(obj, context.scene, fresh=True).done:
                 self.report({'WARNING'}, "Finish 07 first: ALB_ and NOR_ baked and current")
                 return {'CANCELLED'}
             folder = common.export_textures_dir(context.scene)
@@ -838,12 +849,15 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
                 from ..export import fbx
                 fbx.copy_textures([obj], os.path.dirname(folder))
             d.locked = True
+            steps.forget()
             self.report({'INFO'}, f"{obj.name}: Locked Finish")
             return {'FINISHED'}
         d.locked = False
+        steps.forget()
         if self.action == 'UNLOCK':
             self.report({'INFO'}, f"{obj.name}: unlocked")
             return {'FINISHED'}
+        steps.forget()
         s = common.settings(context.scene)
         return _start_bake(self, context, "Rebake", [obj], True, s.nor_source, "Rebaked")
 

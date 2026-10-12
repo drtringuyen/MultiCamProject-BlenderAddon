@@ -233,8 +233,10 @@ def relink(src, scene):
     """Everything that shows the source takes what it shows now (current()):
     ALB  MAT_ (rebuilt), BAO  MCP_'s BAKED frame, BG  MCP_'s camera textures of every object
     the camera is a slot of."""
+    from ... import steps
     from ..baking import cache, material
     cache.clear()
+    steps.forget()
     cp = _cp()
     if src.kind == 'ALB':
         if src.owner.multicamproject_bake.material is not None:
