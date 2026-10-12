@@ -310,7 +310,7 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_mode(context):
+        if not _any_mode(context):        # also from Texture Paint / Sculpt / Edit
             return False
         objs = common.selected_meshes(context)
         if not objs:
@@ -328,6 +328,7 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        _leave_mode(context)            # bakes in Object Mode, then back to the mode
         objs = scope_objects(context, self.scope)
         src = common.settings(context.scene).nor_source if self.with_normal else None
         return _start_bake(self, context, "Bake Albedo", objs, True, src, "Baked")
@@ -345,7 +346,7 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_mode(context):
+        if not _any_mode(context):        # also from Texture Paint / Sculpt / Edit
             return False
         objs = common.selected_meshes(context)
         if not objs:
@@ -361,6 +362,7 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        _leave_mode(context)            # bakes in Object Mode, then back to the mode
         s = common.settings(context.scene)
         objs = scope_objects(context, self.scope)
         return _start_bake(self, context, "Make Normal", objs, False, s.nor_source, "Normal map")
