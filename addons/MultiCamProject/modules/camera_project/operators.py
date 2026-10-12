@@ -147,6 +147,7 @@ class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         warning = core.auto_pick(obj, context.scene)
+        core.data(obj).resorted = True
         if warning:
             self.report({'WARNING'}, warning)
         names = [c.name if c else "-" for c in core.get_slots(core.data(obj))]

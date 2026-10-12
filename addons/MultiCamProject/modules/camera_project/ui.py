@@ -178,7 +178,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
         # material's Cam textures against the slots) at the end, like Other Cameras
         sub = header.row(align=True)
-        sub.operator("multicamproject.auto_pick", text="", icon='SORTSIZE')
+        resort = sub.row(align=True)
+        resort.alert = not d.resorted       # red until the cameras were resorted once
+        resort.operator("multicamproject.auto_pick", text="", icon='SORTSIZE')
         cnt = sub.row(align=True)
         cnt.ui_units_x = 3.2
         cnt.prop(d, "slot_count", text="")
