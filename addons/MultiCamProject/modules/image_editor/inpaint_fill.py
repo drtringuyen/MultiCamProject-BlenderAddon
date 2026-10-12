@@ -72,16 +72,18 @@ def crop_rect(rect, w: int, h: int, margin: int):
             min(w, x1 + margin), min(h, y1 + margin))
 
 
-def rasterize_triangles(tris, x0: int, y0: int, w: int, h: int):
+def rasterize_triangles(tris, x0: int, y0: int, w: int, h: int, labels=None):
     """(h, w) bool: pixel centres of the crop at (x0, y0) inside any of `tris`
-    ((n, 3, 2) image pixel coords) - the UV islands under the crop."""
-    out = np.zeros((h, w), dtype=bool)
+    ((n, 3, 2) image pixel coords) - the UV islands under the crop. With `labels` (one int
+    per triangle, > 0): (h, w) int32, each pixel the label of its triangle, 0 outside."""
+    out = np.zeros((h, w), dtype=bool if labels is None else np.int32)
     if tris is None or not len(tris):
         return out
     tris = np.asarray(tris, dtype=np.float64)
     lo, hi = tris.min(axis=1), tris.max(axis=1)
     keep = (hi[:, 0] >= x0) & (lo[:, 0] <= x0 + w) & (hi[:, 1] >= y0) & (lo[:, 1] <= y0 + h)
-    for t, a, b in zip(tris[keep], lo[keep], hi[keep]):
+    labs = np.asarray(labels)[keep] if labels is not None else np.ones(int(keep.sum()), np.int32)
+    for t, a, b, lab in zip(tris[keep], lo[keep], hi[keep], labs):
         tx0, tx1 = max(x0, int(a[0])), min(x0 + w, int(np.ceil(b[0])) + 1)
         ty0, ty1 = max(y0, int(a[1])), min(y0 + h, int(np.ceil(b[1])) + 1)
         if tx1 <= tx0 or ty1 <= ty0:
@@ -96,7 +98,10 @@ def rasterize_triangles(tris, x0: int, y0: int, w: int, h: int):
         l2 = ((cy - ay) * (px - cx) + (ax - cx) * (py - cy)) / d
         eps = -1e-6
         inside = (l1 >= eps) & (l2 >= eps) & (1.0 - l1 - l2 >= eps)
-        out[ty0 - y0:ty1 - y0, tx0 - x0:tx1 - x0] |= inside
+        if labels is None:
+            out[ty0 - y0:ty1 - y0, tx0 - x0:tx1 - x0] |= inside
+        else:
+            out[ty0 - y0:ty1 - y0, tx0 - x0:tx1 - x0][inside] = lab
     return out
 
 
@@ -186,26 +191,22 @@ def box_blur(c, w, r: int):
     return num / np.maximum(den, 1e-8)
 
 
-def find_source_shift(hole, known, min_cover: float = 0.98):
-    """(dx, dy) moving the hole onto an area of known pixels nearby, or None. Tries rings
-    of the hole's own size in 8 directions, nearest first."""
-    box = bbox(hole)
-    if box is None:
-        return None
-    x0, y0, x1, y1 = box
-    bw, bh = x1 - x0, y1 - y0
-    h, w = hole.shape
-    ys, xs = np.nonzero(hole)
-    best = None
-    for k in (1.0, 1.5, 2.0, 3.0):
-        for ux, uy in ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1)):
-            dx, dy = int(round(ux * bw * k)), int(round(uy * bh * k))
-            sx, sy = xs + dx, ys + dy
-            ok = (sx >= 0) & (sx < w) & (sy >= 0) & (sy < h)
-            if ok.mean() < 1.0:
+_DIRS = ((1, 0), (-1, 0), (0, 1), (0, -1), (1, 1), (-1, 1), (1, -1), (-1, -1))
+GRAIN_TILE = 64
+
+
+def _shift_for(ys, xs, size, known, min_cover=0.95, rings=(1.0, 1.5, 2.0, 3.0, 4.0, 6.0, 8.0)):
+    """(dx, dy) moving the pixels (ys, xs) onto known pixels, rings of `size` in 8
+    directions, nearest first; or None."""
+    h, w = known.shape
+    for k in rings:
+        best = None
+        for ux, uy in _DIRS:
+            dx, dy = int(round(ux * size * k)), int(round(uy * size * k))
+            if (xs.min() + dx < 0 or xs.max() + dx >= w
+                    or ys.min() + dy < 0 or ys.max() + dy >= h):
                 continue
-            cover = known[sy, sx].mean()
-            if cover >= min_cover:
+            if known[ys + dy, xs + dx].mean() >= min_cover:
                 d = dx * dx + dy * dy
                 if best is None or d < best[0]:
                     best = (d, dx, dy)
@@ -214,34 +215,136 @@ def find_source_shift(hole, known, min_cover: float = 0.98):
     return None
 
 
-def fill(crop, hole, valid=None, grow: int = 0, grain: float = 1.0, grain_radius: int = 3):
-    """crop (h, w, 4) with a fill of the `hole` pixels (grown by `grow`), learnt from the
-    pixels that are `valid` and outside the hole. Returns (out, hole_used)."""
-    crop = np.asarray(crop, dtype=np.float32)
-    hole = dilate(np.asarray(hole, dtype=bool), grow)
-    if valid is None:
-        valid = np.ones(hole.shape, dtype=bool)
-    hole &= valid               # never paint outside the islands
-    known = valid & ~hole
+def find_source_shift(hole, known, min_cover: float = 0.98):
+    """(dx, dy) moving the whole hole onto known pixels nearby, or None."""
+    box = bbox(hole)
+    if box is None:
+        return None
+    ys, xs = np.nonzero(hole)
+    return _shift_for(ys, xs, max(box[2] - box[0], box[3] - box[1]), known, min_cover,
+                      rings=(1.0, 1.5, 2.0, 3.0))
+
+
+def add_grain(smooth, rgb, hole, known, amount, radius=3, tile=GRAIN_TILE):
+    """The fine detail (pixels minus their blur) of known pixels copied onto the hole, tile
+    by tile, each tile from its own nearest fully known spot - a big hole gets grain too
+    (one shift for the whole hole finds no known area of its size)."""
+    ys, xs = np.nonzero(hole)
+    if not len(ys):
+        return smooth
+    detail = rgb - box_blur(rgb, known.astype(np.float32), radius)
+    # grain is noise: clip it to the known pixels' noise level, so an edge or a spot inside a
+    # source tile is never stamped into the fill
+    sigma = float(detail[known].std()) if known.any() else 0.0
+    np.clip(detail, -2.5 * sigma, 2.5 * sigma, out=detail)
+    key =(ys // tile) * (hole.shape[1] // tile + 1) + xs // tile
+    order = np.argsort(key, kind='stable')
+    ys, xs, key = ys[order], xs[order], key[order]
+    cuts = np.flatnonzero(np.diff(key)) + 1
+    for gy, gx in zip(np.split(ys, cuts), np.split(xs, cuts)):
+        size = max(gx.max() - gx.min(), gy.max() - gy.min()) + 1
+        shift = _shift_for(gy, gx, size, known)
+        if shift is not None:
+            dx, dy = shift
+            smooth[gy, gx] += amount * detail[gy + dy, gx + dx]
+    return smooth
+
+
+def _fill_one(out, rgb, hole, known, grain, grain_radius):
+    """Fill `hole` of out (in place) from `known`."""
     if not hole.any() or not known.any():
-        return crop.copy(), hole
-    rgb = crop[..., :3].copy()                  # float32: half the memory traffic
+        return False
     smooth = push_pull(rgb, known.astype(np.float32))
     bh = bbox(hole)
     smooth = relax(smooth, hole, steps=min(80, max(8, max(bh[2] - bh[0], bh[3] - bh[1]) // 2)))
     if grain > 0.0:
-        shift = find_source_shift(hole, known)
-        if shift is not None:
-            # the detail (pixels minus their blur) of the source area only, not the whole crop
-            dx, dy = shift
-            h, w = hole.shape
-            r = grain_radius
-            sx0, sy0 = max(0, bh[0] + dx - r), max(0, bh[1] + dy - r)
-            sx1, sy1 = min(w, bh[2] + dx + r), min(h, bh[3] + dy + r)
-            win = rgb[sy0:sy1, sx0:sx1]
-            detail = win - box_blur(win, known[sy0:sy1, sx0:sx1].astype(np.float32), r)
-            ys, xs = np.nonzero(hole)
-            smooth[ys, xs] += grain * detail[ys + dy - sy0, xs + dx - sx0]
-    out = crop.copy()
+        smooth = add_grain(smooth, rgb, hole, known, grain, grain_radius)
     out[..., :3][hole] = np.clip(smooth[hole], 0.0, 1.0)
+    return True
+
+
+def fill(crop, hole, valid=None, grow: int = 0, grain: float = 1.0, grain_radius: int = 3,
+         labels=None):
+    """crop (h, w, 4) with a fill of the `hole` pixels (grown by `grow`). Returns
+    (out, hole_used).
+    labels (h, w) int: UV island per pixel (0 = none). Each island's part of the hole is
+    filled from that island only - a hole across a seam never pulls the other side's
+    colours in, and pixels on no island stay. Without labels: learnt from `valid` pixels."""
+    crop = np.asarray(crop, dtype=np.float32)
+    hole = dilate(np.asarray(hole, dtype=bool), grow)
+    out = crop.copy()
+    rgb = crop[..., :3].copy()                  # float32: half the memory traffic
+    if labels is not None:
+        used = np.zeros_like(hole)
+        for k in np.unique(labels[hole]):
+            if k == 0:
+                continue
+            isl = labels == k
+            hk = hole & isl
+            if _fill_one(out, rgb, hk, isl & ~hole, grain, grain_radius):
+                used |= hk
+        return out, used
+    if valid is None:
+        valid = np.ones(hole.shape, dtype=bool)
+    hole &= valid               # never paint outside the islands
+    if not _fill_one(out, rgb, hole, valid & ~hole, grain, grain_radius):
+        return out, np.zeros_like(hole)
     return out, hole
+
+
+# ── UV islands ────────────────────────────────────────────────────────────────
+
+def triangle_islands(verts, uvs):
+    """UV island per triangle, 1..K: triangles are joined where they share an edge with the
+    same two vertices AND the same UVs there (a seam splits). verts (n, 3) int vertex
+    indices, uvs (n, 3, 2) float."""
+    verts = np.asarray(verts, dtype=np.int64)
+    n = len(verts)
+    if not n:
+        return np.zeros(0, dtype=np.int32)
+    q = np.round(np.asarray(uvs, dtype=np.float64) * 1e5).astype(np.int64)
+    a, b = [0, 1, 2], [1, 2, 0]
+    va, vb, qa, qb = verts[:, a], verts[:, b], q[:, a], q[:, b]
+    swap = va > vb
+    v0, v1 = np.where(swap, vb, va), np.where(swap, va, vb)
+    q0 = np.where(swap[..., None], qb, qa)
+    q1 = np.where(swap[..., None], qa, qb)
+    keys = np.concatenate([v0[..., None], v1[..., None], q0, q1], axis=-1).reshape(-1, 6)
+    tri = np.repeat(np.arange(n), 3)
+    _u, inv = np.unique(keys, axis=0, return_inverse=True)
+    inv = inv.ravel()
+    order = np.argsort(inv, kind='stable')
+    same = inv[order][1:] == inv[order][:-1]
+    ea, eb = tri[order][:-1][same], tri[order][1:][same]
+    lab = np.arange(n)
+    while len(ea):
+        m = np.minimum(lab[ea], lab[eb])
+        new = lab.copy()
+        np.minimum.at(new, ea, m)
+        np.minimum.at(new, eb, m)
+        for _ in range(4):
+            new = new[new]              # pointer jumping: labels are triangle indices
+        if np.array_equal(new, lab):
+            break
+        lab = new
+    _u, dense = np.unique(lab, return_inverse=True)
+    return (dense.ravel() + 1).astype(np.int32)
+
+
+def dilate_labels(labels, px: int):
+    """Island labels grown by `px` pixels into unlabelled pixels (the bake margin belongs to
+    the island it was bled from)."""
+    out = labels.copy()
+    for _ in range(max(0, int(px))):
+        empty = out == 0
+        if not empty.any():
+            break
+        grown = out.copy()
+        for src, dst in (((slice(None, -1), slice(None)), (slice(1, None), slice(None))),
+                         ((slice(1, None), slice(None)), (slice(None, -1), slice(None))),
+                         ((slice(None), slice(None, -1)), (slice(None), slice(1, None))),
+                         ((slice(None), slice(1, None)), (slice(None), slice(None, -1)))):
+            take = empty[dst] & (grown[dst] == 0)
+            grown[dst][take] = out[src][take]
+        out = grown
+    return out

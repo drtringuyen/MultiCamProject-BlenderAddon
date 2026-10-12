@@ -65,6 +65,51 @@ def test_valid_mask_blocks_black_outside_island():
     assert not used[:, :20].any()                   # never paints outside the island
 
 
+def test_seam_islands_fill_separately():
+    """A hole across a seam: each side keeps its own colour, no dark smear across."""
+    clean = _gradient()
+    clean[:, :48, :3] = (0.05, 0.05, 0.08)          # the dark island left of the seam
+    labels = np.ones(clean.shape[:2], np.int32)
+    labels[:, 48:] = 2
+    dirty, hole = _marker(clean, 38, 30, 20)        # crosses x = 48
+    out, used = ip.fill(dirty, hole, grain=0.0, labels=labels)
+    left = out[30:50, 38:48, :3]
+    right = out[30:50, 48:58, :3]
+    assert np.abs(left - 0.05).max() < 0.04, left.max()
+    assert right.min() > 0.25, right.min()          # no dark pulled into the bright side
+    assert used[30:50, 38:58].all()
+
+
+def test_big_hole_gets_grain():
+    rng = np.random.default_rng(3)
+    clean = _gradient(400, 400)
+    clean[..., :3] += rng.normal(0, 0.03, clean[..., :3].shape).astype(np.float32)
+    hole = np.zeros((400, 400), bool)
+    hole[100:300, 120:280] = True                   # no hole-sized known area fits nearby
+    out, _ = ip.fill(clean, hole, grain=1.0)
+    hp = out[..., 0] - ip.box_blur(out[..., :3], np.ones((400, 400), np.float32), 3)[..., 0]
+    assert hp[hole].std() > 0.01, hp[hole].std()   # grain inside the hole, not flat
+
+
+def test_triangle_islands_split_at_seam():
+    # a quad = 2 triangles sharing verts 0-2 with the same UVs; a third triangle shares
+    # verts 1-2 with tri 0 but different UVs there (a seam)
+    verts = [(0, 1, 2), (0, 2, 3), (1, 4, 2)]
+    uvs = [[(0, 0), (1, 0), (1, 1)], [(0, 0), (1, 1), (0, 1)],
+           [(5, 0), (6, 0), (5, 1)]]
+    lab = ip.triangle_islands(verts, uvs)
+    assert lab[0] == lab[1] and lab[2] != lab[0] and lab.min() == 1
+
+
+def test_dilate_labels():
+    lab = np.zeros((5, 9), np.int32)
+    lab[:, 2] = 1
+    lab[:, 6] = 2
+    g = ip.dilate_labels(lab, 1)
+    assert (g[:, 1] == 1).all() and (g[:, 3] == 1).all() and (g[:, 7] == 2).all()
+    assert (g[:, 0] == 0).all()
+
+
 def test_grow_and_stamp():
     m = np.zeros((20, 20), bool)
     ip.stamp_disc(m, 10, 10, 3)

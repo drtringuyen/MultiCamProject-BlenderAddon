@@ -20,8 +20,9 @@ so the bake is not outdated. Esc, another selection or another image in the edit
 modal like Esc and ask: Save / Discard / Keep (the copy waits; the panel resumes or ends it).
 A rebake of ALB_ writes over the inpaint.
 
-The fill itself is inpaint_fill.py (pure numpy); it learns only from pixels on the object's
-uv_normal islands (plus the bake margin), so the black outside them never bleeds in.
+The fill itself is inpaint_fill.py (pure numpy). Each UV island of uv_normal (plus its bake
+margin) is filled from itself only: a selection across a seam never pulls the other side's
+colours in, and the black outside the islands never bleeds in.
 """
 import math
 import os
@@ -72,6 +73,7 @@ class Session:
     """The working copy of one ALB_: pixels, selection, undo. Names only - undo reloads IDs."""
 
     def __init__(self, alb, obj, temp, buf, tris, margin):
+        tris, islands = tris if tris is not None else (None, None)
         self.alb_name = alb.name
         self.obj_name = obj.name
         self.temp_name = temp.name
@@ -79,6 +81,7 @@ class Session:
         self.buf = buf                          # (h, w, 4) float32, the copy's pixels
         self.h, self.w = buf.shape[:2]
         self.tris = tris                        # uv_normal triangles in pixels, or None
+        self.islands = islands                  # UV island (1..K) per triangle
         self.margin = margin
         self.sel = np.zeros((self.h, self.w), dtype=bool)
         self.sel_rect = None                    # bounds of everything touched in sel
@@ -189,12 +192,12 @@ class Session:
                                            max(32, size) + st.grow + self.margin)
         crop = self.buf[cy0:cy1, cx0:cx1]
         hole = self.sel[cy0:cy1, cx0:cx1]
-        valid = None
-        if self.tris is not None:
-            island = ipf.rasterize_triangles(self.tris, cx0, cy0, cx1 - cx0, cy1 - cy0)
-            if island.any():
-                valid = ipf.dilate(island, self.margin)
-        out, used = ipf.fill(crop, hole, valid, grow=st.grow, grain=st.grain)
+        labels = None
+        if self.tris is not None:       # island per pixel; the bake margin joins its island
+            labels = ipf.rasterize_triangles(self.tris, cx0, cy0, cx1 - cx0, cy1 - cy0,
+                                             labels=self.islands)
+            labels = ipf.dilate_labels(labels, self.margin) if labels.any() else None
+        out, used = ipf.fill(crop, hole, grow=st.grow, grain=st.grain, labels=labels)
         self.clear_selection()
         ub = ipf.bbox(used)
         if ub is None:
@@ -279,7 +282,8 @@ def start_reason(context):
 
 
 def _uv_triangles(obj, w, h):
-    """uv_normal triangles of obj in image pixels (n, 3, 2), or None."""
+    """(uv_normal triangles of obj in image pixels (n, 3, 2), UV island per triangle), or
+    None."""
     me = obj.data if obj.type == 'MESH' else None
     uv = me.uv_layers.get("uv_normal") if me is not None else None
     if uv is None:
@@ -293,7 +297,10 @@ def _uv_triangles(obj, w, h):
     uvs = np.empty(len(me.loops) * 2, dtype=np.float32)
     uv.data.foreach_get("uv", uvs)
     tris = uvs.reshape(-1, 2)[loops].reshape(n, 3, 2)
-    return tris * np.array((w, h), dtype=np.float32)
+    vidx = np.empty(len(me.loops), dtype=np.int32)
+    me.loops.foreach_get("vertex_index", vidx)
+    islands = ipf.triangle_islands(vidx[loops].reshape(n, 3), tris)
+    return tris * np.array((w, h), dtype=np.float32), islands
 
 
 def start(context):
