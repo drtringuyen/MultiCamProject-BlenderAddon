@@ -47,7 +47,7 @@ class MULTICAMPROJECT_OT_Setup(bpy.types.Operator):
             cls.poll_message_set("Object Mode, a mesh active")
             return False
         if not any(o.type == 'CAMERA' for o in context.scene.objects):
-            cls.poll_message_set("No camera in the scene - start with 0A Project from Sides")
+            cls.poll_message_set("No camera in the scene - start with 2A Project from Sides")
             return False
         return True
 
@@ -58,6 +58,7 @@ class MULTICAMPROJECT_OT_Setup(bpy.types.Operator):
         _report_warnings(self, warnings)
         if not was_setup:
             _route_after(obj)
+            _workflow_after(obj)
         n = len(core.data(obj).cameras)
         if n == 0:
             self.report({'WARNING'}, "No camera sees this object")
@@ -74,6 +75,15 @@ def _route_after(obj):
         return
     if hasattr(obj, "multicamproject_bake"):
         route.after_step(obj, 'PROJECTION')
+
+
+def _workflow_after(obj):
+    """2D Only Project: the projection on the scan itself (a Remesh / Retopo copy keeps its
+    own workflow)."""
+    d = getattr(obj, "multicamproject_bake", None)
+    if d is None or d.handmade or d.workflow != 'NONE' or d.bake_source is not None:
+        return
+    d.workflow = 'PROJECT'
 
 
 class MULTICAMPROJECT_OT_ReloadAll(bpy.types.Operator):

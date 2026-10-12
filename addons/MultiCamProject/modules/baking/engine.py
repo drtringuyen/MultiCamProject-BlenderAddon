@@ -560,7 +560,7 @@ def source_problem(obj, context=None):
     context = context or bpy.context
     src = common.data(obj).bake_source
     if src is None:
-        return "No Bake Source (0C Remesh, or pick the high poly)"
+        return "No Bake Source (2B Remesh / 2C Retopo, or pick the high poly)"
     if src == obj or src.type != 'MESH':
         return "The Bake Source must be another mesh"
     if context.scene.objects.get(src.name) != src:     # excluded is fine: shown for the bake
@@ -737,7 +737,7 @@ def bake_projection_steps(context, obj):
     scene = context.scene
     d = common.data(obj)
     if not route.has_projection(obj):
-        raise RuntimeError("No camera projection (0B)")
+        raise RuntimeError("No camera projection (02)")
     size = common.resolution(obj, scene)
     t0 = time.perf_counter()
     was_final = gn_final.is_final(obj)

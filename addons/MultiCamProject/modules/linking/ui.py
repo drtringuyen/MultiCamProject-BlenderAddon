@@ -33,7 +33,7 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 5
+    bl_order = 10
 
     def draw_header(self, context):
         self.layout.label(icon='LINKED')

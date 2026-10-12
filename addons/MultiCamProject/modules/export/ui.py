@@ -142,13 +142,13 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
 
 
 class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
-    bl_label = "07. Final Export"
+    bl_label = "09. Export"
     bl_idname = "MULTICAMPROJECT_PT_export"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 4
+    bl_order = 9
 
     @classmethod
     def poll(cls, context):

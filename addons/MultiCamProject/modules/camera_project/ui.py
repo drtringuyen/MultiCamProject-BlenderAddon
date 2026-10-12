@@ -59,15 +59,16 @@ TOOL_WIDTH = 1.0     # units per tool button: narrow, the X / Y shift fields nee
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
-    """05 Projection Painting: go through the cameras and paint VCMix / VCMix2 - which
-    camera shows where, and (alpha) projection or BAo_. Shown once 0B is done"""
-    bl_label = "05. Projection Painting"
+    """04 Projection Painting: go through the cameras and paint CMX1_ / CMX2_ (or VCMix /
+    VCMix2) - which camera shows where, and (alpha) projection or BAo_. Optional: 05 Bake
+    Albedo does not wait for it"""
+    bl_label = "04. Projection Painting"
     bl_idname = "MULTICAMPROJECT_PT_camera_project"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 2
+    bl_order = 3
 
     @classmethod
     def poll(cls, context):
@@ -78,8 +79,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         self.layout.label(icon='BRUSH_DATA')
 
     def draw(self, context):
-        gate.lock(self.layout, context)     # greyed out until Setup File IO
-        layout = self.layout
+        layout, _open = gate.step_box(self.layout, context, 4)
         obj = context.active_object
         d = core.data(obj)
 

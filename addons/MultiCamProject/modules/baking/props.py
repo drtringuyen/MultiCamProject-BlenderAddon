@@ -85,11 +85,11 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
         name="Locked Finish", default=False,
         description="08 Lock Finish: the object is final - its ALB_ / NOR_ are never removed "
                     "and every step is locked until it is unlocked")
-    retopo: BoolProperty(description="Made by 0D Retopo: modelled by hand on top of the "
+    retopo: BoolProperty(description="Made by 2C Retopo: modelled by hand on top of the "
                                      "original, no Decimate")
     # where 06 Bake Final takes ALB_ / NOR_ from (each object its own)
     route: EnumProperty(name="Bake Route", items=ROUTE_ITEMS, default='MIXED', update=_on_route,
-                        description="Where Bake Final takes ALB_ / NOR_ from")
+                        description="Where 05 Bake Albedo takes ALB_ (and 07 NOR_) from")
     original_normal: EnumProperty(
         name="Original Normal", default='GENERATED',
         items=(('BAKED', "From Original's Surface",
@@ -107,7 +107,7 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                     "Viewing only: the export always writes it")
     route_user: BoolProperty(description="The route was picked by hand (never changed by a "
                                           "Setup step then)")
-    route_prompt: StringProperty(description="A Setup step added a workflow: shown in 06 until a "
+    route_prompt: StringProperty(description="A Setup step added a workflow: shown in 05 until a "
                                              "route is picked")
     # work textures, PNG files in the bake folder (never exported, overwritten on every bake):
     # from the Original (04 Bake from Source) BAo_<name> / BNo_<name>, from the Projection

@@ -50,7 +50,7 @@ def is_original(obj):
     return obj is not None and any(source_of(o) == obj for o in bpy.data.objects)
 
 
-HANDMADE_TEXT = ("Handmade - change its UVs with 0E Rebake (Remesh / Retopo would leave "
+HANDMADE_TEXT = ("Handmade - change its UVs with Rebake in 03 (Remesh / Retopo would leave "
                  "nothing to bake from)")
 
 
@@ -304,6 +304,8 @@ def use_existing(context, low, high):
     if low == high or high.type != 'MESH':
         raise RuntimeError("Pick another mesh as the high poly")
     low.multicamproject_bake.bake_source = high
+    if low.multicamproject_bake.workflow in {'NONE', 'PROJECT'}:
+        low.multicamproject_bake.workflow = 'REMESH'    # 2B with a low poly made by hand
     clear_custom_normals(low)
     if low.vertex_groups.get(VG_PROTECT) is None:
         low.vertex_groups.new(name=VG_PROTECT)
@@ -514,6 +516,9 @@ def remove_projection(obj):
     The Bake Route becomes From Original when there is a Bake Source. Returns text lines."""
     out = []
     me = obj.data
+    d = getattr(obj, "multicamproject_bake", None)
+    if d is not None and d.workflow == 'PROJECT':
+        d.workflow = 'NONE'
     n = _free_projection_faces(obj)         # while MCP_ still has its slot
     if n:
         out.append(f"{n:,} faces back on their scan material")
@@ -726,6 +731,8 @@ def make_copy(context, obj, retopo=False, decimate=True):
         o.select_set(False)
         o.hide_set(True)
 
+    copy.multicamproject_bake.workflow = 'RETOPO' if retopo else 'REMESH'
+    obj.multicamproject_bake.workflow = 'NONE'      # the original is no workflow of its own
     if retopo:
         copy.multicamproject_bake.retopo = True
         copy.vertex_groups.clear()      # the scan's groups: no weights on the plane
@@ -738,9 +745,10 @@ def make_copy(context, obj, retopo=False, decimate=True):
         if copy.vertex_groups.get(VG_PROTECT) is None:
             copy.vertex_groups.new(name=VG_PROTECT)     # 02 Protect works here too
         clear_custom_normals(copy)
-    if module_manager.is_loaded("camera_project") and was_setup:
+    cams = any(o.type == 'CAMERA' for o in scene.objects)
+    if module_manager.is_loaded("camera_project") and (was_setup or cams):
         with quiet(copy):
-            warnings += cp.setup(copy, scene)   # 0B came first: the copy projects too
+            warnings += cp.setup(copy, scene)   # 2B / 2C always bring the projection along
     if module_manager.is_loaded("baking"):
         from ..baking import gn_final
         if gn_final.get_modifier(copy) is not None:

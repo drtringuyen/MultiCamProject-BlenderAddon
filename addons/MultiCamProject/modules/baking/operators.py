@@ -114,7 +114,7 @@ def _bake_one(context, obj, albedo, nor_source, res, log):
             if not cp.keep_mode(obj):
                 # a blank Mode projects nothing - Cycles would only say "no UV map"
                 raise RuntimeError("projection Mode is blank - pick Sharp / Smooth / Combined "
-                                   "in 05 Projection Painting, then bake again")
+                                   "in 04 Projection Painting, then bake again")
         if engine.needs_source_bake(obj) and log:
             log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
         yield jobs.Step("Albedo", 0.1)
@@ -230,10 +230,10 @@ class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
-    """04 Bake from Source: the Bake Source's colors into BAo_ and (Original Normal = From
+    """Bake BAo_ (03): the Bake Source's colors into BAo_ and (Original Normal = From
     Original's Surface only) its surface into BNo_, on
     uv_normal at the scene's resolution (Selected to Active, Cage). Files in the bake folder, under
-    the projection - not the final textures (06 Bake Final makes those)"""
+    the projection - not the final textures (05 Bake Albedo makes those)"""
     bl_idname = "multicamproject.bake_from_source"
     bl_label = "Bake from Source"
     bl_options = {'REGISTER', 'UNDO'}
@@ -457,7 +457,7 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
             return False
         hand, objs = _split_handmade(context)
         if not objs and not hand:
-            cls.poll_message_set("Select meshes (a handmade one: 0E Edit UV first)")
+            cls.poll_message_set("Select meshes (a handmade one: Edit UV in 03 first)")
             return False
         for o in hand:
             why = handmade.rebake_problem(o)

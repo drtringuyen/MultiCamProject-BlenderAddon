@@ -4,7 +4,7 @@ from . import core
 
 
 class MULTICAMPROJECT_PT_ProjectSides(bpy.types.Panel):
-    """0A's settings, opened from the gear next to it in Setup"""
+    """2A's settings, opened from the gear next to it in 02"""
     bl_label = "Project from Sides"
     bl_idname = "MULTICAMPROJECT_PT_project_sides"
     bl_space_type = 'VIEW_3D'
@@ -13,7 +13,7 @@ class MULTICAMPROJECT_PT_ProjectSides(bpy.types.Panel):
 
     def draw(self, context):
         layout = self.layout
-        layout.label(text="0A. Project from Sides", icon='AXIS_SIDE')
+        layout.label(text="2A. Project from Sides", icon='AXIS_SIDE')
         if not core.camera_project_ready():
             layout.alert = True
             layout.label(text="Needs the Camera Project module", icon='ERROR')

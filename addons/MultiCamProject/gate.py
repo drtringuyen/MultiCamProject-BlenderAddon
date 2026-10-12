@@ -64,7 +64,7 @@ def step_box(layout, context, step):
 
 
 def draw_start(layout, context):
-    """Setup's first row while locked: [Name Prefix] [Setup File IO]."""
+    """01 Setup: [Name Prefix] [Setup File IO] (+ a hint while the add-on is locked)."""
     scene = context.scene
     es = getattr(scene, "multicamproject_export", None)
     row = layout.row(align=True)
@@ -76,6 +76,8 @@ def draw_start(layout, context):
     sub = row.row(align=True)
     sub.enabled = prefix_ok(scene)
     sub.operator("multicamproject.project_setup", text="Setup File IO", icon='VIEWZOOM')
+    if ready(scene):
+        return
     hint = layout.row()
     hint.active = False
     hint.label(text="Name Prefix like 00_30stBR, then Setup File IO - the add-on unlocks"

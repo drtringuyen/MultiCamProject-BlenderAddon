@@ -34,42 +34,85 @@ def _draw_amount_row(row, context, obj, dec, label, scale=1.0):
     split.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
 
 
-def _draw_decide(layout, context, obj):
-    """0C's first step: the Decimate amount is decided and applied before anything else (the
-    GN modifiers are muted meanwhile, 02 Protect still works)."""
+def draw_decide(layout, context, obj):
+    """The end of 2B Remesh (02 Mesh Workflow): the Decimate amount is decided and applied
+    before anything else (the GN modifiers are muted meanwhile, Protect still works)."""
     dec = wf.decimate_modifier(obj)
     box = layout.box().column(align=True)
     box.alert = True
-    box.label(text="03. Decide the Decimate - the rest unlocks after Apply", icon='MOD_DECIM')
+    box.label(text="Decide the Decimate - 03 unlocks after Apply", icon='MOD_DECIM')
     box.alert = False
     _draw_amount_row(box.row(align=True), context, obj, dec, "", 1.4)
     hint = box.row()
     hint.active = False
-    hint.label(text="02 Protect keeps parts · Ctrl+Z undoes 0C", icon='LOCKED')
+    hint.label(text="Protect keeps parts · Ctrl+Z undoes 2B", icon='LOCKED')
+
+
+def _draw_handmade(layout, obj):
+    """Handmade: new UVs through Edit UV, then Rebake from uv_old, Finish (or Cancel)."""
+    from ..baking import handmade
+    col = layout.column(align=True)
+    col.scale_y = 1.3
+    row = col.row(align=True)
+    if not handmade.has_uv_old(obj):
+        row.operator("multicamproject.handmade_edit_uv", text="Rebake: Edit UV", icon='UV')
+        return
+    row.operator("multicamproject.handmade_rebake", text="Rebake from uv_old",
+                 icon='FILE_REFRESH')
+    row.operator("multicamproject.handmade_edit_uv", text="", icon='UV')
+    row.operator("multicamproject.handmade_finish_uv", text="", icon='CHECKMARK')
+    row.operator("multicamproject.handmade_cancel_uv", text="", icon='X')
+    warn = layout.row()
+    if obj.mode == 'EDIT':          # the mesh holds the UVs only after Edit Mode
+        warn.active = False
+        warn.label(text="Editing uv_normal - then Rebake", icon='UV')
+    elif handmade.needs_rebake(obj):
+        warn.alert = True
+        warn.label(text="uv_normal changed - Rebake (or Cancel X)", icon='ERROR')
+    else:
+        warn.active = False
+        warn.label(text="Textures match uv_normal - Finish, or edit more", icon='CHECKMARK')
+
+
+def _shown(obj):
+    """03 is there for a low poly (2B / 2C), an Only Project object (2D) and a handmade one."""
+    if obj is None or obj.type != 'MESH':
+        return False
+    if wf.is_low_poly(obj):
+        return True
+    d = getattr(obj, "multicamproject_bake", None)
+    if d is not None and d.handmade:
+        return True
+    from ... import steps
+    return steps.workflow(obj) == 'PROJECT'
 
 
 class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
-    """Cutting & Modelling: shown for a low poly (0C Remesh, or a picked high poly)"""
-    bl_label = "Cutting & Modelling"
+    """03. Mesh Editing: PolyCut / Set Faces / Snap on the low poly, then BAo_ (its colors
+    from the scan). Worked on in the main file or in its work window, never both"""
+    bl_label = "03. Mesh Editing"
     bl_idname = "MULTICAMPROJECT_PT_remesh"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 1
+    bl_order = 2
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return obj is not None and obj.type == 'MESH' and wf.is_low_poly(obj)
+        return _shown(context.active_object)
 
     def draw_header(self, context):
-        self.layout.label(icon='MOD_REMESH')
+        from ... import steps
+        done = 3 in steps.state(context.active_object, context.scene).done
+        self.layout.label(icon='CHECKMARK' if done else 'SCULPTMODE_HLT')
 
     def draw(self, context):
-        self.layout.enabled = gate.ready(context.scene)     # greyed out until Setup File IO
-        layout = self.layout
+        layout, _open = gate.step_box(self.layout, context, 3)
         obj = context.active_object
+        if obj.multicamproject_bake.handmade:
+            _draw_handmade(layout, obj)
+            return
         pending = wf.decimate_pending(obj)
         d = obj.multicamproject_bake
         baking = module_manager.is_loaded("baking")
@@ -80,10 +123,15 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 link_ui.draw_work(layout, context)
             else:
                 link_ui.draw_main(layout, context, obj)
-        if pending:
-            _draw_decide(layout, context, obj)
+        if pending:         # decided at the end of 02
+            return
+        if not wf.is_low_poly(obj):     # 2D Only Project: no low poly to edit
+            hint = layout.row()
+            hint.active = False
+            hint.label(text="Only Project: BAo_ comes from the scan's own textures", icon='INFO')
+            return
 
-        # the high poly this low poly bakes from (only 04 uses it)
+        # the high poly this low poly bakes from (only BAo_ uses it)
         row = layout.row(align=True)
         row.prop(d, "bake_source", text="", icon='OUTLINER_OB_MESH')
         if s is not None:
@@ -92,18 +140,15 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             cage.prop(d, "cage", text="Cage")
 
         retopo = wf.is_retopo(obj)
-        rest = layout                       # 01 / Decimate Brush wait for the decision
-        if pending:
-            rest = layout.column()
-            rest.enabled = False
+        rest = layout
         if retopo:
-            # 0D: modelled by hand on the original - no PolyCut / Decimate
+            # 2C: modelled by hand on the original - no PolyCut / Decimate
             col = layout.column(align=True)
             col.scale_y = 1.25
             col.operator("multicamproject.retopo_focus", text="Retopo (local view + Edit Mode)",
                          icon='EDITMODE_HLT')
         else:
-            # 01 / 02: the PolyCut tool and Set Faces
+            # the PolyCut tool and Set Faces
             col = rest.column(align=True)
             col.scale_y = 1.25
             # PolyCut is a Sculpt Mode tool; Edit Mode keeps Blender's own L (Select Linked)
@@ -113,10 +158,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row = col.row(align=True)
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
-                             text="01. Poly Cut & Seams (Ctrl+Shift+K)",
+                             text="PolyCut & Seams (Ctrl+Shift+K)",
                              icon='SCULPTMODE_HLT')
             else:
-                row.label(text="01. PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
+                row.label(text="PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
             # 02 Set Faces has no button: L with the tool, after each PolyCut, or Edit Mode's
             # right-click / Face menu. Here: every face set cleared, Clean Floating
             row.operator("multicamproject.remesh_set_faces", text="",
@@ -148,25 +193,19 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
                              depress=dyn)
 
-        if pending:     # everything after 02 waits for the decision
-            layout = layout.column()
-            layout.enabled = False
-
-        # 03: one Decimate (vg_Protect keeps parts), applied before the unwrap
+        # the Decimate (vg_Protect keeps parts) was applied in 02, before the unwrap
         box = layout.box().column(align=True)
         dec = wf.decimate_modifier(obj)
-        if pending:
-            box.label(text="03. Decimate: decided above", icon='MOD_DECIM')
-        elif retopo and dec is None:
-            box.label(text=f"03. Retopo: {len(obj.data.polygons):,} faces (no Decimate)",
+        if retopo and dec is None:
+            box.label(text=f"Retopo: {len(obj.data.polygons):,} faces (no Decimate)",
                       icon='MESH_PLANE')
         elif dec is not None:
-            _draw_amount_row(box.row(align=True), context, obj, dec, "03.")
+            _draw_amount_row(box.row(align=True), context, obj, dec, "")
         elif obj.get(wf.APPLIED_KEY):
-            box.label(text=f"03. Decimate applied: {len(obj.data.polygons):,} faces",
+            box.label(text=f"Decimate applied: {len(obj.data.polygons):,} faces",
                       icon='CHECKMARK')
         else:
-            box.label(text="03. No Decimate modifier", icon='MOD_DECIM')
+            box.label(text=f"{len(obj.data.polygons):,} faces (no Decimate)", icon='MOD_DECIM')
         snap = wf.snap_modifier(obj)
         row = box.row(align=True)
         if snap is None:
@@ -177,7 +216,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.label(text="Snap to Source (vg_Snap)", icon='MOD_SHRINKWRAP')
             row.operator("multicamproject.remesh_snap", text="", icon='X').on = False
 
-        # 04: BAo_ / BNo_ from the Bake Source (the baking module's settings)
+        # BAo_ from the Bake Source (the baking module's settings)
         if not baking:
             return
         from ..baking import common, fingerprint, jobs, operators as bake_ops
@@ -190,7 +229,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         why = bake_ops.source_poll_problem(obj)
         # the object's size: its own pick (06 / the EXPORT list), or the scene's in front of Export
         row.operator("multicamproject.bake_from_source",
-                     text=f"04. Bake from Source ({_res(common.resolution(obj, context.scene))})",
+                     text=f"Bake BAo_ ({_res(common.resolution(obj, context.scene))})",
                      icon='RENDER_STILL')
         if why:
             sub = box.row()

@@ -5,7 +5,7 @@ from . import core
 
 
 class MULTICAMPROJECT_OT_ProjectSides(bpy.types.Operator):
-    """0A: create the missing sides cameras and reset all of them to the settings (gear):
+    """2A: create the missing sides cameras and reset all of them to the settings (gear):
     sheet image, camera type, Height, Distance, Focal Length / Ortho Scale, around the active
     object's origin. Then 0B runs on the object (Setup, or Reload All when set up already)"""
     bl_idname = "multicamproject.project_sides"

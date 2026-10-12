@@ -89,7 +89,7 @@ def needs_paint_layers(obj, action):
 def mask_problem(obj, action):
     if action in MASK_ACTIONS and not (hasattr(obj, "multicamproject_cam")
                                        and obj.multicamproject_cam.is_setup):
-        return "Projected / Baked need the camera projection (0B)"
+        return "Projected / Baked need the camera projection (02)"
     return ""
 
 

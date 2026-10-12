@@ -42,14 +42,14 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "Original Mesh")
     export_collection: PointerProperty(
         type=bpy.types.Collection, name="Export",
-        description="The collection 07 exports and lists. Empty = the one named EXPORT")
+        description="The collection 09 exports and lists. Empty = the one named EXPORT")
     cameras_collection: PointerProperty(
         type=bpy.types.Collection, name="Cameras",
         description="The camera collection. Empty = every collection holding only cameras")
 
     new_object_name: StringProperty(
         name="New Object Name", default="",
-        description="The window buttons of 0C / 0D: the new object becomes ENV_<prefix>."
+        description="The window buttons of 2B / 2C: the new object becomes ENV_<prefix>."
                     "<next ##>_<this name>, its work window saved as <this name>.blend in the "
                     "Bake Folder")
     quality: EnumProperty(

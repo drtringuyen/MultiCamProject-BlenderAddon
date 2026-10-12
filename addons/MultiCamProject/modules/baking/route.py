@@ -64,9 +64,9 @@ def problem(obj):
     r = get(obj)
     need = []
     if r in {ORIGINAL, MIXED} and not has_original(obj):
-        need.append("a Bake Source (0C / 0D, or pick the original)")
+        need.append("a Bake Source (2B / 2C, or pick the original)")
     if r in {PROJECTION, MIXED} and not has_projection(obj):
-        need.append("a camera projection (0B)")
+        need.append("a camera projection (02)")
     return f"{LABELS[r]} needs {' and '.join(need)}" if need else ""
 
 
@@ -118,7 +118,7 @@ def after_step(obj, step):
         d.route_prompt = ""
     elif both:                  # a second workflow: the route stays, the user is asked
         set_route(obj, d.route)
-        d.route_prompt = (f"{'0B Projection' if step == 'PROJECTION' else '0C Original'} added - "
+        d.route_prompt = (f"{'Projection' if step == 'PROJECTION' else 'Original'} added - "
                           f"{LABELS[d.route]} kept")
     elif not d.route_user or problem(obj):
         set_route(obj, suggest(obj))
@@ -140,7 +140,7 @@ def draw_prompt(layout, obj, text=None):
 
 
 class MULTICAMPROJECT_OT_SetRoute(bpy.types.Operator):
-    """Bake Final takes ALB_ / NOR_ from this route (the active object and the selected ones)"""
+    """05 Bake Albedo takes ALB_ (and 07 NOR_) from this route (the active object and the selected ones)"""
     bl_idname = "multicamproject.set_route"
     bl_label = "Bake Route"
     bl_options = {'REGISTER', 'UNDO'}

@@ -99,22 +99,21 @@ def _draw_original(row, obj):
 
 
 class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
-    """06 Bake Final: ALB_ (the Processing material baked onto the object) and NOR_, the
+    """05 Bake Albedo: ALB_ (the Processing material baked onto the object) and NOR_, the
     final 8K textures in MAT_"""
-    bl_label = "06. Bake Final"
+    bl_label = "05. Bake Albedo"
     bl_idname = "MULTICAMPROJECT_PT_baking"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
     bl_category = "MultiCamProject"
     bl_parent_id = "MULTICAMPROJECT_PT_main"
-    bl_order = 3
+    bl_order = 4
 
     def draw_header(self, context):
         self.layout.label(icon='RENDER_STILL')
 
     def draw(self, context):
-        gate.lock(self.layout, context)     # greyed out until Setup File IO
-        layout = self.layout
+        layout, _open = gate.step_box(self.layout, context, 5)
         from . import jobs
         if jobs.busy():
             jobs.draw(layout)
@@ -280,7 +279,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         box = top.box().column(align=True)
         if not handmade.has_uv_old(obj):
             box.label(text="Handmade - baked by hand", icon='INFO')
-            box.label(text="New UVs: 0E Rebake: Edit UV (Setup)")
+            box.label(text="New UVs: Rebake: Edit UV (03)")
             return
         if obj.mode == 'EDIT':
             box.label(text="Editing uv_normal - Bake rebakes from uv_old", icon='UV')
@@ -288,7 +287,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             box.alert = True
             box.label(text="uv_normal changed - rebake ALB_ + NOR_", icon='ERROR')
         else:
-            box.label(text="ALB_ + NOR_ match uv_normal - Finish in Setup (0E)",
+            box.label(text="ALB_ + NOR_ match uv_normal - Finish in 03",
                       icon='CHECKMARK')
         row = layout.row(align=True)
         row.scale_y = 1.5

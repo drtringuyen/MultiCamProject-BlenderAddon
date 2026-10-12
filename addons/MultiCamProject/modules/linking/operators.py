@@ -288,7 +288,7 @@ class MULTICAMPROJECT_OT_CreateRoleCollection(bpy.types.Operator):
     @classmethod
     def description(cls, context, props):
         name = roles.ROLES[props.role][3][0]
-        return f"Not in this scene yet: create the {name} collection (as Remesh / 07 would)"
+        return f"Not in this scene yet: create the {name} collection (as Remesh / 09 would)"
 
     def execute(self, context):
         coll = roles.ensure(context.scene, self.role)
@@ -336,7 +336,7 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
-    """One click: 0B Setup Camera Projection (when not done yet), 0C Remesh / 0D Retopo,
+    """One click: 2B Remesh / 2C Retopo (with the camera projection),
     the new low poly named ENV_<prefix>.<next ##>_<New Object Name> (the original keeps its
     name), then Send Out - a work window opens with it, its original (the Bake Source) and
     its cameras, in the PolyCut tool / on the retopo, saved as Bake Folder/<typed name>.blend.
@@ -346,8 +346,8 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
     bl_options = {'REGISTER', 'UNDO'}
 
     mode: bpy.props.EnumProperty(
-        items=(('REMESH', "Remesh", "0B + 0C Remesh, then Send Out"),
-               ('RETOPO', "Retopo", "0B + 0D Retopo, then Send Out")),
+        items=(('REMESH', "Remesh", "2B Remesh, then Send Out"),
+               ('RETOPO', "Retopo", "2C Retopo, then Send Out")),
         options={'HIDDEN', 'SKIP_SAVE'})
     existing: bpy.props.EnumProperty(
         items=(('ASK', "Ask", "Stop when the work file already exists"),
@@ -358,8 +358,8 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
 
     @classmethod
     def description(cls, context, props):
-        step = "0C Remesh" if props.mode == 'REMESH' else "0D Retopo"
-        return (f"0B Setup Camera Projection (when not done), {step} - the new object is "
+        step = "2B Remesh" if props.mode == 'REMESH' else "2C Retopo"
+        return (f"{step} with the camera projection - the new object is "
                 "ENV_<prefix>.<next ##>_<name> - then open it in a work window saved in the "
                 "Bake Folder (linked: Receive it back here)")
 
@@ -452,7 +452,7 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         cp = getattr(obj, "multicamproject_cam", None)
         need_setup = cp is not None and not cp.is_setup
         if need_setup and not any(o.type == 'CAMERA' for o in context.scene.objects):
-            self.report({'WARNING'}, "No camera in the scene: 0B skipped")
+            self.report({'WARNING'}, "No camera in the scene: no projection")
             need_setup = False
         # no Decimate here: the window adds it, decides and applies it (it never comes back)
         copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO',
@@ -500,7 +500,7 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_WorkSave(bpy.types.Operator):
-    """Save this work window as the file the 0C / 0D button named (Bake Folder/<name>.blend)
+    """Save this work window as the file the 2B / 2C button named (Bake Folder/<name>.blend)
     - the main file can open it again from then on"""
     bl_idname = "multicamproject.work_save"
     bl_label = "Save Work Window"

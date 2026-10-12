@@ -71,11 +71,11 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
         pass
 
 
-NAME_UNITS = 5      # the New Object Name field at the start of 0B / 0C / 0D
+NAME_UNITS = 5      # the New Object Name field at the start of 2B / 2C / 2D
 
 
-def _step_row(col, context, named):
-    """A 0B / 0C / 0D row: the window buttons' New Object Name first (one setting, on all
+def _step_row(col, context, named, field=True):
+    """A 2B / 2C / 2D row: the window buttons' New Object Name first (one setting, on all
     three) - a split of the row, so the fields are equally wide on every row - then the
     returned row for the step's button and icons."""
     row = col.row(align=True)
@@ -86,8 +86,11 @@ def _step_row(col, context, named):
     split = row.split(factor=min(0.45, NAME_UNITS * 20 * scale / width), align=True)
     props = context.scene.multicamproject_props
     cell = split.row(align=True)
-    cell.alert = not props.new_object_name.strip()
-    cell.prop(props, "new_object_name", text="", placeholder="Object name")
+    if field:
+        cell.alert = not props.new_object_name.strip()
+        cell.prop(props, "new_object_name", text="", placeholder="Object name")
+    else:               # 2D keeps the object (and its name): the place stays empty
+        cell.label(text="")
     return split.row(align=True)
 
 
@@ -100,9 +103,9 @@ def _icons(row, n):
 
 
 class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
-    """Setup: Setup File IO (collections + folders), then 0A / 0B / 0C (or 0D) in any order - each adds its part to the same object:
-    MCP_ + MAT_, the camera lists, the Bake Source, EXPORT. 0E: new UVs for a handmade one"""
-    bl_label = "Setup"
+    """01. Setup: the file - Name Prefix and Setup File IO (collections + folders); the
+    Polycount Estimation under it. Unlocks 02"""
+    bl_label = "01. Setup"
     bl_idname = "MULTICAMPROJECT_PT_setup"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -111,26 +114,46 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
     bl_order = 0
 
     def draw_header(self, context):
-        self.layout.label(icon='SETTINGS')
+        from . import gate
+        self.layout.label(icon='CHECKMARK' if gate.ready(context.scene) else 'SETTINGS')
 
     def draw(self, context):
-        from . import module_manager as mm, gate
-        layout = self.layout
+        from . import gate
+        gate.draw_start(self.layout, context)       # [Name Prefix] [Setup File IO]
+
+
+def _chosen(row, chosen, mine):
+    """Grey a 02 row when the object already took another workflow (one per object)."""
+    row.enabled = chosen in {'NONE', mine}
+    return row
+
+
+class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
+    """02. Mesh Workflow: 2A Project from Sides (no cameras yet), then ONE of 2B Remesh /
+    2C Retopo / 2D Only Project - here (Local) or in a work window (Send Out). The
+    projection always comes along. Done when the Decimate is applied and uv_normal exists"""
+    bl_label = "02. Mesh Workflow"
+    bl_idname = "MULTICAMPROJECT_PT_mesh_workflow"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_parent_id = "MULTICAMPROJECT_PT_main"
+    bl_order = 1
+
+    def draw_header(self, context):
+        from . import steps
         obj = context.active_object
-        mesh = obj is not None and obj.type == 'MESH'
-        if not gate.ready(context.scene):
-            # locked: [Name Prefix] [Setup File IO] first, everything else greyed out
-            gate.draw_start(layout, context)
-            layout = layout.column()
-            layout.enabled = False
-        elif gate.decimate_pending(obj):
-            box = layout.box()
-            box.alert = True
-            box.label(text="Decide the Decimate first (Cutting & Modelling)", icon='MOD_DECIM')
-            layout = layout.column()
-            layout.enabled = False
-        if not mesh:
+        done = obj is not None and 2 in steps.state(obj, context.scene).done
+        self.layout.label(icon='CHECKMARK' if done else 'MOD_REMESH')
+
+    def draw(self, context):
+        from . import gate, module_manager as mm, steps
+        layout, _open = gate.step_box(self.layout, context, 2)
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH':
             layout.label(text="Select a mesh", icon='INFO')
+            return
+        chosen = steps.workflow(obj)
         cams = any(o.type == 'CAMERA' for o in context.scene.objects)
         col = layout.column(align=True)
         col.scale_y = 1.3
@@ -138,107 +161,110 @@ class MULTICAMPROJECT_PT_Setup(bpy.types.Panel):
         if mm.is_loaded("project_sides"):
             row = col.row(align=True)
             # the default start while the scene has no camera
-            row.operator("multicamproject.project_sides", text="0A. Project from Sides",
+            row.operator("multicamproject.project_sides", text="2A. Project from Sides",
                          icon='AXIS_SIDE', depress=not cams)
             row.popover(panel="MULTICAMPROJECT_PT_project_sides", text="", icon='PREFERENCES')
 
-        setup = mesh and hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup
-        named = bool(mm.is_loaded("linking"))     # the window buttons' name: 0B / 0C / 0D
-        if mm.is_loaded("camera_project"):
-            row = _step_row(col, context, named)
-            sub = row.row(align=True)
-            sub.enabled = cams
-            sub.operator("multicamproject.setup", text="0B. Projection",
-                         icon='CHECKMARK' if setup else 'CAMERA_DATA')
-            n = int(bool(setup and mm.is_loaded("remesh")))
-            if n:
-                _icons(row, n).operator("multicamproject.remove_projection", text="", icon='X')
-
+        named = bool(mm.is_loaded("linking"))     # the window buttons' name: 2B / 2C
         low = False
         if mm.is_loaded("remesh"):
             from .modules.remesh import workflow as wf
-            low = mesh and wf.is_low_poly(obj)
-            row = _step_row(col, context, named)
-            row.operator("multicamproject.remesh", text="0C. Remesh",
-                         icon='CHECKMARK' if low else 'MOD_REMESH')
-            unlink = bool(mesh and mm.is_loaded("baking")
+            low = wf.is_low_poly(obj)
+            row = _chosen(_step_row(col, context, named), chosen, 'REMESH')
+            row.operator("multicamproject.remesh", text="2B. Remesh",
+                         icon='CHECKMARK' if chosen == 'REMESH' else 'MOD_REMESH')
+            unlink = bool(mm.is_loaded("baking")
                           and obj.multicamproject_bake.bake_source is not None)
-            n = 2 + named + unlink
-            icons = _icons(row, n)
-            if named:       # 0B + 0C + Send Out in one click
+            icons = _icons(row, 2 + named + unlink)
+            if named:       # Remesh + Send Out in one click
                 icons.operator("multicamproject.work_remesh_out", text="",
                                icon='WINDOW').mode = 'REMESH'
             icons.operator("multicamproject.remesh_use_existing", text="", icon='LINKED')
             if unlink:
                 icons.operator("multicamproject.unlink_original", text="", icon='X')
             icons.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
-            retopo = low and wf.is_retopo(obj)
-            row = _step_row(col, context, named)
-            row.operator("multicamproject.retopo_empty", text="0D. Retopo",
-                         icon='CHECKMARK' if retopo else 'MESH_PLANE')
-            n = 2 + named
-            icons = _icons(row, n)
-            if named:       # 0B + 0D + Send Out in one click
+
+            row = _chosen(_step_row(col, context, named), chosen, 'RETOPO')
+            row.operator("multicamproject.retopo_empty", text="2C. Retopo",
+                         icon='CHECKMARK' if chosen == 'RETOPO' else 'MESH_PLANE')
+            icons = _icons(row, 2 + named)
+            if named:       # Retopo + Send Out in one click
                 icons.operator("multicamproject.work_remesh_out", text="",
                                icon='WINDOW').mode = 'RETOPO'
-            # from the selected mesh or empty
+            # from the selected mesh (ROOM_Template parts) or empty
             icons.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
             icons.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
 
-        hand = mesh and mm.is_loaded("baking") and obj.multicamproject_bake.handmade
-        if hand:
-            from .modules.baking import handmade
-            row = col.row(align=True)
-            if not handmade.has_uv_old(obj):
-                row.operator("multicamproject.handmade_edit_uv", text="0E. Rebake: Edit UV",
-                             icon='UV')
-            else:
-                row.operator("multicamproject.handmade_rebake", text="0E. Rebake from uv_old",
-                             icon='FILE_REFRESH')
-                row.operator("multicamproject.handmade_edit_uv", text="", icon='UV')
-                row.operator("multicamproject.handmade_finish_uv", text="", icon='CHECKMARK')
-                row.operator("multicamproject.handmade_cancel_uv", text="", icon='X')
+        if mm.is_loaded("camera_project"):
+            setup = obj.multicamproject_cam.is_setup
+            row = _chosen(_step_row(col, context, named, field=False), chosen, 'PROJECT')
+            sub = row.row(align=True)
+            sub.enabled = cams
+            sub.operator("multicamproject.setup", text="2D. Only Project",
+                         icon='CHECKMARK' if chosen == 'PROJECT' else 'CAMERA_DATA')
+            window = named and chosen == 'PROJECT'
+            x = setup and mm.is_loaded("remesh")
+            if window or x:
+                icons = row.row(align=True)
+                if window:      # Send Out / Receive (the object itself goes out)
+                    from .modules.linking import ui as link_ui
+                    link_ui.draw_row_button(icons, obj)
+                if x:
+                    icons.operator("multicamproject.remove_projection", text="", icon='X')
 
-        if not mesh:
+        if chosen == 'NONE':
+            hint = layout.row()
+            hint.active = False
+            hint.label(text="Pick one: 2B Remesh, 2C Retopo or 2D Only Project"
+                       if cams else "No camera in the scene: start with 2A", icon='INFO')
             return
-        # what the object has now
-        info = layout.column(align=True)
-        info.active = False
-        if not cams:
-            info.label(text="No camera in the scene: start with 0A", icon='INFO')
-        if hand and handmade.has_uv_old(obj):
-            warn = layout.row()
-            if obj.mode == 'EDIT':          # the mesh holds the UVs only after Edit Mode
-                warn.active = False
-                warn.label(text="Editing uv_normal - then 0E Rebake", icon='UV')
-            elif handmade.needs_rebake(obj):
-                warn.alert = True
-                warn.label(text="uv_normal changed - Rebake (or Cancel X)", icon='ERROR')
-            else:
-                warn.active = False
-                warn.label(text="Textures match uv_normal - Finish, or edit more", icon='CHECKMARK')
-        parts = []
-        if setup:
-            parts.append(f"{len(obj.multicamproject_cam.cameras)} cameras")
-        if low:
-            if wf.is_retopo(obj):
-                parts.append("retopo")
-            src = obj.multicamproject_bake.bake_source
-            parts.append(f"source: {src.name}" if src else "no Bake Source")
-        if hasattr(obj, "multicamproject_bake"):
-            d = obj.multicamproject_bake
-            parts.append("BAo_ baked" if d.ba_image else "no BAo_")
-        if parts:
-            info.label(text="  ·  ".join(parts), icon='OBJECT_DATA')
+        if chosen == 'HANDMADE':
+            hint = layout.row()
+            hint.active = False
+            hint.label(text="Handmade: its UVs change in 03 (Edit UV / Rebake)", icon='INFO')
+            return
+
+        # the end of 02: the Decimate decided, then uv_normal
+        if mm.is_loaded("remesh"):
+            from .modules.remesh import ui as remesh_ui, workflow as wf
+            if wf.decimate_pending(obj):
+                remesh_ui.draw_decide(layout, context, obj)
+                return
+        if mm.is_loaded("baking"):
+            from .modules.baking import common, operators as bops
+            if not common.has_uv_normal(obj):
+                box = layout.box().column(align=True)
+                box.alert = True
+                box.label(text="Last: uv_normal (the bake target)", icon='UV')
+                box.alert = False
+                if obj.mode == 'EDIT':
+                    box.label(text="Leave Edit Mode first", icon='INFO')
+                else:
+                    bops.draw_uv_fix(box, obj)
+                return
+        if 2 in steps.state(obj, context.scene).done:
+            info = layout.row()
+            info.active = False
+            parts = [{'REMESH': "Remesh", 'RETOPO': "Retopo", 'PROJECT': "Only Project"}
+                     .get(chosen, chosen)]
+            if mm.is_loaded("camera_project") and obj.multicamproject_cam.is_setup:
+                parts.append(f"{len(obj.multicamproject_cam.cameras)} cameras")
+            if low:
+                src = obj.multicamproject_bake.bake_source
+                parts.append(f"source: {src.name}" if src else "no Bake Source")
+            info.label(text="  ·  ".join(parts) + "  ·  uv_normal - go on in 03",
+                       icon='CHECKMARK')
 
 
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_PT_Infos)
     bpy.utils.register_class(MULTICAMPROJECT_PT_MainPanel)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Setup)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_MeshWorkflow)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_MeshWorkflow)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Setup)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_MainPanel)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Infos)

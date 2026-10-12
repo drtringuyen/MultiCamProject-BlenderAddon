@@ -206,7 +206,7 @@ def _enter_tool(context, obj):
 
 
 class MULTICAMPROJECT_OT_Remesh(bpy.types.Operator):
-    """0C Remesh: make the low-poly copy. It takes the name, EXPORT and the textures, gets
+    """2B Remesh: make the low-poly copy. It takes the name, EXPORT and the textures, gets
     a Decimate (vg_Protect) and the camera projection. The original becomes <name>_original
     in "Original Mesh", the copy's Bake Source (BA_ / BN_). First decide and apply the
     Decimate (the projection waits, muted), then PolyCut"""
@@ -317,7 +317,7 @@ def focus_retopo(context, obj, report=None):
 
 
 class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
-    """0D Retopo: as 0C Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
+    """2C Retopo: as 2B Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
     but the new object starts as the other selected mesh (e.g. a ROOM_Template part, its UV
     as uv_normal) - or empty, per the 0D option - to model by hand on the original.
     Then both in local view and Edit Mode on the new object"""
@@ -572,7 +572,7 @@ _state = {"action": 'PROJECTED', "seam": 'MARK'}
 
 
 class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
-    """02 Select & Set: Projected / Baked (the VCMix alphas), Protect from Decimate, Delete,
+    """Select & Set: Projected / Baked (the VCMix alphas), Protect from Decimate, Delete,
     and the outline's seam. Edit Mode: the selected faces. Sculpt Mode: the face set picked
     with L or made by the last PolyCut"""
     bl_idname = "multicamproject.remesh_set_faces"
@@ -726,7 +726,7 @@ class MULTICAMPROJECT_OT_RemeshSetFaces(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_RemeshApplyDecimate(bpy.types.Operator):
-    """03 Apply Decimate: the low poly's topology becomes final (protected parts stay as they
+    """Apply Decimate (the end of 2B): the low poly's topology becomes final (protected parts stay as they
     are). Unwrap uv_normal after this - the Decimate collapses across UV seams. The Bake
     Source keeps the full detail; Ctrl+Z brings the dense mesh back"""
     bl_idname = "multicamproject.remesh_apply_decimate"
@@ -848,7 +848,7 @@ class MULTICAMPROJECT_OT_ResetObject(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_RemoveProjection(bpy.types.Operator):
-    """Remove 0A/0B from the active mesh only: projection modifier, UV_camN, VCMix, camera
+    """Remove the camera projection from the active mesh only: projection modifier, UV_camN, VCMix, camera
     slots, MCP_ and BAp_/BNp_. The cameras stay in the scene; the original's bake, ALB_/NOR_
     and MAT_ stay. The Bake Route becomes From Original (with a Bake Source)"""
     bl_idname = "multicamproject.remove_projection"
@@ -860,7 +860,7 @@ class MULTICAMPROJECT_OT_RemoveProjection(bpy.types.Operator):
         obj = context.active_object
         why = wf.reset_problem(obj)
         if not why and not (hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup):
-            why = "No camera projection (0B) on it"
+            why = "No camera projection on it"
         if why:
             cls.poll_message_set(why)
         return not why
@@ -882,7 +882,7 @@ class MULTICAMPROJECT_OT_RemoveProjection(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_UnlinkOriginal(bpy.types.Operator):
-    """Remove 0C/0D's link from the active mesh: no Bake Source, BAo_/BNo_ unlinked (their
+    """Remove 2B / 2C's link from the active mesh: no Bake Source, BAo_/BNo_ unlinked (their
     files stay until Check Textures). The low poly and the hidden original stay. The Bake
     Route becomes From Projection"""
     bl_idname = "multicamproject.unlink_original"
@@ -966,11 +966,11 @@ def register():
                                                  'PRESS')))
     bpy.types.Scene.multicamproject_retopo_snap = BoolProperty(
         name="Retopo Snapping", default=True,
-        description="0D: snap to the original's surface (Face Project) and the Retopology "
+        description="2C: snap to the original's surface (Face Project) and the Retopology "
                     "overlay - changes the scene's snapping settings")
     bpy.types.Scene.multicamproject_retopo_plane = BoolProperty(
         name="Start from the Selected Mesh", default=True,
-        description="0D: on - the retopo starts as a copy of the other selected mesh (e.g. "
+        description="2C: on - the retopo starts as a copy of the other selected mesh (e.g. "
                     "a ROOM_Template part; select it, then the scan active), its UV map as "
                     "uv_normal; off - completely empty, model from nothing")
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(_face_menu)

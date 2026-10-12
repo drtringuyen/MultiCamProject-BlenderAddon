@@ -407,9 +407,9 @@ def check_handmade(obj):
     from ..baking import handmade
     if handmade.needs_rebake(obj):
         out.append(Issue(obj.name, 'HANDMADE', "uv_normal changed, the textures did not - "
-                         "0E Rebake (or Cancel the UV edit)", WARNING))
+                         "Rebake in 03 (or Cancel the UV edit)", WARNING))
     elif handmade.has_uv_old(obj):
-        out.append(Issue(obj.name, 'HANDMADE', "UV edit still open - 0E Finish", INFO))
+        out.append(Issue(obj.name, 'HANDMADE', "UV edit still open - Finish in 03", INFO))
     if obj.data.uv_layers.get(common.UV_NORMAL) is None:
         out.append(Issue(obj.name, 'HANDMADE', "no uv_normal - rename the textures' UV map to "
                          "uv_normal", ERROR))
