@@ -144,14 +144,30 @@ def push_pull(c, w):
 
 
 def relax(c, hole, steps: int):
-    """Laplace smoothing of the hole pixels only (the rest stays as boundary)."""
-    if steps <= 0 or not hole.any():
+    """Laplace smoothing of the hole pixels only (the rest stays as boundary). Works on the
+    hole's bounds plus a 1 px ring, not the whole crop."""
+    box = bbox(hole) if steps > 0 else None
+    if box is None:
         return c
-    c = c.copy()
+    h, w = hole.shape
+    x0, y0, x1, y1 = max(0, box[0] - 1), max(0, box[1] - 1), min(w, box[2] + 1), min(h, box[3] + 1)
+    sub = c[y0:y1, x0:x1].copy()
+    hm = hole[y0:y1, x0:x1]
+    p = np.pad(sub, ((1, 1), (1, 1), (0, 0)), mode='edge')
+    inner = p[1:-1, 1:-1]                       # a view: sub lives inside p
+    hm3 = np.broadcast_to(hm[..., None], inner.shape)
+    avg = np.empty_like(inner)
     for _ in range(steps):
-        p = np.pad(c, ((1, 1), (1, 1), (0, 0)), mode='edge')
-        avg = (p[:-2, 1:-1] + p[2:, 1:-1] + p[1:-1, :-2] + p[1:-1, 2:]) * 0.25
-        c[hole] = avg[hole]
+        np.add(p[:-2, 1:-1], p[2:, 1:-1], out=avg)
+        avg += p[1:-1, :-2]
+        avg += p[1:-1, 2:]
+        avg *= 0.25
+        np.copyto(inner, avg, where=hm3)
+        p[0, 1:-1], p[-1, 1:-1] = p[1, 1:-1], p[-2, 1:-1]     # keep the edge padding
+        p[:, 0], p[:, -1] = p[:, 1], p[:, -2]
+    sub = inner
+    c = c.copy()
+    c[y0:y1, x0:x1] = sub
     return c
 
 
@@ -209,17 +225,23 @@ def fill(crop, hole, valid=None, grow: int = 0, grain: float = 1.0, grain_radius
     known = valid & ~hole
     if not hole.any() or not known.any():
         return crop.copy(), hole
-    rgb = crop[..., :3].astype(np.float64)
-    smooth = push_pull(rgb, known.astype(np.float64))
+    rgb = crop[..., :3].copy()                  # float32: half the memory traffic
+    smooth = push_pull(rgb, known.astype(np.float32))
     bh = bbox(hole)
     smooth = relax(smooth, hole, steps=min(80, max(8, max(bh[2] - bh[0], bh[3] - bh[1]) // 2)))
     if grain > 0.0:
         shift = find_source_shift(hole, known)
         if shift is not None:
-            detail = rgb - box_blur(rgb, known.astype(np.float64), grain_radius)
-            ys, xs = np.nonzero(hole)
+            # the detail (pixels minus their blur) of the source area only, not the whole crop
             dx, dy = shift
-            smooth[ys, xs] += grain * detail[ys + dy, xs + dx]
+            h, w = hole.shape
+            r = grain_radius
+            sx0, sy0 = max(0, bh[0] + dx - r), max(0, bh[1] + dy - r)
+            sx1, sy1 = min(w, bh[2] + dx + r), min(h, bh[3] + dy + r)
+            win = rgb[sy0:sy1, sx0:sx1]
+            detail = win - box_blur(win, known[sy0:sy1, sx0:sx1].astype(np.float32), r)
+            ys, xs = np.nonzero(hole)
+            smooth[ys, xs] += grain * detail[ys + dy - sy0, xs + dx - sx0]
     out = crop.copy()
     out[..., :3][hole] = np.clip(smooth[hole], 0.0, 1.0)
     return out, hole
