@@ -53,7 +53,8 @@ def nor_name(obj):
 # of the two routes - BAo_/BNo_ baked from the Original (Bake from Source), BAp_/BNp_ from
 # the Projection. Only files with these prefixes are ever cleaned up
 FINAL_PREFIXES = ("ALB_", "NOR_")
-WORK_PREFIXES = ("BAo_", "BNo_", "BNoG_", "BAp_", "BNp_")
+PAINT_PREFIXES = ("MSK_", "CMX1_", "CMX2_")     # Paint Textures (camera_project.paint_tex)
+WORK_PREFIXES = ("BAo_", "BNo_", "BNoG_", "BAp_", "BNp_") + PAINT_PREFIXES
 OWN_PREFIXES = FINAL_PREFIXES + WORK_PREFIXES
 LEGACY_PREFIXES = ("BA_", "BN_")        # packed BA_/BN_ before 2026-10-05 (now BAo_/BNo_)
 
@@ -86,6 +87,27 @@ def bnp_name(obj):
     """BNp_<name>: the normal generated from BAp_."""
     from .naming import typed_name
     return typed_name("BNp", obj)
+
+
+def msk_name(obj):
+    """MSK_<name>: the painted blend mask."""
+    from .naming import typed_name
+    return typed_name("MSK", obj)
+
+
+def cmx1_name(obj):
+    """CMX1_<name>: the painted mix of cameras 1-3."""
+    from .naming import typed_name
+    return typed_name("CMX1", obj)
+
+
+def cmx2_name(obj):
+    """CMX2_<name>: the painted mix of cameras 4-6."""
+    from .naming import typed_name
+    return typed_name("CMX2", obj)
+
+
+PAINT_IMAGES = (("msk_image", msk_name), ("cmx1_image", cmx1_name), ("cmx2_image", cmx2_name))
 
 
 def mat_name(obj):

@@ -2,7 +2,7 @@ import bpy
 from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
 from ... import gate
-from . import core
+from . import core, paint_tex
 from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
 
 
@@ -144,6 +144,17 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         split.prop(d, "project_through", text="Project through", toggle=True,
                    icon='XRAY')
+        # where the camera paint buttons paint: 1K textures on uv_normal, or the vertices
+        props = context.scene.multicamproject_props
+        row = self._labeled(context, col, "Paint")
+        on = props.paint_textures
+        row.prop(props, "paint_textures", toggle=True, icon='TEXTURE' if on else 'VPAINT_HLT',
+                 text="Textures 1K (MSK_ / CMX_)" if on else "Vertices (VCMix)")
+        why = paint_tex.problem(obj, context.scene) if on else ""
+        if why:
+            r = col.row()
+            r.alert = True
+            r.label(text=why, icon='ERROR')
 
         box.separator(type='LINE')
         if not d.cameras:

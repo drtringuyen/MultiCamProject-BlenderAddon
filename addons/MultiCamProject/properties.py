@@ -69,6 +69,14 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "the scan materials in Objects and Original Mesh). The add-on's MCP_ / "
                     "MAT_ are not touched")
 
+    paint_textures: BoolProperty(
+        name="Paint Textures", default=True,
+        update=lambda self, context: _on_paint_textures(self, context),
+        description="On: the camera paint buttons paint 1K textures on uv_normal (MSK_ blend "
+                    "mask, CMX1_ / CMX2_ cameras) - precise, not tied to the vertices. Off: they "
+                    "paint VCMix / VCMix2 as before, and MCP_ ignores the textures (kept, "
+                    "toggle back any time)")
+
     # role folders (folders.py; the bake and export folders live in their modules)
     scan_textures_folder: StringProperty(
         name="Scan Textures", default="//00.Scan/01.FBX/", subtype='DIR_PATH',
@@ -84,6 +92,14 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="Folder holding all camera photos. Reload relinks every camera's "
                     "background photo from it; every object with Camera Projection uses it "
                     "(new setups too) and gets a Reload All")
+
+
+def _on_paint_textures(props, context):
+    try:
+        from .modules.camera_project import paint_tex
+    except ImportError:
+        return
+    paint_tex.on_toggle(props, context)
 
 
 def _on_original_normal(props, context):

@@ -56,7 +56,8 @@ KEEP_DAYS = 30          # unlinked hand-off folders older than this go at the ne
 TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
             ("bap_image", "bap_name", False), ("bnp_image", "bnp_name", True),
             ("bng_image", "bng_name", True), ("alb_image", "alb_name", False),
-            ("nor_image", "nor_name", True))
+            ("nor_image", "nor_name", True), ("msk_image", "msk_name", True),
+            ("cmx1_image", "cmx1_name", True), ("cmx2_image", "cmx2_name", True))
 META = ("ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
         "last_ba_seconds", "last_bp_seconds", "last_bake_seconds", "last_nor_seconds",
         "ba_far_share", "ba_far_max", "ba_fit_cage", "bn_stale")
@@ -278,6 +279,15 @@ def _keep_names(obj):
     return names
 
 
+def _save_paint():
+    """Painted MSK_ / CMX1_ / CMX2_ into their files: the other Blender reads the files."""
+    try:
+        from ..camera_project import paint_tex
+    except ImportError:
+        return
+    paint_tex.save_dirty()
+
+
 def send_out(context, obj, start="", save_as=""):
     """Write obj (with everything it points to) for a new Blender and open it there.
     `start`: 'REMESH' / 'RETOPO' opens the window in the PolyCut tool / the retopo.
@@ -288,6 +298,7 @@ def send_out(context, obj, start="", save_as=""):
         raise RuntimeError("Save the main file first (Receive copies the bakes into its folder)")
     if obj.mode != 'OBJECT':
         obj.update_from_editmode()
+    _save_paint()
     _clear_old_jobs()
     from . import originals
     loaded = originals.ensure_loaded(obj)       # the window gets the full original
@@ -391,6 +402,7 @@ def send_mesh(obj, path):
     """Link obj to the saved work file at `path` and send its current mesh along: the window
     keeps what it has in "old version" and takes this mesh (take_incoming). Opens it.
     Returns the window's object name."""
+    _save_paint()
     work_name = relink(obj, path)
     rec = out_record(obj)
     folder = job_dir(rec["id"])
@@ -597,6 +609,7 @@ def send_back(context):
         raise RuntimeError("This window's object is gone")
     if obj.mode != 'OBJECT':
         obj.update_from_editmode()
+    _save_paint()
     folder = job_dir(job_id)
     os.makedirs(folder, exist_ok=True)
     me = obj.data.copy()

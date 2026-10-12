@@ -61,10 +61,26 @@ def remember_face_set(obj, fs):
     _last_face_set[obj.data.name] = fs
 
 
+def _in_textures(obj):
+    """Projected / Baked go into MSK_ (Paint Textures on and possible for obj)."""
+    from ..camera_project import paint_tex
+    return paint_tex.enabled() and not paint_tex.problem(obj, bpy.context.scene)
+
+
+def _set_mask_texture(obj, tris, all_tris, value):
+    """MSK_ = value over the region's uv_normal pixels (after the running operator)."""
+    from ..camera_project import core as cp, paint_tex
+    _img, new = paint_tex.ensure(obj, "MSK", bpy.context.scene)
+    if new:
+        cp.ensure_material(obj)
+    cov = paint_tex.coverage(obj, tris, all_tris)
+    paint_tex.queue(obj, "MSK", paint_tex.fill_fn(cov, (value, value, value)))
+
+
 def needs_paint_layers(obj, action):
     """Projected / Baked write the mesh's own VCMix layers: they must exist (Object Mode
-    makes them with camera_project.core.ensure_paint_layer)."""
-    if action not in MASK_ACTIONS:
+    makes them with camera_project.core.ensure_paint_layer). Not with Paint Textures."""
+    if action not in MASK_ACTIONS or _in_textures(obj):
         return False
     ca = obj.data.color_attributes
     return ca.get(gn_builder.LAYERS[0]) is None
@@ -140,7 +156,10 @@ def apply_object_mode(obj, faces, action, seam):
         me.edges.foreach_get("use_seam", seams)
         seams[boundary_edges(me, faces)] = seam == 'MARK'
         me.edges.foreach_set("use_seam", seams)
-    if action in MASK_ACTIONS:
+    if action in MASK_ACTIONS and _in_textures(obj):
+        from ..camera_project import paint_tex
+        _set_mask_texture(obj, paint_tex.mesh_triangles(me, faces), None, MASK_ACTIONS[action])
+    elif action in MASK_ACTIONS:
         _set_alpha_object(me, faces, MASK_ACTIONS[action])
     elif action in {'PROTECT', 'UNPROTECT'}:
         vg = obj.vertex_groups.get(wf.VG_PROTECT) or obj.vertex_groups.new(name=wf.VG_PROTECT)
@@ -235,7 +254,11 @@ def apply_edit_mode(obj, bm, faces, action, seam):
     if seam != 'KEEP':
         for e in _edit_boundary(faces):
             e.seam = seam == 'MARK'
-    if action in MASK_ACTIONS:
+    if action in MASK_ACTIONS and _in_textures(obj):
+        from ..camera_project import paint_tex
+        _set_mask_texture(obj, paint_tex.bmesh_triangles(bm, faces),
+                          paint_tex.bmesh_triangles(bm, bm.faces), MASK_ACTIONS[action])
+    elif action in MASK_ACTIONS:
         _set_alpha_edit(obj, bm, faces, MASK_ACTIONS[action])
     elif action in {'PROTECT', 'UNPROTECT'}:
         vg = obj.vertex_groups.get(wf.VG_PROTECT) or obj.vertex_groups.new(name=wf.VG_PROTECT)

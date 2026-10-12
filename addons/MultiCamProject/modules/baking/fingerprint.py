@@ -6,6 +6,7 @@ Two levels:
 Cheap: no image is ever loaded (paths only)."""
 import hashlib
 import json
+import os
 import time
 
 import bpy
@@ -175,8 +176,35 @@ def _projection_parts(obj, cached=False):
             v = None
         parts.append((k, tuple(round(x, 5) for x in v) if hasattr(v, "__len__")
                        and not isinstance(v, str) else v))
-    parts.append(_material_images(d.material))     # the photos
+    parts.append(_material_images(d.material))     # the photos (and the Paint Textures Value)
+    parts.append(_paint_parts(obj))
     return parts
+
+
+_PAINT_SUMS = {}        # image name -> (revision, checksum)
+
+
+def _paint_parts(obj):
+    """What MSK_ / CMX1_ / CMX2_ hold - painted pixels change no path, so their content
+    (1K, read again only after a stroke, a write or an undo: paint_tex.revision)."""
+    from ..camera_project import paint_tex
+    out = []
+    for kind, img in sorted(paint_tex.images(obj).items()):
+        path = common.image_file(img)
+        try:            # a Receive or reload brings another file: read again too
+            rev = (paint_tex.revision(img), path, os.path.getmtime(path) if path else 0)
+        except OSError:
+            rev = (paint_tex.revision(img), path, 0)
+        got = _PAINT_SUMS.get(img.name)
+        if got is None or got[0] != rev:
+            try:
+                px = paint_tex.read(img)
+                got = (rev, hashlib.sha1(np.round(px * 255).astype(np.uint8).tobytes()).hexdigest())
+            except (RuntimeError, ValueError):
+                got = (rev, "unreadable")
+            _PAINT_SUMS[img.name] = got
+        out.append((kind, got[1]))
+    return out
 
 
 def projection_state(obj, cached=False):

@@ -4,7 +4,7 @@ import bpy
 import numpy as np
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import core, gn_builder, paint_sync, wrapper
+from . import core, gn_builder, paint_sync, paint_tex, wrapper
 
 
 def _mesh_poll(context):
@@ -16,7 +16,7 @@ def _setup_poll(context):
     return _mesh_poll(context) and core.data(context.active_object).is_setup
 
 
-LIST_MODES = {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX', 'SCULPT'}
+LIST_MODES = {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX', 'PAINT_TEXTURE', 'SCULPT'}
 # Bake Camera Mixture: from these too (applied in Object Mode, then back)
 BAKE_MODES = LIST_MODES | {'PAINT_TEXTURE', 'PAINT_WEIGHT'}
 
@@ -561,11 +561,24 @@ def flood_ready(context, obj):
     the face selection mask on."""
     if context.mode == 'EDIT_MESH':
         return obj.data.count_selected_items()[2] > 0
-    return context.mode == 'PAINT_VERTEX' and obj.data.use_paint_mask
+    return context.mode in {'PAINT_VERTEX', 'PAINT_TEXTURE'} and obj.data.use_paint_mask
+
+
+def paint_mode_ready(context):
+    return context.mode in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX', 'PAINT_TEXTURE'}
+
+
+def leave_paint(obj):
+    """A stroke not synced yet belongs to the layer / texture painted before."""
+    if obj.mode == 'VERTEX_PAINT':
+        paint_sync.sync(obj)
+    elif obj.mode == 'TEXTURE_PAINT':
+        paint_sync.sync_texture(obj)
 
 
 class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
-    """Vertex Paint this camera's color: cameras 1-3 into VCMix, 4-6 into VCMix2"""
+    """Paint this camera's color: cameras 1-3 into CMX1_ (Paint Textures) or VCMix, 4-6
+    into CMX2_ or VCMix2"""
     bl_idname = "multicamproject.cam_paint"
     bl_label = "Paint Camera"
     bl_options = {'REGISTER', 'UNDO'}
@@ -579,7 +592,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         return (obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
-                and context.mode in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX'})
+                and paint_mode_ready(context))
 
     @classmethod
     def description(cls, context, props):
@@ -587,6 +600,8 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         cam = bpy.data.objects.get(props.camera)
         slot = core.slot_of(obj, cam) if obj and cam else 0
         layer = core.slot_layer(slot) if slot else "VCMix"
+        if paint_tex.enabled(context.scene):
+            layer = f"{paint_tex.kind_of_slot(slot or 1)}_, 1K on uv_normal"
         through = obj is not None and core.data(obj).project_through
         reach = ("Project through is on: the brush also reaches faces the mesh hides from "
                  "this camera" if through else
@@ -620,9 +635,10 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if self.mode == 'FLOOD' and not flood_ready(context, obj):
             self.report({'ERROR'}, "Select faces in Edit Mode first")
             return {'CANCELLED'}
+        if paint_tex.enabled(context.scene):
+            return self._texture(context, obj, cam, slot)
 
-        if obj.mode == 'VERTEX_PAINT':
-            paint_sync.sync(obj)            # a stroke not synced yet belongs to the old layer
+        leave_paint(obj)
         if context.mode != 'OBJECT':        # edit-mode selection syncs to the mesh here
             bpy.ops.object.mode_set(mode='OBJECT')
         # Erase works on every layer at once: VCMix alpha is the blend mask of all cameras
@@ -676,6 +692,64 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             paint_sync.sync(obj)
         return {'FINISHED'}
 
+    def _texture(self, context, obj, cam, slot):
+        """Paint Textures: Texture Paint on MSK_ (Erase) / CMX1_ / CMX2_ through uv_normal.
+        Erase paints the mask black (Shift: white); Fill fills the selected faces' UV."""
+        scene = context.scene
+        why = paint_tex.problem(obj, scene)
+        if why:
+            self.report({'ERROR'}, why)
+            return {'CANCELLED'}
+        leave_paint(obj)
+        if context.mode != 'OBJECT':        # edit-mode selection syncs to the mesh here
+            bpy.ops.object.mode_set(mode='OBJECT')
+        kind = "MSK" if self.mode == 'ERASE' else paint_tex.kind_of_slot(slot)
+        try:
+            img, new = paint_tex.ensure(obj, kind, scene)
+            if kind == "CMX2":      # made here, in this undo step: a stroke's clear writes it
+                new |= paint_tex.ensure(obj, "CMX1", scene)[1]
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        if new:
+            core.ensure_material(obj)       # MCP_ gets the texture's nodes
+        through = core.data(obj).project_through and self.mode != 'ERASE'
+        blocked = None
+        if self.mode != 'ERASE' and not through:
+            blocked = core.visible_faces(obj, cam, scene)
+        polys = obj.data.polygons
+        color = core.SLOT_COLORS[slot]
+        if self.mode == 'FLOOD':
+            picked = np.zeros(len(polys), dtype=bool)
+            polys.foreach_get("select", picked)
+            faces = picked & blocked if blocked is not None else picked
+            cov = paint_tex.coverage(obj, paint_tex.mesh_triangles(obj.data, faces))
+            paint_tex.queue(obj, kind, paint_tex.fill_fn(cov, color))
+            if kind == "CMX2":              # cameras 4-6 show: cameras 1-3 off there
+                paint_tex.queue(obj, "CMX1", paint_tex.claim_fn(cov))
+            n = int(picked.sum() - faces.sum())
+            if n:
+                self.report({'INFO'}, f"{n} selected face(s) hidden from '{cam.name}' "
+                                      "left out (Project through fills them)")
+        elif self.mode == 'PAINT':
+            if blocked is not None:     # the brush only reaches what the camera sees
+                polys.foreach_set("select", blocked.tolist())
+                obj.data.use_paint_mask = True
+                obj[MASK_KEY] = cam.name
+            elif obj.get(MASK_KEY):
+                obj.data.use_paint_mask = False
+                del obj[MASK_KEY]
+        elif obj.get(MASK_KEY):         # Erase reaches the whole mesh
+            obj.data.use_paint_mask = False
+            del obj[MASK_KEY]
+        paint_tex.start_painting(context, obj, img, through)
+        if self.mode == 'ERASE':
+            paint_tex.set_brush(context, (1.0, 1.0, 1.0) if self.shift else (0.0, 0.0, 0.0))
+        else:
+            paint_tex.set_brush(context, color)
+        paint_sync.reset_texture(obj)
+        return {'FINISHED'}
+
 
 class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
     """Set the blend mask on the whole object: All Projected (both alphas 1) or All Baked
@@ -697,11 +771,14 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
     def poll(cls, context):
         obj = context.active_object
         return (obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
-                and context.mode in {'OBJECT', 'PAINT_VERTEX', 'EDIT_MESH', 'SCULPT'})
+                and context.mode in {'OBJECT', 'PAINT_VERTEX', 'PAINT_TEXTURE', 'EDIT_MESH',
+                                     'SCULPT'})
 
     def execute(self, context):
         import numpy as np
         obj = context.active_object
+        if paint_tex.enabled(context.scene):
+            return self._texture(context, obj)
         mode = obj.mode
         if mode == 'VERTEX_PAINT':
             paint_sync.sync(obj)
@@ -730,6 +807,29 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
             paint_sync.reset(obj)
         return {'FINISHED'}
 
+    def _texture(self, context, obj):
+        """Paint Textures: MSK_ = value everywhere (painted, so it wins over the vertex alphas)."""
+        why = paint_tex.problem(obj, context.scene)
+        if why:
+            self.report({'ERROR'}, why)
+            return {'CANCELLED'}
+        leave_paint(obj)
+        try:
+            _img, new = paint_tex.ensure(obj, "MSK", context.scene)
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        if new:
+            core.ensure_material(obj)
+        v = self.value
+
+        def fill(arr):
+            arr[:, :3] = v
+            arr[:, 3] = 1.0
+            return arr
+        paint_tex.queue(obj, "MSK", fill)
+        return {'FINISHED'}
+
 
 class MULTICAMPROJECT_OT_ResetCameraMix(bpy.types.Operator):
     """Reset Camera Mix: which camera shows where (VCMix / VCMix2 R, G, B) from the cameras
@@ -746,6 +846,10 @@ class MULTICAMPROJECT_OT_ResetCameraMix(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         done = core.reset_camera_mix(obj)
+        for kind in ("CMX1", "CMX2"):       # the painted camera textures: nothing painted
+            if paint_tex.get(obj, kind) is not None:
+                paint_tex.queue(obj, kind, paint_tex.clear_fn)
+                done.append(paint_tex.image_name(obj, kind))
         if not done:
             self.report({'WARNING'}, "Nothing reset (no painted layers, or a live Decimate)")
             return {'CANCELLED'}

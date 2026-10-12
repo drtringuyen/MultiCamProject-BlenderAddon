@@ -20,21 +20,29 @@ The session ends when another layer is painted or Vertex Paint is left: _mcp_mas
 back into VCMix2 alpha. A black brush claims nothing.
 Only faces turned toward the painted camera are claimed: a brush that reaches through the
 mesh (or around its silhouette) must not hand the far side to a camera that cannot see it.
+
+Paint Textures (paint_tex) work the same way in Texture Paint: a stroke into CMX2_ claims
+CMX1_ under it (cameras 1-3 painted to 0 there, its alpha up), pixel by pixel, only where
+the faces turn toward the painted camera. The mask is its own texture (MSK_), so there is
+no marker or stash. The clear is its own undo step (paint_tex.write).
 """
 import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from . import core, gn_builder
+from . import core, gn_builder, paint_tex
 
 L1, L2 = gn_builder.LAYERS
 STASH = gn_builder.MASK2_STASH
-STROKE_OPS = {"PAINT_OT_vertex_paint"}
+STROKE_OPS = {"PAINT_OT_vertex_paint", "PAINT_OT_image_paint"}
 CLAIM_MIN = 1e-4
 
 _snap = {}          # mesh pointer -> {layer: color array}
 _dirty = set()      # mesh pointers changed since the last sync
 _sessions = set()   # names of objects with VCMix2 alpha in _mcp_mask2 (camera 4-6 session)
+_tsnap = {}         # object name -> CMX2_ pixels before the next stroke (Texture Paint)
+_tfacing = {}       # (object, camera, faces) -> pixels whose faces turn toward the camera
+_tstate = {"stroking": False, "dirty": False}
 
 
 def _key(me):
@@ -161,7 +169,9 @@ def _undo_push(message):
 
 
 def _brush_color():
-    vp = bpy.context.scene.tool_settings.vertex_paint
+    ts = bpy.context.scene.tool_settings
+    obj = _active_object()
+    vp = ts.image_paint if obj is not None and obj.mode == 'TEXTURE_PAINT' else ts.vertex_paint
     ups = vp.unified_paint_settings
     return tuple(ups.color if ups.use_unified_color else (vp.brush.color if vp.brush else (1, 1, 1)))
 
@@ -258,6 +268,95 @@ def sync(obj, push_undo=True):
     return changed
 
 
+# ---------------------------------------------------------------- Texture Paint (CMX2_)
+
+def _canvas():
+    return bpy.context.scene.tool_settings.image_paint.canvas
+
+
+def _tex_qualifies(obj):
+    """Texture painting a set-up object's CMX2_ (cameras 4-6)."""
+    if obj is None or obj.type != 'MESH' or obj.mode != 'TEXTURE_PAINT':
+        return False
+    tex = paint_tex.get(obj, "CMX2")
+    return tex is not None and _canvas() == tex and core.data(obj).is_setup
+
+
+def reset_texture(obj):
+    """Snapshot CMX2_: the next stroke is measured from here."""
+    _tsnap.pop(obj.name, None)
+    if _tex_qualifies(obj):
+        _tsnap[obj.name] = paint_tex.read(paint_tex.get(obj, "CMX2"))
+
+
+def _facing_pixels(obj, cam):
+    """Per pixel of uv_normal: does its face turn toward `cam`? (the same test as _facing,
+    per face)"""
+    me = obj.data
+    key = (obj.name, cam.name, len(me.polygons))
+    if key in _tfacing:
+        return _tfacing[key]
+    n = len(me.polygons)
+    nr = np.empty(n * 3, dtype=np.float32)
+    me.polygons.foreach_get("normal", nr)
+    om, cm = core.world_matrix(obj), core.world_matrix(cam)
+    nmat = np.array(om.to_3x3().inverted_safe().transposed(), dtype=np.float32)
+    nr = nr.reshape(n, 3) @ nmat.T
+    if cam.data.type == 'ORTHO':
+        facing = nr @ np.array(cm.to_3x3().col[2], dtype=np.float32) > 0.0
+    else:
+        co = np.empty(n * 3, dtype=np.float32)
+        me.polygons.foreach_get("center", co)
+        mw = np.array(om, dtype=np.float32)
+        co = co.reshape(n, 3) @ mw[:3, :3].T + mw[:3, 3]
+        facing = (nr * (np.array(cm.translation, dtype=np.float32) - co)).sum(axis=1) > 0.0
+    px = paint_tex.coverage(obj, paint_tex.mesh_triangles(me, facing))
+    _tfacing.clear()        # one camera at a time
+    _tfacing[key] = px
+    return px
+
+
+def sync_texture(obj):
+    """Cameras 1-3 off in CMX1_ where the last stroke(s) painted cameras 4-6 into CMX2_."""
+    paint_tex.bump_canvas(obj, _canvas())
+    if not _tex_qualifies(obj):
+        _tsnap.pop(getattr(obj, "name", ""), None)
+        return False
+    tex = paint_tex.get(obj, "CMX2")
+    old = _tsnap.get(obj.name)
+    cur = paint_tex.read(tex)
+    _tsnap[obj.name] = cur
+    if old is None or old.shape != cur.shape or _brush_is_black():
+        return False
+    claim = np.clip((cur[:, :3] - old[:, :3]).max(axis=1), 0.0, 1.0)
+    claim = np.maximum(claim, np.clip(cur[:, 3] - old[:, 3], 0.0, 1.0))
+    if claim.max(initial=0.0) <= CLAIM_MIN:
+        return False
+    cam = _painted_camera(obj, L2)
+    if cam is not None:
+        claim = claim * _facing_pixels(obj, cam)
+    if claim.max(initial=0.0) <= CLAIM_MIN:
+        return False
+    img, new = paint_tex.ensure(obj, "CMX1", bpy.context.scene)
+    if new:
+        core.ensure_material(obj)
+    paint_tex.write(img, paint_tex.claim_fn(claim)(paint_tex.read(img)))
+    obj.update_tag()
+    return True
+
+
+def _tick_texture(obj):
+    if _stroke_running():
+        _tstate["stroking"] = True
+        return 0.05
+    if _tstate["stroking"] or _tstate.get("dirty"):
+        _tstate["stroking"] = _tstate["dirty"] = False
+        sync_texture(obj)
+    elif obj.name not in _tsnap and _tex_qualifies(obj):
+        reset_texture(obj)
+    return 0.1
+
+
 # ---------------------------------------------------------------- after each stroke
 
 def _stroke_running():
@@ -279,6 +378,10 @@ def _tick():
                 if o is None or o.mode != 'VERTEX_PAINT':
                     if o is None or not end_session(o):
                         _sessions.discard(name)
+            if obj is not None and obj.type == 'MESH' and obj.mode == 'TEXTURE_PAINT':
+                return _tick_texture(obj)
+            _tsnap.clear()
+            _tstate["stroking"] = False
             return 0.25
         if _stroke_running():
             return 0.05
@@ -302,6 +405,12 @@ def _tick():
 @persistent
 def _on_depsgraph(scene, depsgraph):
     obj = _active_object()
+    if obj is not None and obj.type == 'MESH' and obj.mode == 'TEXTURE_PAINT':
+        canvas = _canvas()      # a stroke into the canvas (also a click too short for _tick)
+        if canvas is not None and any(getattr(u.id, "original", None) == canvas
+                                      for u in depsgraph.updates):
+            _tstate["dirty"] = True
+        return
     if obj is None or obj.type != 'MESH' or obj.mode != 'VERTEX_PAINT':
         return
     me = obj.data
@@ -317,6 +426,8 @@ def _on_undo(*_):
     _snap.clear()
     _dirty.clear()
     _sessions.clear()       # the stash is undone with the mesh; begin_session merges a leftover
+    _tsnap.clear()
+    _tfacing.clear()
 
 
 def register():
@@ -339,3 +450,5 @@ def unregister():
             handlers.remove(fn)
     _snap.clear()
     _dirty.clear()
+    _tsnap.clear()
+    _tfacing.clear()

@@ -244,7 +244,7 @@ def scene_cameras(scene):
 
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
-MAT_VERSION = 8         # bump when the material's node setup changes
+MAT_VERSION = 9         # bump when the material's node setup changes
 LAYOUT_VERSION = 6      # from here on nodes have stable names: a rebuild keeps their spots
 PREFIX = "MCP_"
 OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
@@ -499,14 +499,39 @@ def _named_math(b, name, *args, **kw):
     return out
 
 
-def _build_projection(b, n):
+def _paint_tex_node(b, f, obj, kind, loc, toggle):
+    """The object's MSK_ / CMX1_ / CMX2_ on uv_normal: (color, alpha x Paint Textures),
+    None without that image."""
+    from . import paint_tex
+    img = paint_tex.get(obj, kind) if obj is not None else None
+    if img is None:
+        return None
+    paint_tex.setup_image(img)
+    uv = b.t.nodes.get("Paint UV") or _named(
+        b.n("ShaderNodeUVMap", (loc[0] - 250, loc[1]), f, uv_map=UV_NORMAL), "Paint UV")
+    tex = _named(b.n("ShaderNodeTexImage", loc, f, image=img), paint_tex.node_name(kind))
+    tex.label = f"{kind} (painted)"
+    b.link(uv.outputs["UV"], tex.inputs["Vector"])
+    a = _named_math(b, f"{kind} Painted", "MULTIPLY", tex.outputs["Alpha"], toggle,
+                    (loc[0] + 300, loc[1] - 150), f"{kind} painted x toggle", f)
+    return tex.outputs["Color"], a
+
+
+def _build_projection(b, n, obj=None):
     """PROJECTION frame: cameras 1-3 weighted by VCMix, 4-6 by VCMix2 (each normalised).
     Cameras 1-3 win (VCMix on top): s1 = sum(VCMix), w2 = sum(VCMix2) x (1 - s1), color =
     (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
     mask = VCMix alpha x VCMix2 alpha x (s1 + w2): erasing either alpha, or no camera
     covering the face, shows the scan.
+    Paint Textures (paint_tex): CMX1_ / CMX2_ replace VCMix / VCMix2 R, G, B and MSK_ the
+    alphas where painted (their alpha x the Paint Textures Value).
     Returns (color, blend mask, camera cover)."""
+    from . import paint_tex
     f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
+    tog = _named(b.n("ShaderNodeValue", (-300, -1700), f), paint_tex.TOGGLE)
+    tog.label = "Paint Textures (scene toggle)"
+    tog.outputs[0].default_value = 1.0 if paint_tex.enabled() else 0.0
+    toggle = tog.outputs[0]
     texs = []
     for i in range(1, n + 1):
         y = -50 - (i - 1) * 300
@@ -523,7 +548,16 @@ def _build_projection(b, n):
         vc = _named(b.n("ShaderNodeVertexColor", (350, -950 - layer * 250), f, layer_name=name),
                     f"{name} Attribute")
         sepc = _named(b.n("ShaderNodeSeparateColor", (550, -950 - layer * 250), f), f"{name} Separate")
-        b.link(vc.outputs["Color"], sepc.inputs[0])
+        weights = vc.outputs["Color"]
+        painted = _paint_tex_node(b, f, obj, f"CMX{layer + 1}", (0, -1900 - layer * 350), toggle)
+        if painted is not None:     # CMXk_ over the vertex layer where painted
+            pm = _named(b.n("ShaderNodeMix", (400, -1900 - layer * 350), f, data_type="RGBA"),
+                        f"CMX{layer + 1} over {name}")
+            b.link(painted[1], pm.inputs[0])
+            b.link(weights, gn_builder._sock(pm.inputs, "A"))
+            b.link(painted[0], gn_builder._sock(pm.inputs, "B"))
+            weights = gn_builder._sock(pm.outputs, "Result")
+        b.link(weights, sepc.inputs[0])
         ws = [sepc.outputs[k] for k in ("Red", "Green", "Blue")]
         if layer == 0:      # R, G, B fan out to many nodes: one reroute each keeps it readable
             routed = []
@@ -545,6 +579,20 @@ def _build_projection(b, n):
 
     s1 = layer_sum(ws1, -1200, "1-3 Cover")
     cover = s1                  # where the cameras see the face (From Projection's mask)
+    msk = _paint_tex_node(b, f, obj, "MSK", (0, -2700), toggle)
+
+    def painted_mask(alpha, loc):
+        """MSK_ R over the vertex alphas where painted."""
+        if msk is None:
+            return alpha
+        sep = _named(b.n("ShaderNodeSeparateColor", (loc[0] - 200, loc[1] - 100), f), "MSK Separate")
+        b.link(msk[0], sep.inputs[0])
+        mm = _named(b.n("ShaderNodeMix", loc, f, data_type="FLOAT"), "MSK over Alphas")
+        b.link(msk[1], mm.inputs[0])
+        b.link(alpha, gn_builder._sock(mm.inputs, "A"))
+        b.link(sep.outputs["Red"], gn_builder._sock(mm.inputs, "B"))
+        return gn_builder._sock(mm.outputs, "Result")
+
     if len(layers) > 1:
         col2, vc2, ws2 = layers[1]
         s2 = layer_sum(ws2, -1400, "4-6 Weight")
@@ -565,7 +613,11 @@ def _build_projection(b, n):
         # nothing covers the face (1-3 cleared, 4-6 do not see it): the scan shows
         alphas = _named_math(b, "Both Alphas", "MULTIPLY", mask, vc2.outputs["Alpha"],
                              (3650, -1100), "VCMix a x VCMix2 a", f)
+        alphas = painted_mask(alphas, (3650, -1600))
         mask = _named_math(b, "Blend Mask", "MULTIPLY", alphas, both, (3800, -1200), "Blend Mask", f)
+    elif msk is not None:       # painted mask x where cameras 1-3 see it (nothing shows elsewhere)
+        mixed = painted_mask(mask, (3650, -1600))
+        mask = _named_math(b, "Blend Mask", "MULTIPLY", mixed, s1, (3800, -1200), "Blend Mask", f)
     return color, mask, cover
 
 
@@ -600,7 +652,7 @@ def build_material(obj, warnings=None):
     b.link(bsdf.outputs[0], out.inputs["Surface"])
 
     baked, normal = _build_baked(b, *baked_images(obj))
-    projected, vcmask, cover = _build_projection(b, slot_count(data(obj)))
+    projected, vcmask, cover = _build_projection(b, slot_count(data(obj)), obj)
     baked, mask, nmask = _build_route(b, obj, baked, cover, vcmask)
 
     # 0 = baked, 1 = projected
@@ -647,7 +699,13 @@ def fill_cam_images(obj, mat=None):
 
 
 def _baked_ok(nodes, obj):
-    """The BAKED frame shows the object's current BA_ / BN_ (or grey without BA_)."""
+    """The BAKED frame shows the object's current BA_ / BN_ (or grey without BA_), and
+    PROJECTION its paint textures."""
+    from . import paint_tex
+    for kind in paint_tex.KINDS:        # a paint texture node exactly for each paint texture
+        pn = nodes.get(paint_tex.node_name(kind))
+        if (pn.image if pn is not None else None) != paint_tex.get(obj, kind):
+            return False
     ba, bn = baked_images(obj)
     if ba is None:
         return nodes.get(NO_BAKE) is not None

@@ -1,0 +1,419 @@
+"""Paint Textures: the camera mix and the blend mask painted at 1K on uv_normal, so the
+paint no longer follows the mesh's vertices (VCMix / VCMix2 stay as the base).
+
+    MSK_<name>   R = blend mask (1 projected, 0 baked), A = painted here
+    CMX1_<name>  R, G, B = cameras 1-3, A = painted here
+    CMX2_<name>  R, G, B = cameras 4-6, A = painted here
+
+Transparent = not painted: the vertex layers (the cameras' own weights, earlier VCMix
+painting) show through, so moving a camera still updates every area nobody painted.
+MCP_ mixes vertex layer -> texture by the texture's alpha x the scene's Paint Textures
+toggle (a Value node, no rebuild): toggled off, everything is as before.
+
+PNG files in the bake folder, named like the export (typed_name), pointers on the
+object's multicamproject_bake. Created on the first stroke, saved with the .blend.
+
+Undo: a Python write into an image is not undoable in Blender. write() first runs
+Image > Invert (an image operator with undo: Blender keeps the image as it was), then
+writes the real pixels. Ctrl+Z gives the old image back; a redo would give the inverted
+one, so _on_redo puts the written pixels back when it sees that state. Writes asked for
+inside an operator (Fill, Select & Set) wait for a timer (queue): the operator's own undo
+step comes first, then the image step.
+"""
+import hashlib
+
+import bpy
+import numpy as np
+from bpy.app.handlers import persistent
+
+SIZE = 1024
+KINDS = ("MSK", "CMX1", "CMX2")
+POINTER = {"MSK": "msk_image", "CMX1": "cmx1_image", "CMX2": "cmx2_image"}
+TOGGLE = "Paint Textures"           # MCP_'s Value node: the scene toggle (0 = vertex layers only)
+UV_NORMAL = "uv_normal"
+BRUSH = "brushes/essentials_brushes-mesh_texture.blend/Brush/Paint Hard"
+REDO_KEEP = 20                      # writes per image a redo can still put back
+
+
+def node_name(kind):
+    return f"{kind} Paint"
+
+
+def enabled(scene=None):
+    scene = scene or bpy.context.scene
+    props = getattr(scene, "multicamproject_props", None)
+    return bool(getattr(props, "paint_textures", False))
+
+
+def kind_of_slot(slot):
+    return "CMX1" if slot <= 3 else "CMX2"
+
+
+def image_name(obj, kind):
+    from ..baking.naming import typed_name
+    return typed_name(kind, obj)
+
+
+def get(obj, kind):
+    d = getattr(obj, "multicamproject_bake", None)
+    return getattr(d, POINTER[kind], None) if d is not None else None
+
+
+def images(obj):
+    return {k: img for k in KINDS if (img := get(obj, k)) is not None}
+
+
+def problem(obj, scene):
+    """Why this object cannot paint into textures ('' when it can)."""
+    if getattr(obj, "multicamproject_bake", None) is None:
+        return "Paint Textures need the Baking module"
+    if obj.data.uv_layers.get(UV_NORMAL) is None:
+        return "No uv_normal to paint on - make it first (Bake), or turn Paint Textures off"
+    from ..baking import common
+    if not common.settings(scene).output_dir:
+        return "No bake folder set - the paint textures are saved there"
+    return ""
+
+
+def ensure(obj, kind, scene):
+    """obj's MSK_ / CMX1_ / CMX2_: its own, or a new transparent 1K PNG in the bake folder.
+    Returns (image, created)."""
+    import os
+    from ..baking import common, engine
+    img = get(obj, kind)
+    if img is not None:
+        return img, False
+    name = image_name(obj, kind)
+    path = common.texture_path(scene, name)
+    engine._check_length(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = bpy.data.images.new(name + "_MCP_TMP", SIZE, SIZE, alpha=True)
+    tmp.pixels.foreach_set(np.zeros(SIZE * SIZE * 4, np.float32))
+    tmp.filepath_raw = path
+    tmp.file_format = 'PNG'
+    tmp.save(filepath=path)
+    bpy.data.images.remove(tmp)
+    img = bpy.data.images.get(name)
+    if img is None or img.source != 'FILE':
+        if img is not None:
+            img.name = name + "_stale"
+        img = bpy.data.images.load(path, check_existing=False)
+        img.name = name
+    setup_image(img)
+    engine.link_file(img, path)
+    setattr(obj.multicamproject_bake, POINTER[kind], img)
+    from ..baking import owned
+    owned.add(scene, [path])
+    return img, True
+
+
+def setup_image(img):
+    """Non-Color, alpha kept apart from color (no premultiply). Only set when different:
+    setting either reloads the image from its file - unsaved paint would be lost."""
+    if img.colorspace_settings.name != 'Non-Color':
+        img.colorspace_settings.name = 'Non-Color'
+    if img.alpha_mode != 'CHANNEL_PACKED':
+        img.alpha_mode = 'CHANNEL_PACKED'
+
+
+# ---------------------------------------------------------------- pixels
+
+def read(img):
+    buf = np.empty(len(img.pixels), np.float32)
+    img.pixels.foreach_get(buf)
+    return buf.reshape(-1, 4)
+
+
+def _digest(arr):
+    return hashlib.blake2b(np.round(arr * 255).astype(np.uint8).tobytes(), digest_size=16).digest()
+
+
+_redo = {}          # image name -> [(digest of the inverted state, pixels written)]
+_rev = {}           # image name -> change counter (fingerprint cache)
+
+
+def bump(img):
+    _rev[img.name] = _rev.get(img.name, 0) + 1
+
+
+def bump_canvas(obj, canvas):
+    """A stroke went into `canvas`: one of obj's paint textures changed."""
+    if canvas is not None and obj is not None and canvas in images(obj).values():
+        bump(canvas)
+
+
+def revision(img):
+    return _rev.get(img.name, 0)
+
+
+def _context(img):
+    wm = bpy.context.window_manager
+    if not wm.windows:
+        return None
+    win = wm.windows[0]
+    area = next((a for a in win.screen.areas if a.type == 'VIEW_3D'), win.screen.areas[0])
+    return dict(window=win, screen=win.screen, area=area, edit_image=img)
+
+
+def write(img, arr):
+    """img's pixels = arr ((n, 4) float) as its own undo step (see the module doc)."""
+    ctx = _context(img)
+    if ctx is not None:
+        with bpy.context.temp_override(**ctx):
+            if bpy.ops.image.invert.poll():
+                bpy.ops.image.invert(invert_r=True)     # Blender keeps the image as it was
+        lst = _redo.setdefault(img.name, [])
+        lst.append((_digest(read(img)), arr.astype(np.float32)))
+        del lst[:-REDO_KEEP]
+    img.pixels.foreach_set(arr.astype(np.float32).ravel())
+    img.update()
+    bump(img)
+
+
+@persistent
+def _on_redo(*_):
+    for name, lst in list(_redo.items()):
+        img = bpy.data.images.get(name)
+        if img is None or not lst or not img.has_data:
+            continue
+        cur = _digest(read(img))
+        for key, arr in reversed(lst):
+            if key == cur:
+                img.pixels.foreach_set(arr.ravel())
+                img.update()
+                break
+
+
+@persistent
+def _on_undo(*_):
+    for name in list(_rev):
+        _rev[name] += 1
+
+
+_queue = []         # (object name, kind, fn(arr) -> arr)
+
+
+def queue(obj, kind, fn):
+    """write() once the running operator is done (its undo step first, then this one)."""
+    _queue.append((obj.name, kind, fn))
+    if not bpy.app.timers.is_registered(_flush):
+        bpy.app.timers.register(_flush, first_interval=0.0)
+
+
+def _flush():
+    jobs, _queue[:] = list(_queue), []
+    touched = set()
+    for name, kind, fn in jobs:
+        obj = bpy.data.objects.get(name)
+        img = get(obj, kind) if obj is not None else None
+        if img is None:
+            continue
+        write(img, fn(read(img)))
+        touched.add(obj)
+    from . import paint_sync
+    for obj in touched:
+        obj.update_tag()
+        paint_sync.reset_texture(obj)   # a fill is no stroke: nothing for paint_sync to claim
+    return None
+
+
+# ---------------------------------------------------------------- UV raster (GPU)
+
+def mesh_triangles(me, faces=None):
+    """(n, 3, 2) uv_normal triangles of the mesh (Object Mode), of `faces` (bool per face)."""
+    uv = me.uv_layers.get(UV_NORMAL)
+    if uv is None:
+        return np.zeros((0, 3, 2), np.float32)
+    me.calc_loop_triangles()
+    n = len(me.loop_triangles)
+    loops = np.empty(n * 3, np.int32)
+    me.loop_triangles.foreach_get("loops", loops)
+    co = np.empty(len(me.loops) * 2, np.float32)
+    uv.data.foreach_get("uv", co)
+    tris = co.reshape(-1, 2)[loops].reshape(n, 3, 2)
+    if faces is not None:
+        poly = np.empty(n, np.int32)
+        me.loop_triangles.foreach_get("polygon_index", poly)
+        tris = tris[faces[poly]]
+    return tris
+
+
+def bmesh_triangles(bm, faces):
+    """(n, 3, 2) uv_normal triangles of `faces` (bmesh faces, Edit Mode)."""
+    lay = bm.loops.layers.uv.get(UV_NORMAL)
+    if lay is None:
+        return np.zeros((0, 3, 2), np.float32)
+    want = set(faces)
+    out = [[lp[lay].uv[:] for lp in tri] for tri in bm.calc_loop_triangles() if tri[0].face in want]
+    return np.array(out, np.float32).reshape(-1, 3, 2)
+
+
+def raster(tris, size=SIZE):
+    """Coverage (size * size bool, rows bottom-up like Image.pixels) of uv triangles."""
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    from mathutils import Matrix
+    if not len(tris):
+        return np.zeros(size * size, bool)
+    pos = tris.reshape(-1, 2) * 2.0 - 1.0
+    pos = np.c_[pos, np.zeros(len(pos))].astype(np.float32)
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    batch = batch_for_shader(shader, 'TRIS', {"pos": pos})
+    off = gpu.types.GPUOffScreen(size, size, format='RGBA8')
+    try:
+        with off.bind():
+            fb = gpu.state.active_framebuffer_get()
+            fb.clear(color=(0.0, 0.0, 0.0, 0.0))
+            with gpu.matrix.push_pop():
+                gpu.matrix.load_matrix(Matrix.Identity(4))
+                gpu.matrix.load_projection_matrix(Matrix.Identity(4))
+                gpu.state.blend_set('NONE')
+                shader.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
+                batch.draw(shader)
+            buf = fb.read_color(0, 0, size, size, 4, 0, 'UBYTE')
+    finally:
+        off.free()
+    buf.dimensions = size * size * 4
+    return np.asarray(buf, dtype=np.uint8).reshape(-1, 4)[:, 0] > 127
+
+
+def dilate(cov, free, px=2, size=SIZE):
+    """cov grown by `px` pixels into `free` (UV space no face covers): no seam shows
+    where the texture filters across an island's border."""
+    grid = cov.reshape(size, size).copy()
+    room = free.reshape(size, size)
+    for _ in range(px):
+        g = grid.copy()
+        g[1:, :] |= grid[:-1, :]
+        g[:-1, :] |= grid[1:, :]
+        g[:, 1:] |= grid[:, :-1]
+        g[:, :-1] |= grid[:, 1:]
+        grid |= g & room
+    return grid.ravel()
+
+
+def coverage(obj, tris, all_tris=None):
+    """Pixels of `tris`, grown into the UV space no face of obj uses."""
+    cov = raster(tris)
+    if all_tris is None:
+        all_tris = mesh_triangles(obj.data)
+    return dilate(cov, ~raster(all_tris))
+
+
+def fill_fn(cov, rgb, alpha=1.0):
+    """fn for queue(): `rgb` with `alpha` over the covered pixels (cov: bool or 0-1)."""
+    c = cov.astype(np.float32)[:, None]
+
+    def fn(arr):
+        arr[:, :3] = arr[:, :3] * (1.0 - c) + np.asarray(rgb, np.float32) * c
+        arr[:, 3:] = np.maximum(arr[:, 3:], c * alpha)
+        return arr
+    return fn
+
+
+def claim_fn(claim):
+    """fn for queue() / write() on CMX1: cameras 1-3 off where cameras 4-6 claimed."""
+    c = claim.astype(np.float32)
+
+    def fn(arr):
+        arr[:, :3] *= (1.0 - c)[:, None]
+        arr[:, 3] = np.maximum(arr[:, 3], c)
+        return arr
+    return fn
+
+
+def clear_fn(arr):
+    arr[:] = 0.0
+    return arr
+
+
+# ---------------------------------------------------------------- material toggle
+
+def set_toggle(obj, scene=None):
+    """MCP_'s Paint Textures Value = the scene toggle (no rebuild)."""
+    d = getattr(obj, "multicamproject_cam", None)
+    mat = d.material if d is not None else None
+    n = mat.node_tree.nodes.get(TOGGLE) if mat is not None and mat.node_tree else None
+    v = 1.0 if enabled(scene) else 0.0
+    if n is not None and abs(n.outputs[0].default_value - v) > 1e-6:
+        n.outputs[0].default_value = v
+
+
+def on_toggle(props, context):
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and getattr(obj, "multicamproject_cam", None) is not None:
+            set_toggle(obj, context.scene)
+
+
+# ---------------------------------------------------------------- brush / saving
+
+def set_brush(context, color, blend='MIX'):
+    """Texture Paint brush: a Draw brush with `color`."""
+    ip = context.tool_settings.image_paint
+    if ip.brush is None or ip.brush.image_brush_type != 'DRAW':
+        bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
+                                     relative_asset_identifier=BRUSH)
+    br = ip.brush
+    br.blend = blend
+    br.color = color
+    ip.unified_paint_settings.color = color
+
+
+def start_painting(context, obj, img, through):
+    """Texture Paint on `img` through uv_normal (Object Mode -> Texture Paint)."""
+    me = obj.data
+    me.uv_layers.active = me.uv_layers[UV_NORMAL]
+    if obj.mode != 'TEXTURE_PAINT':
+        bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
+    ip = context.tool_settings.image_paint
+    ip.mode = 'IMAGE'
+    ip.canvas = img
+    ip.use_occlude = not through
+    ip.use_backface_culling = not through
+
+
+def save_dirty():
+    """Every dirty paint texture into its file. Returns the names saved."""
+    saved = []
+    for obj in bpy.data.objects:
+        for img in images(obj).values():
+            if img.is_dirty and img.source == 'FILE' and img.filepath and not img.library:
+                try:
+                    img.save()
+                    saved.append(img.name)
+                except RuntimeError as e:
+                    print(f"[MultiCamProject] {img.name} not saved: {e}")
+    return saved
+
+
+@persistent
+def _on_save_pre(*_):
+    try:
+        save_dirty()
+    except Exception as e:      # never block a save
+        print(f"[MultiCamProject] paint textures not saved: {e}")
+
+
+@persistent
+def _on_load(*_):
+    _redo.clear()
+    _rev.clear()
+    _queue.clear()
+
+
+def register():
+    bpy.app.handlers.redo_post.append(_on_redo)
+    bpy.app.handlers.undo_post.append(_on_undo)
+    bpy.app.handlers.save_pre.append(_on_save_pre)
+    bpy.app.handlers.load_post.append(_on_load)
+
+
+def unregister():
+    for handlers, fn in ((bpy.app.handlers.redo_post, _on_redo),
+                         (bpy.app.handlers.undo_post, _on_undo),
+                         (bpy.app.handlers.save_pre, _on_save_pre),
+                         (bpy.app.handlers.load_post, _on_load)):
+        if fn in handlers:
+            handlers.remove(fn)
+    if bpy.app.timers.is_registered(_flush):
+        bpy.app.timers.unregister(_flush)

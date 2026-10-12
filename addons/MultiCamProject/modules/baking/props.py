@@ -113,6 +113,14 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                                description="BNp_<name>: normal generated from BAp_")
     bng_image: PointerProperty(type=bpy.types.Image, name="Generated Normal (Original)",
                                description="BNoG_<name>: normal generated from BAo_")
+    # Paint Textures (camera_project.paint_tex), 1K PNGs in the bake folder, painted on
+    # uv_normal: MSK_<name> blend mask, CMX1_ / CMX2_<name> cameras 1-3 / 4-6
+    msk_image: PointerProperty(type=bpy.types.Image, name="Paint Mask",
+                               description="MSK_<name>: the painted blend mask")
+    cmx1_image: PointerProperty(type=bpy.types.Image, name="Paint Cameras 1-3",
+                                description="CMX1_<name>: the painted mix of cameras 1-3")
+    cmx2_image: PointerProperty(type=bpy.types.Image, name="Paint Cameras 4-6",
+                                description="CMX2_<name>: the painted mix of cameras 4-6")
     bng_fingerprint: StringProperty(description="BAo_ state + normal settings at the last BNoG_")
     bp_fingerprint: StringProperty(description="State of the projection at the last BAp_")
     bp_size: IntProperty(description="Resolution of the last BAp_ (0 = never)")

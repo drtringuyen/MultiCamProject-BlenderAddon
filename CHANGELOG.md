@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### Paint Textures: camera mix and blend mask painted at 1K on uv_normal (2026-10-12)
+- New toggle **Paint** in the projection box (on by default): the camera paint buttons paint
+  1K textures through uv_normal instead of the mesh's vertices - precise, whatever the
+  topology. Off: VCMix / VCMix2 painting as before; MCP_ then ignores the textures (kept).
+- **MSK_<name>**: blend mask (Erase paints black = baked, Shift+Erase white = projected; Clear
+  Alpha and 02 Projected / Baked fill it). **CMX1_ / CMX2_<name>**: cameras 1-3 / 4-6.
+  Named like the export textures, PNGs in the bake folder, saved with the .blend.
+- Transparent = not painted: the vertex layers (the cameras' own weights, earlier VCMix
+  painting) show through, so moving a camera still updates every unpainted area.
+- A camera 4-6 stroke turns cameras 1-3 off under it in CMX1_ (only where the faces turn
+  toward the painted camera), its own undo step: Ctrl+Z once the clear, twice the stroke;
+  redo works. Selection Fill fills the selected faces' UV. Reset Camera Mix clears CMX1_/CMX2_.
+- The bake fingerprint follows the painted pixels; Send Out / Send Back save them first;
+  rename, Receive and the clean-up know the three textures.
+- Needs uv_normal and a bake folder (the panel says what is missing). Not yet: carrying the
+  paint over to a new uv_normal (0D Retopo, Edit UV) - paint after the UV is final.
+
 ### Clean Floating, Decimate Brush detail key, Close Hole (2026-10-08)
 - **Clean Floating** (trash button at the end of row 01, Edit Mode, **Ctrl+Shift+L**): select
   a bit of the one big mesh to keep - Select Linked (Normal only, seams ignored), Face then

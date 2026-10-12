@@ -19,7 +19,7 @@ def _fix():
         if not scene.multicamproject_export.auto_names:      # renamed by hand meanwhile
             return None
         sc = naming.scheme(scene)
-        if sc is None or bpy.context.mode not in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX'}:
+        if sc is None or bpy.context.mode not in {'OBJECT', 'EDIT_MESH', 'PAINT_VERTEX', 'PAINT_TEXTURE'}:
             return None
         objs = common.export_objects(scene)
         if not objs:
