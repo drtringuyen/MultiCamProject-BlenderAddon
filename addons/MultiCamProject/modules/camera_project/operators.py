@@ -716,7 +716,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         through = core.data(obj).project_through and self.mode != 'ERASE'
         blocked = None
         if self.mode != 'ERASE' and not through:
-            blocked = core.visible_faces(obj, cam, scene)
+            blocked = core.visible_parts(obj, cam, scene)   # per pixel paint: partly seen is enough
         polys = obj.data.polygons
         color = core.SLOT_COLORS[slot]
         if self.mode == 'FLOOD':

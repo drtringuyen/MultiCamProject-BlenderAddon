@@ -1261,25 +1261,12 @@ def sync_occlusion(obj):
         pass
 
 
-def visible_faces(obj, cam, scene):
-    """Per face: True when `cam` really sees it - in its frame, facing it, and not hidden
-    by the object's own mesh (a ray from the face centre to the camera). The same test as
-    the projection's Occlusion. Object Mode mesh data, world space."""
+def _cam_sees(obj, cam, scene, co, nr, bvh=None):
+    """Per point (world co, unit normal nr): in `cam`'s frame, facing it and not hidden by
+    the object's own mesh (a ray to the camera)."""
     from mathutils.bvhtree import BVHTree
-    me = obj.data
-    n = len(me.polygons)
-    if n == 0 or cam is None:
-        return np.zeros(n, dtype=bool)
-    mw = obj.matrix_world
-    co = np.empty(n * 3, dtype=np.float32)
-    me.polygons.foreach_get("center", co)
-    nr = np.empty(n * 3, dtype=np.float32)
-    me.polygons.foreach_get("normal", nr)
-    m4 = np.array(mw, dtype=np.float32)
-    co = co.reshape(n, 3) @ m4[:3, :3].T + m4[:3, 3]
-    n3 = np.array(mw.inverted_safe().transposed().to_3x3(), dtype=np.float32)
-    nr = nr.reshape(n, 3) @ n3.T
-    nr /= np.maximum(np.linalg.norm(nr, axis=1, keepdims=True), 1e-9)
+    from mathutils import Vector
+    n = len(co)
     cm = world_matrix(cam)
     cd = cam.data
     ortho = cd.type == 'ORTHO'
@@ -1301,16 +1288,79 @@ def visible_faces(obj, cam, scene):
         dist = np.linalg.norm(to_cam, axis=1)
         to_cam = to_cam / np.maximum(dist[:, None], 1e-9)
     sees = front & (u > 0) & (u < 1) & (v > 0) & (v < 1) & ((nr * to_cam).sum(axis=1) > 0)
-    verts = [mw @ vt.co for vt in me.vertices]
-    bvh = BVHTree.FromPolygons(verts, [tuple(f.vertices) for f in me.polygons])
+    me, mw = obj.data, obj.matrix_world
+    if bvh is None:
+        verts = [mw @ vt.co for vt in me.vertices]
+        bvh = BVHTree.FromPolygons(verts, [tuple(f.vertices) for f in me.polygons])
     eps = 1e-3 * max(obj.dimensions) if max(obj.dimensions) else 1e-4
-    from mathutils import Vector
     for i in np.flatnonzero(sees):
         start = Vector((co[i] + nr[i] * eps).tolist())
         hit = bvh.ray_cast(start, Vector(to_cam[i].tolist()), float(dist[i]))
         if hit[0] is not None:
             sees[i] = False
     return sees
+
+
+def _world_normals(obj, nr):
+    n3 = np.array(obj.matrix_world.inverted_safe().transposed().to_3x3(), dtype=np.float32)
+    nr = nr @ n3.T
+    return nr / np.maximum(np.linalg.norm(nr, axis=1, keepdims=True), 1e-9)
+
+
+def visible_faces(obj, cam, scene):
+    """Per face: True when `cam` really sees it - in its frame, facing it, and not hidden
+    by the object's own mesh (a ray from the face centre to the camera). The same test as
+    the projection's Occlusion. Object Mode mesh data, world space."""
+    me = obj.data
+    n = len(me.polygons)
+    if n == 0 or cam is None:
+        return np.zeros(n, dtype=bool)
+    co = np.empty(n * 3, dtype=np.float32)
+    me.polygons.foreach_get("center", co)
+    nr = np.empty(n * 3, dtype=np.float32)
+    me.polygons.foreach_get("normal", nr)
+    m4 = np.array(obj.matrix_world, dtype=np.float32)
+    co = co.reshape(n, 3) @ m4[:3, :3].T + m4[:3, 3]
+    return _cam_sees(obj, cam, scene, co, _world_normals(obj, nr.reshape(n, 3)))
+
+
+SEEN_SAMPLES = 20000    # points spread over the faces for visible_parts
+
+
+def visible_parts(obj, cam, scene, budget=SEEN_SAMPLES):
+    """Per face: True when `cam` sees ANY part of it - points spread over each face (a
+    large face of a retopo is half hidden more often than not). For Paint Textures: the
+    texture takes the paint per pixel, so a face only has to be partly in view."""
+    me = obj.data
+    n = len(me.polygons)
+    if n == 0 or cam is None:
+        return np.zeros(n, dtype=bool)
+    me.calc_loop_triangles()
+    t = len(me.loop_triangles)
+    if t >= budget:                     # dense: the centres are fine enough
+        return visible_faces(obj, cam, scene)
+    k = max(1, int(np.sqrt(2.0 * budget / t)) - 1)      # (k+1)(k+2)/2 points per triangle
+    bary = np.array([((i + 1 / 3) / (k + 1), (j + 1 / 3) / (k + 1)) for i in range(k + 1)
+                     for j in range(k + 1 - i)], dtype=np.float32)
+    bary = np.c_[bary, 1.0 - bary.sum(axis=1)]
+    tv = np.empty(t * 3, np.int32)
+    me.loop_triangles.foreach_get("vertices", tv)
+    poly = np.empty(t, np.int32)
+    me.loop_triangles.foreach_get("polygon_index", poly)
+    vco = np.empty(len(me.vertices) * 3, np.float32)
+    me.vertices.foreach_get("co", vco)
+    tri = vco.reshape(-1, 3)[tv].reshape(t, 3, 3)
+    pts = np.einsum("pk,tkc->tpc", bary, tri).reshape(-1, 3)
+    m4 = np.array(obj.matrix_world, dtype=np.float32)
+    pts = pts @ m4[:3, :3].T + m4[:3, 3]
+    fn = np.empty(n * 3, np.float32)
+    me.polygons.foreach_get("normal", fn)
+    nr = _world_normals(obj, fn.reshape(n, 3)[poly])
+    nr = np.repeat(nr, len(bary), axis=0)
+    seen = _cam_sees(obj, cam, scene, pts, nr)
+    out = np.zeros(n, dtype=bool)
+    np.logical_or.at(out, np.repeat(poly, len(bary)), seen)
+    return out
 
 
 def migrate_all():
