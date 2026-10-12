@@ -55,9 +55,17 @@ def step_box(layout, context, step):
                                                                   context.scene)
     if not why:
         return layout, True
-    row = layout.row()
+    row = layout.row(align=True)
     row.alert = True
-    row.label(text=why, icon='LOCKED')
+    obj = context.active_object
+    d = getattr(obj, "multicamproject_bake", None) if obj is not None else None
+    if d is not None and d.locked and hasattr(bpy.types, "MULTICAMPROJECT_OT_lock_finish"):
+        # Locked Finish: the lock is the Unlock button (back to Baked)
+        op = row.operator("multicamproject.lock_finish", text="", icon='LOCKED', depress=True)
+        op.action, op.object_name = 'UNLOCK', obj.name
+        row.label(text=why)
+    else:
+        row.label(text=why, icon='LOCKED')
     col = layout.column()
     col.enabled = False
     return col, False

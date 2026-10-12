@@ -200,7 +200,7 @@ def why_locked(obj, step, scene=None):
         return _NEEDS[2][1]
     d = _bake(obj) if obj is not None else None
     if d is not None and d.locked and step != 8:
-        return "Locked Finish: unlock it in 08 to change it"
+        return "Locked Finish - click the lock to unlock it"
     if step == 2:
         return ""
     if obj is None or obj.type != 'MESH':
