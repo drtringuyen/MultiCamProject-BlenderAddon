@@ -422,6 +422,59 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
             layout.label(text=why, icon='ERROR')
 
 
+class MULTICAMPROJECT_PT_LockFinish(bpy.types.Panel):
+    """08. Lock Finish: by hand only. A Locked object keeps its ALB_ / NOR_ (no clean-up
+    removes them), every step is locked for it, and its files in the Export folder are
+    checked - a missing one turns it red: Unlock & Rebake"""
+    bl_label = "08. Lock Finish"
+    bl_idname = "MULTICAMPROJECT_PT_lock_finish"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_parent_id = "MULTICAMPROJECT_PT_main"
+    bl_order = 7
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def draw_header(self, context):
+        locked = common.data(context.active_object).locked
+        self.layout.label(icon='LOCKED' if locked else 'UNLOCKED')
+
+    def draw(self, context):
+        from ... import steps
+        obj = context.active_object
+        d = common.data(obj)
+        if not d.locked:
+            layout, _open = gate.step_box(self.layout, context, 8)
+            row = layout.row()
+            row.scale_y = 1.5
+            row.operator("multicamproject.lock_finish", text="08. Lock Finish",
+                         icon='LOCKED').action = 'LOCK'
+            hint = layout.row()
+            hint.active = False
+            hint.label(text="Copies ALB_ / NOR_ into Export, then nothing changes the object",
+                       icon='INFO')
+            return
+        layout = self.layout
+        missing = steps.locked_missing(obj, context.scene)
+        if missing:
+            box = layout.box().column(align=True)
+            box.alert = True
+            box.label(text=f"Missing: {', '.join(missing)}", icon='ERROR')
+            row = box.row(align=True)
+            row.scale_y = 1.4
+            row.operator("multicamproject.lock_finish", text="Unlock & Rebake",
+                         icon='FILE_REFRESH').action = 'REBAKE'
+        else:
+            layout.label(text="Locked Finish - ALB_ / NOR_ in the Export folder",
+                         icon='CHECKMARK')
+        layout.operator("multicamproject.lock_finish", text="Unlock",
+                        icon='UNLOCKED').action = 'UNLOCK'
+
+
 def _draw_normal_settings(layout, context):
     """(Before 07) the normal map's options by route - kept for reference."""
     s = common.settings(context.scene)
@@ -559,9 +612,11 @@ def register():
         bpy.utils.register_class(c)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Baking)
     bpy.utils.register_class(MULTICAMPROJECT_PT_GenerateNormal)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_LockFinish)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_LockFinish)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_GenerateNormal)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Baking)
     for c in reversed(_classes):

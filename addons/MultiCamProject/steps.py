@@ -192,8 +192,59 @@ def stage(obj, scene=None):
 
 
 def draw_stage(layout, context, obj, units=3.6):
-    """The Stage column of the EXPORT and Estimation lists."""
+    """The Stage column of the EXPORT and Estimation lists (red: Locked with a file
+    missing in the Export folder)."""
     stg = stage(obj, context.scene)
     col = layout.row(align=True)
     col.ui_units_x = units
+    if stg == 'LOCKED' and locked_missing(obj, context.scene):
+        col.alert = True
+        col.label(text="Missing", icon='ERROR')
+        return
     col.label(text=STAGES[stg][0], icon=STAGES[stg][1])
+
+
+# ---------------------------------------------------------------- 08 Lock Finish
+
+def published(obj, scene=None):
+    """[(kind, path)] the Export folder holds for a Locked object: <export>/Textures/
+    ALB_<name>.png and NOR_<name>.png ([] without the Export module / folder)."""
+    import os
+    from .modules.baking import common
+    scene = scene or bpy.context.scene
+    folder = common.export_textures_dir(scene)
+    d = _bake(obj)
+    if not folder or d is None:
+        return []
+    return [(k, os.path.join(folder, img.name + ".png"))
+            for k, img in (("ALB_", d.alb_image), ("NOR_", d.nor_image)) if img is not None]
+
+
+def locked_missing(obj, scene=None):
+    """What a Locked object misses: ALB_ / NOR_ itself, or its copy in the Export folder."""
+    from .modules.baking import cache
+    d = _bake(obj)
+    if d is None or not d.locked:
+        return []
+    out = [k for k, img in (("ALB_", d.alb_image), ("NOR_", d.nor_image)) if img is None]
+    out += [f"Export/Textures/{k}" for k, p in published(obj, scene) if not cache.isfile(p)]
+    return out
+
+
+def protected_files():
+    """Normalized paths no clean-up may remove: every Locked object's ALB_, its inpaint,
+    NOR_ and their copies in the Export folder."""
+    import os
+    from .modules.baking import common
+    out = set()
+    for o in bpy.data.objects:
+        d = _bake(o)
+        if d is None or o.type != 'MESH' or not d.locked:
+            continue
+        for img in (d.alb_image, d.alb_inpaint, d.nor_image):
+            f = common.image_file(img) if img is not None else ""
+            if f:
+                out.add(os.path.normcase(os.path.abspath(f)))
+        for scene in o.users_scene:
+            out.update(os.path.normcase(os.path.abspath(p)) for _k, p in published(o, scene))
+    return out

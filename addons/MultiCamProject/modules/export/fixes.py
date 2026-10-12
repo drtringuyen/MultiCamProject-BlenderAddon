@@ -113,8 +113,14 @@ def rename_object(obj, new, fresh=None, mcp=None):
 
 def to_recycle_bin(paths):
     """Move files to the Recycle Bin (Windows) - a wrong clean-up can be undone there.
-    Elsewhere they are deleted. Returns the paths that are gone."""
-    paths = [p for p in paths if os.path.isfile(p)]
+    Elsewhere they are deleted. Returns the paths that are gone. A Locked object's ALB_ /
+    NOR_ (08) are never removed."""
+    from ... import steps
+    keep = steps.protected_files()
+    held = [p for p in paths if os.path.normcase(os.path.abspath(p)) in keep]
+    if held:
+        print(f"[MultiCamProject] Locked Finish: kept {', '.join(os.path.basename(p) for p in held)}")
+    paths = [p for p in paths if os.path.isfile(p) and p not in held]
     if not paths:
         return []
     if os.name == 'nt':

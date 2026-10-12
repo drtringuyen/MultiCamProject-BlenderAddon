@@ -189,6 +189,8 @@ def _source_steps(context, objs):
 
 def source_poll_problem(obj):
     """Why 04 Bake from Source is off for `obj` ('' = it can run)."""
+    if common.data(obj).locked:
+        return "Locked Finish: unlock it in 08 first"
     why = engine.source_problem(obj)
     if why:
         return why
@@ -318,7 +320,8 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
             cls.poll_message_set(f"Every selected mesh needs a '{common.UV_NORMAL}' UV map")
             return False
         for o in objs:
-            why = route.problem(o)
+            why = ("Locked Finish: unlock it in 08 first" if common.data(o).locked
+                   else route.problem(o))
             if why:
                 cls.poll_message_set(f"{o.name}: {why}")
                 return False
@@ -797,7 +800,55 @@ def draw_uv_fix(layout, obj):
                         icon='UV').scope = 'SELECTED'
 
 
-_classes = (MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
+class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
+    """08 Lock Finish: the active object is final - ALB_ / NOR_ are copied into the Export
+    folder, never removed by a clean-up, and every step is locked until Unlock"""
+    bl_idname = "multicamproject.lock_finish"
+    bl_label = "Lock Finish"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    action: EnumProperty(
+        items=(('LOCK', "Lock", "Lock the object as final"),
+               ('UNLOCK', "Unlock", "Back to Baked: the steps can change it again"),
+               ('REBAKE', "Unlock & Rebake", "Unlock, then bake ALB_ (05) and NOR_ (07) again")),
+        default='LOCK', options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return {'LOCK': cls.__doc__, 'UNLOCK': "Unlock: back to Baked - the steps can change "
+                                               "the object again",
+                'REBAKE': "Unlock, then bake ALB_ (05) and NOR_ (07) again"}[props.action]
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (_object_mode(context) and obj is not None and obj.type == 'MESH'
+                and not obj.library)
+
+    def execute(self, context):
+        from ... import steps
+        obj = context.active_object
+        d = common.data(obj)
+        if self.action == 'LOCK':
+            if 7 not in steps.state(obj, context.scene).done:
+                self.report({'WARNING'}, "Finish 07 first: ALB_ and NOR_ baked and current")
+                return {'CANCELLED'}
+            folder = common.export_textures_dir(context.scene)
+            if folder:          # the Export folder holds them from now on
+                from ..export import fbx
+                fbx.copy_textures([obj], os.path.dirname(folder))
+            d.locked = True
+            self.report({'INFO'}, f"{obj.name}: Locked Finish")
+            return {'FINISHED'}
+        d.locked = False
+        if self.action == 'UNLOCK':
+            self.report({'INFO'}, f"{obj.name}: unlocked")
+            return {'FINISHED'}
+        s = common.settings(context.scene)
+        return _start_bake(self, context, "Rebake", [obj], True, s.nor_source, "Rebaked")
+
+
+_classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
