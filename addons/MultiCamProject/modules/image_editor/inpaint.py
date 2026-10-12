@@ -9,7 +9,10 @@ image, never saved) and the editor shows it. Every edit goes into that copy only
              closes); Alt / Ctrl subtracts
   F  Fill    fill the selection (done on release when "Fill on Release" is on)
 Each fill is one step of the session's own undo (Ctrl+Z / Ctrl+Shift+Z, also in the panel):
-pixel writes are outside Blender's undo.
+pixel writes are outside Blender's undo. Fills are not written into the 8K copy (0.3 s each:
+foreach_set + the GPU upload); each is drawn as a texture over the editor (the copy is a byte
+sRGB image shown without view transform, so its pixels draw as they are). The copy gets the
+pixels at Save, or when the undo limit drops a fill.
 
 Enter / Save to ALB_: the old file goes to <bake folder>/_previous/<name>_<date>.png, the
 copy is written over ALB_<name>.png and ALB_ reloads - the fingerprint stays (paths only),
@@ -83,6 +86,8 @@ class Session:
         self.redo = []
         self.overlay = None                     # (texture, rect) of the selection
         self.overlay_dirty = False
+        self.tex = {}                           # id(undo record) -> GPU texture of its after
+        self.pins = {}                          # editor area pointer -> its pin at Start
 
     @property
     def temp(self):
@@ -130,11 +135,32 @@ class Session:
         redraw()
 
     def _record(self, x0, y0, before, after):
+        for rec in self.redo:
+            self.tex.pop(id(rec), None)
         self.undo.append((x0, y0, before, after))
         self.redo.clear()
         total = sum(r[2].nbytes * 2 for r in self.undo)
+        dropped = False
         while len(self.undo) > 1 and total > UNDO_BYTES:
-            total -= self.undo.pop(0)[2].nbytes * 2
+            rec = self.undo.pop(0)
+            self.tex.pop(id(rec), None)
+            total -= rec[2].nbytes * 2
+            dropped = True
+        if dropped:
+            self.push()         # a dropped fill is no longer drawn: the copy needs its pixels
+
+    def patch_texture(self, rec):
+        """GPU texture of a fill's pixels (built once, drawn over the editor)."""
+        tex = self.tex.get(id(rec))
+        if tex is None and gpu is not None:
+            temp = self.temp
+            px = lasso_raster.to_display(rec[3], temp is not None and temp.is_float)
+            px[..., 3] = 1.0
+            try:
+                tex = self.tex[id(rec)] = lasso_raster.make_texture(px)
+            except Exception as e:
+                print(f"[MultiCamProject] Inpaint patch texture: {e}")
+        return tex
 
     def step(self, back):
         src, dst = (self.undo, self.redo) if back else (self.redo, self.undo)
@@ -145,7 +171,7 @@ class Session:
         h, w = before.shape[:2]
         self.buf[y0:y0 + h, x0:x0 + w] = before if back else after
         dst.append(rec)
-        self.push()
+        redraw()                # the overlay follows the undo list; the copy is not written
         return True
 
     def fill(self, st):
@@ -178,7 +204,7 @@ class Session:
         after = out[uy0:uy1, ux0:ux1].copy()
         crop[uy0:uy1, ux0:ux1] = after
         self._record(cx0 + ux0, cy0 + uy0, before, after)
-        self.push()
+        redraw()
         return int(used.sum())
 
 
@@ -297,14 +323,46 @@ def start(context):
     margin = common.margin_px(common.settings(context.scene), w)
     _session = Session(alb, obj, temp, buf, _uv_triangles(obj, w, h), margin)
     _session.push()
+    _ensure_handler()
     return _session
 
 
-def _show(img_from, img_to):
+def _image_editors():
     for win in bpy.context.window_manager.windows:
         for area in win.screen.areas:
-            if area.type == 'IMAGE_EDITOR' and area.spaces.active.image == img_from:
-                area.spaces.active.image = img_to
+            if area.type == 'IMAGE_EDITOR':
+                yield area
+
+
+def _show(img_from, img_to, pins=None):
+    """Editors on img_from show img_to. Setting the image from Python pins the editor: with
+    `pins` ({area pointer: pin at Start}) the pin goes back to what it was, and an unpinned
+    editor shows what Blender would show now - the active object's active Image Texture
+    (it missed the selection change while it was pinned)."""
+    for area in _image_editors():
+        sp = area.spaces.active
+        if sp.image != img_from:
+            continue
+        sp.image = img_to
+        if pins is None:
+            continue
+        pin = pins.get(area.as_pointer(), False)
+        if not pin:
+            follow = _auto_image(bpy.context.view_layer.objects.active)
+            if follow is not None and follow != sp.image:
+                sp.image = follow
+        sp.use_image_pin = pin
+
+
+def _auto_image(obj):
+    """The image Blender's UV editor follows for `obj`: its active material's active Image
+    Texture node, or None."""
+    mat = obj.active_material if obj is not None else None
+    nt = mat.node_tree if mat is not None else None
+    node = nt.nodes.active if nt is not None else None
+    if node is not None and node.type == 'TEX_IMAGE':
+        return node.image
+    return None
 
 
 def save():
@@ -319,6 +377,7 @@ def save():
         raise ValueError(f"{s.alb_name} is gone - Discard")
     path = common.image_file(alb) or s.path
     prev = handmade.copy_to_previous(path, bpy.context.scene) if os.path.isfile(path) else ""
+    temp.pixels.foreach_set(s.buf.ravel())      # the fills were only drawn so far
     temp.filepath_raw = path
     temp.file_format = 'PNG'
     temp.save(filepath=path)
@@ -339,9 +398,11 @@ def _end(show):
     s, _session = _session, None
     if s is None:
         return
+    s.tex.clear()
+    _remove_handler()
     temp = s.temp
     if temp is not None:
-        _show(temp, show)
+        _show(temp, show, s.pins)
         bpy.data.images.remove(temp)
     redraw()
 
@@ -399,16 +460,38 @@ def _line(region, pts, color, width=1.5, closed=False):
     batch.draw(sh)
 
 
-def _draw():
-    op, s = _op, active()
-    if op is None or s is None or gpu is None:
+def _draw_patches(s, to_region):
+    """The fills over the copy, oldest first (the copy itself has none of them)."""
+    from . import lasso_draw
+    shader, kind = lasso_draw._get_image_shader()
+    if shader is None:
         return
-    region = bpy.context.region
-    if region is None or region.as_pointer() != op._region_ptr:
+    for rec in s.undo:
+        tex = s.patch_texture(rec)
+        if tex is None:
+            continue
+        x0, y0, before = rec[0], rec[1], rec[2]
+        x1, y1 = x0 + before.shape[1], y0 + before.shape[0]
+        verts = [to_region(x0, y0), to_region(x1, y0), to_region(x1, y1), to_region(x0, y1)]
+        lasso_draw._draw_tex_quad(shader, kind, tex, verts, (1.0, 1.0, 1.0, 1.0))
+
+
+def _draw():
+    s = active()
+    if s is None or gpu is None:
+        return
+    ctx = bpy.context
+    region, sp = ctx.region, ctx.space_data
+    if region is None or sp is None or sp.image is None or sp.image.name != s.temp_name:
         return
     try:
         to_region = _to_region(region, s)
         gpu.state.blend_set('ALPHA')
+        _draw_patches(s, to_region)
+        op = _op
+        if op is None or region.as_pointer() != op._region_ptr:
+            gpu.state.blend_set('NONE')
+            return
         ov = _overlay(s)
         if ov is not None:
             tex, (x0, y0, x1, y1) = ov
@@ -497,7 +580,9 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         region = _window_region(context.area)
         if region is None:
             return {'CANCELLED'}
-        context.space_data.image = s.temp
+        sp = context.space_data
+        s.pins.setdefault(context.area.as_pointer(), sp.use_image_pin)
+        sp.image = s.temp                   # pins the editor: _end puts the pin back
         self._s = s
         self._area = context.area
         self._region = region
@@ -514,7 +599,6 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         self._hover_region = None
         self._last_click = (0.0, None)
         _op = self
-        _ensure_handler()
         context.window_manager.modal_handler_add(self)
         redraw()
         return {'RUNNING_MODAL'}
@@ -558,7 +642,6 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
     def _stop(self, context):
         global _op
         _op = None
-        _remove_handler()
         try:
             context.window.cursor_modal_restore()
         except Exception:
