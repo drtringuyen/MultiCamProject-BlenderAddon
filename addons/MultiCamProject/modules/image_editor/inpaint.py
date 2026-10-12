@@ -54,6 +54,7 @@ PREFIX = "MCP_IP_"
 KEY = "mcp_ip_alb"          # on the copy: the edited image's name (leftover clean-up)
 
 UNDO_BYTES = 1024 * 1024 * 1024
+CONTEXT_PX = 384            # most pixels of known context around a fill
 CLOSE_PX = 12.0             # region pixels: a click this close to point 1 closes the lasso
 DRAG_PX = 6.0               # region pixels a press has to move to be a free lasso
 OVERLAY_MAX = 512           # long side of the selection overlay texture
@@ -200,8 +201,11 @@ class Session:
             return 0
         rect = (x0 + box[0], y0 + box[1], x0 + box[2], y0 + box[3])
         size = max(rect[2] - rect[0], rect[3] - rect[1])
+        # context around the hole: as big as the hole, but no more than CONTEXT_PX - the
+        # fill learns from the pixels near its edge; a 1200 px hole made a 3600 px crop
         cx0, cy0, cx1, cy1 = ipf.crop_rect(rect, self.w, self.h,
-                                           max(32, size) + st.grow + self.margin)
+                                           min(max(32, size), CONTEXT_PX) + st.grow
+                                           + self.margin)
         crop = self.buf[cy0:cy1, cx0:cx1]
         hole = self.sel[cy0:cy1, cx0:cx1]
         labels = None
