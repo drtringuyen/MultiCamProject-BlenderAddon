@@ -37,7 +37,7 @@ def _draw_bake_row(context, layout, obj):
         layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
                         icon='RENDER_STILL')
         return
-    bake_ui.draw_bake_box(context, layout, obj)
+    bake_ui.draw_bake_box(context, layout, obj, route_rows=True)
 
 
 def _icon(icon):
@@ -101,7 +101,13 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         ba, _bn = core.baked_images(obj)
         row = layout.row(align=True)
         row.active = False
-        if ba is not None:
+        route = getattr(getattr(obj, "multicamproject_bake", None), "route", 'MIXED')
+        if route == 'ORIGINAL':
+            row.label(text="BAo_ only: the projection is off (Bake Route From Original)",
+                      icon='NODE_MATERIAL')
+        elif route == 'PROJECTION':
+            row.label(text="Projection only (Bake Route From Projection)", icon='NODE_MATERIAL')
+        elif ba is not None:
             row.label(text="Mix: projection over BAo_ (by the mask, Bake Route Mixed)", icon='NODE_MATERIAL')
         else:
             row.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')

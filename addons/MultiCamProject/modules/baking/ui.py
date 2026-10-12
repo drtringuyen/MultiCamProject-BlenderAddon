@@ -47,11 +47,20 @@ def draw_fit_cage(layout, obj):
     row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
 
 
-def draw_bake_box(context, layout, obj):
+def draw_bake_box(context, layout, obj, route_rows=False):
     """One box, the same in 05 and 06: Processing | Final, Fit Cage (when needed), then the
-    bake row ([Auto Resolution v] [Bake ...] [mixture] [gear])."""
+    bake row ([Auto Resolution v] [Bake ...] [mixture] [gear]). `route_rows` (05): 06's
+    route prompt under Processing | Final too, and a warning while From Original hides
+    the projection - painting would show nothing."""
     box = layout.box().column()
     draw_final_toggle(box, obj, "multicamproject_view")
+    d = common.data(obj)
+    if route_rows and not d.handmade:
+        if d.route_prompt:
+            route.draw_prompt(box, obj)
+        elif d.route == route.ORIGINAL:
+            route.draw_prompt(box, obj, "Bake Route From Original: the projection and its "
+                                        "paint do not show")
     draw_fit_cage(box, obj)
     MULTICAMPROJECT_PT_Baking._draw_bake_button(box, common.settings(context.scene), obj)
 

@@ -124,12 +124,12 @@ def after_step(obj, step):
         set_route(obj, suggest(obj))
 
 
-def draw_prompt(layout, obj):
-    """The prompt row of 06: the reason and one button per route."""
+def draw_prompt(layout, obj, text=None):
+    """The prompt row of 06 (and 05): the reason and one button per route."""
     d = common.data(obj)
     box = layout.box().column(align=True)
     box.alert = True
-    box.label(text=d.route_prompt, icon='QUESTION')
+    box.label(text=text or d.route_prompt, icon='QUESTION' if text is None else 'ERROR')
     row = box.row(align=True)
     box.alert = False
     for key in (ORIGINAL, PROJECTION, MIXED):
