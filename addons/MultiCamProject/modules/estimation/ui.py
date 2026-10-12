@@ -71,10 +71,18 @@ class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
             layout.label(text=item.name)
             return
         name, nums = _line(layout.column(align=True), item)
-        name.label(text=ln.label, icon=core.ICONS[ln.state])
-        for text in (f"{ln.area:.2f} m²", core.short(ln.budget), core.short(ln.now)):
-            _cell(nums, text)
-        _delta(nums, ln.delta)
+        name.label(text=ln.label, icon='HOME' if ln.room else core.ICONS[ln.state])
+        if ln.room:         # ROOM: no budget, no To Go
+            for text in (f"{ln.area:.2f} m²", "-", core.short(ln.now), ""):
+                _cell(nums, text)
+        else:
+            for text in (f"{ln.area:.2f} m²", core.short(ln.budget), core.short(ln.now)):
+                _cell(nums, text)
+            _delta(nums, ln.delta)
+        obj = bpy.data.objects.get(item.name)
+        if obj is not None and obj.type == 'MESH':
+            from ... import steps
+            steps.draw_stage(layout.row(align=True), context, obj, units=3.4)
         _draw_links(layout, item.name)
 
     def draw_filter(self, context, layout):
@@ -83,7 +91,7 @@ class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
 
 class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
     """Polycount Estimation (part of Setup): the triangle budget of the OBJECTS collection,
-    split by area. In a work window: the object's budget, which its Decimate was set to"""
+    split by area; ROOM listed with its stage, outside the budget. In a work window: the object's budget, which its Decimate was set to"""
     bl_label = "Polycount Estimation"
     bl_idname = "MULTICAMPROJECT_PT_estimation"
     bl_space_type = 'VIEW_3D'
@@ -125,7 +133,7 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
             _cell(nums, text)
         box.template_list("MULTICAMPROJECT_UL_Estimation", "", s, "rows", s, "active_index",
                           rows=len(s.rows), maxrows=len(s.rows))
-        lines = core.table(context)
+        lines = [ln for ln in core.table(context) if not ln.room]     # the budget's objects
         col = box.column(align=True)
         tris = sum(ln.now for ln in lines)
         budget = sum(ln.budget for ln in lines)

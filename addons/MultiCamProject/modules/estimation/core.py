@@ -98,6 +98,16 @@ def calculate(context):
     for (obj, area, tris), budget in zip(found, budgets):
         row = s.rows.add()
         row.name, row.area, row.tris, row.budget = obj.name, area, tris, budget
+    # ROOM (the walls): listed with their stage and triangles, never part of the budget
+    from ... import roles
+    room = roles.find(context.scene, 'ROOM')
+    seen = {o for o, *_r in found}
+    for obj in (room.all_objects if room is not None else ()):
+        if obj.type != 'MESH' or obj in seen or s.rows.get(obj.name) is not None:
+            continue
+        area, tris = measure(obj, dg)
+        row = s.rows.add()
+        row.name, row.area, row.tris, row.budget, row.room = obj.name, area, tris, 0, True
     s.collection_name, s.calculated_budget = coll.name, s.budget
     return coll
 
@@ -168,6 +178,8 @@ def row_state(context, row, export):
     if obj is None or export is None or obj.name not in export.all_objects:
         return NEW, row.tris
     now = tris_now(context, obj)
+    if row.room:            # no budget: worked on = green
+        return DONE, now
     return (DONE if now <= row.budget else OVER), now
 
 
@@ -203,11 +215,11 @@ ORDER = {DONE: 0, OVER: 1, NEW: 2}      # the list: green, orange, black - by ar
 
 class Line:
     """One object of the list as shown now."""
-    __slots__ = ("name", "label", "area", "budget", "now", "state")
+    __slots__ = ("name", "label", "area", "budget", "now", "state", "room")
 
-    def __init__(self, name, label, area, budget, now, state):
+    def __init__(self, name, label, area, budget, now, state, room=False):
         self.name, self.label, self.area = name, label, area
-        self.budget, self.now, self.state = budget, now, state
+        self.budget, self.now, self.state, self.room = budget, now, state, room
 
     @property
     def delta(self):
@@ -232,8 +244,8 @@ def table(context):
     out = []
     for r in s.rows:
         state, now = row_state(context, r, export)
-        out.append(Line(r.name, labels[r.name], r.area, r.budget, now, state))
-    out.sort(key=lambda ln: (ORDER[ln.state], -ln.area))
+        out.append(Line(r.name, labels[r.name], r.area, r.budget, now, state, r.room))
+    out.sort(key=lambda ln: (ln.room, ORDER[ln.state], -ln.area))
     STATE.clear()
     STATE.update({ln.name: ln.state for ln in out})
     return out

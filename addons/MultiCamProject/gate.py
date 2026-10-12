@@ -35,12 +35,32 @@ def decimate_pending(obj):
     return wf.decimate_pending(obj)
 
 
-def lock(layout, context):
+def lock(layout, context, step=None):
     """Grey out a panel until the gate is open, and while the active object's Decimate is
-    not decided. Returns True when open."""
+    not decided. `step` (2-8): also until the active object has done the steps before it
+    (steps.why_locked). Returns True when open."""
     ok = ready(context.scene) and not decimate_pending(context.active_object)
+    if ok and step is not None:
+        from . import steps
+        ok = not steps.why_locked(context.active_object, step, context.scene)
     layout.enabled = ok
     return ok
+
+
+def step_box(layout, context, step):
+    """A step panel's top: the reason it is locked (a greyed line), and the layout to draw
+    into - greyed while locked. Returns (layout, open)."""
+    from . import steps
+    why = "" if _work_window(context.scene) else steps.why_locked(context.active_object, step,
+                                                                  context.scene)
+    if not why:
+        return layout, True
+    row = layout.row()
+    row.alert = True
+    row.label(text=why, icon='LOCKED')
+    col = layout.column()
+    col.enabled = False
+    return col, False
 
 
 def draw_start(layout, context):

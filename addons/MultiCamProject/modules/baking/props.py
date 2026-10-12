@@ -74,6 +74,17 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                                            "or a Rebake): another one means Rebake first")
     rebaked: BoolProperty(description="A Rebake wrote ALB_ / NOR_ since Edit UV (Cancel puts "
                                       "the _previous files back)")
+    workflow: EnumProperty(
+        name="Mesh Workflow", default='NONE',
+        items=(('NONE', "None", "No mesh workflow chosen yet (02)", 0),
+               ('REMESH', "Remesh", "2B: a decimated copy of the scan, baked from it", 1),
+               ('RETOPO', "Retopo", "2C: modelled by hand on top of the scan, baked from it", 2),
+               ('PROJECT', "Only Project", "2D: the scan itself, BAo_ from its own textures", 3)),
+        description="The mesh workflow picked in 02 (set by 2B / 2C / 2D)")
+    locked: BoolProperty(
+        name="Locked Finish", default=False,
+        description="08 Lock Finish: the object is final - its ALB_ / NOR_ are never removed "
+                    "and every step is locked until it is unlocked")
     retopo: BoolProperty(description="Made by 0D Retopo: modelled by hand on top of the "
                                      "original, no Decimate")
     # where 06 Bake Final takes ALB_ / NOR_ from (each object its own)

@@ -59,8 +59,9 @@ def _migrate():
         gn_final.drop_albedo()
         _migrate_bake_source()
         _migrate_cage()
-        from . import migrate_route
+        from . import fingerprint, migrate_route
         migrate_route.migrate()
+        fingerprint.migrate_paths()
     except Exception as e:  # never block addon startup or a file load
         print(f"[MultiCamProject] Baking migration skipped: {e}")
     return None

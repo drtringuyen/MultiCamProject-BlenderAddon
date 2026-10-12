@@ -84,6 +84,8 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         else:
             row.prop(item, "name", text="", emboss=False)
         right = layout.row(align=True)
+        from ... import steps
+        steps.draw_stage(right, context, item)
         if module_manager.is_loaded("linking"):
             from ..linking import ui as link_ui
             link_ui.draw_row_button(right, item)       # Send Out / Receive + X

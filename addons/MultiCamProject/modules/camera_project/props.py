@@ -119,6 +119,10 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
                for n in (3, 4, 5, 6)],
         description="How many cameras project at once. Cameras 4-6 paint into VCMix2, "
                     "which covers cameras 1-3 where it is painted")
+    resorted: BoolProperty(
+        default=False,
+        description="The camera list was resorted by hand at least once (Resort stays red "
+                    "until then)")
     user_picked: BoolProperty(
         default=False,
         description="True once the user chose a slot - auto-fill then keeps their choice")

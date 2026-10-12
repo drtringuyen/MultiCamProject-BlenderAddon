@@ -17,6 +17,16 @@ from ..camera_project import gn_builder
 from . import cache, common
 
 _WEIGHTS = {}
+_LEGACY = []        # non-empty: hash raw img.filepath as before 2026-10-12 (paths migration)
+
+
+def _path(img):
+    """An image's file as one string, whatever way it is written: '//..', absolute, another
+    case - a relink to the same file is no change. Raw filepath only for the migration."""
+    if _LEGACY:
+        return img.filepath
+    f = common.image_file(img)
+    return os.path.normcase(f) if f else img.filepath
 
 
 def _vec_checksum(attr, width):
@@ -133,7 +143,7 @@ def _material_images(mat):
         if n.name in _NOT_INPUTS:
             continue
         if n.type == 'TEX_IMAGE' and n.image:
-            out.append((n.name, n.image.name, n.image.filepath))
+            out.append((n.name, n.image.name, _path(n.image)))
         elif n.type == 'VALUE':
             out.append((n.name, round(n.outputs[0].default_value, 4)))
     return sorted(out, key=repr)
@@ -168,7 +178,7 @@ def _projection_parts(obj, cached=False):
     parts.append(n)
     for i, cam in enumerate(cp.get_slots(d), 1):
         img = cp.cam_image(cam) if cam else None
-        parts.append((cam.name if cam else "", img.filepath if img else ""))
+        parts.append((cam.name if cam else "", _path(img) if img else ""))
     for k in ("Mode", "Previous Bake") + tuple(f"UV Shift Cam{i}" for i in range(1, n + 1)):
         try:
             v = cp.get_input(mod, k)
@@ -266,3 +276,35 @@ def projection_outdated(obj):
     """The route uses the Projection and BAp_ is outdated (a missing BAp_ is just made)."""
     from . import route
     return route.uses_projection(obj) and bp_outdated(obj)
+
+
+PATHS_KEY = "paths_normalized"
+
+
+def migrate_paths():
+    """(2026-10-12) once per file: the stamps hashed raw file paths, so a '//' <-> absolute or
+    case flip read as a change. Stamps that matched with the raw paths are stored again with
+    the normalized ones - an up-to-date bake stays up to date."""
+    if not bpy.data.scenes or any(sc.multicamproject_bake_settings.get(PATHS_KEY)
+                                  for sc in bpy.data.scenes):
+        return
+    for obj in bpy.data.objects:
+        if obj.type != 'MESH' or obj.library or not hasattr(obj, "multicamproject_bake"):
+            continue
+        d = common.data(obj)
+        if not (d.fingerprint or d.bp_fingerprint):
+            continue
+        try:
+            _LEGACY.append(1)
+            try:
+                old, old_p = compute(obj), projection_state(obj)
+            finally:
+                _LEGACY.clear()
+            if d.fingerprint and d.fingerprint == old:
+                d.fingerprint = compute(obj)
+            if d.bp_fingerprint and d.bp_fingerprint.split(":")[0] == old_p:
+                d.bp_fingerprint = projection_state(obj) + d.bp_fingerprint[len(old_p):]
+        except Exception as e:      # never block a file load
+            print(f"[MultiCamProject] stamp paths of {obj.name} skipped: {e}")
+    for sc in bpy.data.scenes:
+        sc.multicamproject_bake_settings[PATHS_KEY] = 1
