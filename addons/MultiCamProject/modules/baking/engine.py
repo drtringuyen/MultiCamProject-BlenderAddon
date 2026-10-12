@@ -692,9 +692,8 @@ def _bake_from_source(context, obj, normal=None):
     d.ba_far_share, d.ba_far_max, d.ba_fit_cage = source_distance(obj, src)
     was_final = gn_final.is_final(obj)
     ba = _work_image(common.ba_name(obj), size, 'sRGB')
-    # BNo_ (Cycles) only when picked: by default the original's normal is generated from BAo_
-    if normal is None:
-        normal = d.original_normal == 'BAKED'
+    # BNo_ (Cycles) only when asked for: 07's Bake from Scan bakes it (bake_scan_normal_steps)
+    normal = bool(normal)
     bn = (_work_image(common.bn_name(obj), size, 'Non-Color', is_float=True)    # 16-bit PNG
           if normal else None)
     prev = _uv_normal_active(obj)
@@ -739,6 +738,45 @@ def _bake_from_source(context, obj, normal=None):
     if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
         cp.ensure_material(obj)         # the BAKED frame shows the new BAo_ / BNo_
     return d.last_ba_seconds
+
+
+def bake_scan_normal_steps(context, obj):
+    """07 Bake from Scan: BNo_ alone - the Bake Source's surface baked onto obj's uv_normal
+    (tangent, OpenGL Y+), BAo_ untouched. A generator (jobs)."""
+    from .normal import mesh_bake
+    scene = context.scene
+    s = common.settings(scene)
+    d = common.data(obj)
+    src = d.bake_source
+    if src is None:
+        raise RuntimeError("Bake from Scan needs a Bake Source (2B / 2C)")
+    size = common.resolution(obj, scene)
+    bn = _work_image(common.bn_name(obj), size, 'Non-Color', is_float=True)    # 16-bit PNG
+    prev = _uv_normal_active(obj)
+    was_final = gn_final.is_final(obj)
+    try:
+        with common.shown(context, [obj, src]), render_state(scene), \
+                selection(context, obj, [obj, src]), \
+                mesh_bake.smoothed_source(context, src, s) as hp, target_nodes(obj, bn):
+            configure(scene, 'NORMAL')
+            b = scene.render.bake
+            b.normal_space = 'TANGENT'
+            b.normal_r, b.normal_g, b.normal_b = 'POS_X', 'POS_Y', 'POS_Z'     # OpenGL, Y+
+            hp.select_set(True)
+            yield jobs.Step("Normal: the scan's surface (BNo_)")
+            yield from _bake(context, obj, [obj, hp], 'NORMAL', size, bn,
+                             use_selected_to_active=True, cage_extrusion=common.cage(obj),
+                             normal_space='TANGENT')
+    except Exception:
+        bpy.data.images.remove(bn)
+        raise
+    finally:
+        _uv_restore(obj, prev)
+        if gn_final.is_final(obj) != was_final:
+            gn_final.set_final(obj, scene, was_final)
+    yield jobs.Step("Normal: writing BNo_")
+    d.bn_image = store_work(scene, bn, d.bn_image, common.bn_name(obj), normal=True)
+    d.bn_stale = False
 
 
 def source_distance(obj, src, samples=4000):

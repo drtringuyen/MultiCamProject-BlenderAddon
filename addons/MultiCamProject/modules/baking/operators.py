@@ -331,9 +331,11 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
-    """Make NOR_<name> with the Normal Source (16-bit PNG) and put it into MAT_"""
+    """07 Generate Normal: NOR_<name> (16-bit PNG) from ALB_ - its inpaint when there is one -
+    by High-pass / AI, or with Bake from Scan the scan's surface where the projection mask
+    is 0. Into MAT_"""
     bl_idname = "multicamproject.bake_normal"
-    bl_label = "Make Normal"
+    bl_label = "Generate Normal"
     bl_options = {'REGISTER', 'UNDO'}
 
     scope: EnumProperty(items=SCOPES, default='SELECTED')
@@ -347,8 +349,9 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
             cls.poll_message_set("Select meshes")
             return False
         src = common.settings(context.scene).nor_source
+        from ... import steps
         for o in objs:
-            why = normal.problem(o, context.scene, src)
+            why = normal.problem(o, context.scene, src) or steps.why_locked(o, 7, context.scene)
             if why:
                 cls.poll_message_set(f"{o.name}: {why}")
                 return False

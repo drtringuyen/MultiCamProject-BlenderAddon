@@ -107,12 +107,14 @@ def alb_fresh(obj):
 
 
 def nor_fresh(obj):
-    """07: NOR_ is on disk and made from the current ALB_."""
-    from .modules.baking import common
+    """07: NOR_ is on disk and made from the current ALB_ (its inpaint) and settings."""
+    from .modules.baking import common, normal
     d = _bake(obj)
     if d is None or d.nor_image is None or not common.file_ok(d.nor_image):
         return False
-    return alb_fresh(obj)
+    if d.handmade:
+        return True
+    return alb_fresh(obj) and not normal.nor_outdated(obj)
 
 
 def state(obj, scene=None):

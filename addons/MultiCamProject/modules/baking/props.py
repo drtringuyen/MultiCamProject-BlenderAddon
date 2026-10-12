@@ -99,13 +99,13 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     route: EnumProperty(name="Bake Route", items=ROUTE_ITEMS, default='MIXED', update=_on_route,
                         description="Where 05 Bake Albedo takes ALB_ (and 07 NOR_) from")
     original_normal: EnumProperty(
-        name="Original Normal", default='GENERATED',
-        items=(('BAKED', "From Original's Surface",
-                "BNo_: the original's surface baked onto the low poly (Cycles) - only baked "
-                "when picked here", 'MESH_DATA', 0),
-               ('GENERATED', "Generated from Albedo High-pass",
-                "Generated from BAo_ (the original's colors) with the engine below - "
-                "High-pass or AI", 'IMAGE_RGB', 1)),
+        name="Normal", default='GENERATED',
+        items=(('BAKED', "Bake from Scan",
+                "07: BNo_, the scan's surface baked onto the low poly (Cycles), where the "
+                "projection mask is 0 - the High-pass of ALB_ where it is 1", 'MESH_DATA', 0),
+               ('GENERATED', "High-pass of ALB_",
+                "07: NOR_ generated from ALB_ (its inpaint when there is one) with the engine "
+                "below - High-pass or AI", 'IMAGE_RGB', 1)),
         update=lambda self, context: _on_original_normal(self),
         description="From Original / Mixed: the normal on the original's side")
     show_normal: BoolProperty(
@@ -169,6 +169,8 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     alb_size: IntProperty(description="Resolution of the last albedo bake (0 = never baked)")
     nor_size: IntProperty(description="Resolution of the last normal map (0 = none)")
     nor_source_used: StringProperty(description="Normal source of the last normal map")
+    nor_fingerprint: StringProperty(description="07: what the last NOR_ was made from (the "
+                                                "ALB_ / its inpaint, the settings, BNo_)")
     last_bake_seconds: FloatProperty()
     last_nor_seconds: FloatProperty()
     nor_times: StringProperty(description="JSON: seconds of the last run per normal source and size")

@@ -1,13 +1,15 @@
-"""NOR_<name>: 16-bit, Non-Color, OpenGL (Y+), always <output dir>/NOR_<name>.png, by the
-object's Bake Route:
+"""NOR_<name> (07 Generate Normal): 16-bit, Non-Color, OpenGL (Y+), in the bake folder.
 
-    From Original    a copy of BNo_ (the original's surface), or generated from BAo_
-                     (High-pass / AI) when the object's Original Normal says so
-    From Projection  a copy of BNp_ - generated from BAp_ (the projection's albedo)
-    Mixed            the original's side (as above) -> BNp_ by the VCMix mask (a plain mix)
+    High-pass of ALB_ (default)  generated from ALB_ - ALB_<name>_inpaint when it was
+                                 inpainted - with High-pass (Lite) or the AI model
+    Bake from Scan (picked)      BNo_, the scan's surface (Cycles), where the projection mask
+                                 is 0 -> the High-pass of ALB_ where it is 1
 
-BNp_ comes from BAp_: High-pass (Lite) or the AI model (Full build, onnxruntime). It is
-made again only when BAp_ or the normal settings changed."""
+The stamp (nor_fingerprint) holds the ALB_ file it was made from: a new ALB_ or a saved
+inpaint of it sends the object back to 07.
+
+The older route-based helpers below (BNoG_ from BAo_, BNp_ from BAp_) still feed the
+Processing material's normal."""
 import os
 import time
 
@@ -39,10 +41,11 @@ def usable(source):
 
 
 def problem(obj, scene, source):
-    """Why NOR_ cannot be made for `obj` ('' = it can). What the route needs first (BAo_ /
-    BNo_ / BAp_) is baked by the Normal itself."""
-    from .. import route
-    return route.problem(obj)
+    """Why NOR_ cannot be made for `obj` ('' = it can): 07 needs ALB_ (05)."""
+    alb = common.alb_source(obj)
+    if alb is None or not common.file_ok(alb):
+        return "Bake the albedo first"
+    return ""
 
 
 def _read_resized(img, size):
@@ -159,9 +162,94 @@ def generate(context, obj, source):
     return jobs.run_sync(generate_steps(context, obj, source))
 
 
+def from_scan(obj):
+    """07 says Bake from Scan, and the object has a scan to bake from."""
+    d = common.data(obj)
+    return d.original_normal == 'BAKED' and d.bake_source is not None
+
+
+def state(obj, scene=None):
+    """What NOR_ is made from now: the ALB_ file (its inpaint), the engine and its settings,
+    the size, and for Bake from Scan the projection (the mask) and the Bake Source."""
+    from .. import fingerprint
+    scene = scene or bpy.context.scene
+    s = common.settings(scene)
+    d = common.data(obj)
+    alb = common.alb_source(obj)
+    parts = [fingerprint.inpaint_sig(alb), usable(s.nor_source), round(s.nor_strength, 4),
+             s.nor_radius, s.nor_invert, common.resolution(obj, scene)]
+    if from_scan(obj):
+        parts += ["scan", d.fingerprint, d.ba_fingerprint.split(":")[0], round(common.cage(obj), 5)]
+    return repr(parts)
+
+
+def nor_outdated(obj, scene=None):
+    """NOR_ was made from another ALB_ / settings than now ('' stamp: older NOR_, left as it
+    was)."""
+    d = common.data(obj)
+    return bool(d.nor_fingerprint) and d.nor_fingerprint != state(obj, scene)
+
+
 def generate_steps(context, obj, source):
-    """Make NOR_<name> by the object's Bake Route (see the module doc) at its resolution,
-    baking what the route needs first (BAo_ / BNo_, BAp_, BNp_), and put it into MAT_.
+    """07: NOR_<name> from ALB_ (see the module doc) at the object's resolution, into MAT_.
+    A generator (jobs); returns the seconds."""
+    import numpy as np
+    source = usable(source)
+    scene = context.scene
+    s = common.settings(scene)
+    d = common.data(obj)
+    alb = common.alb_source(obj)
+    if alb is None or not common.file_ok(alb):
+        raise RuntimeError("No ALB_ - 05 Bake Albedo first")
+    size = common.resolution(obj, scene)
+    t0 = time.perf_counter()
+    name = common.nor_name(obj)
+    path = common.texture_path(scene, name)
+    yield jobs.Step(f"Normal: {LABELS[source]} of {alb.name}")
+    rgb = (ai.generate(alb, size) if source == 'AI' else highpass.generate(alb, size, s))
+    if from_scan(obj):
+        if d.bn_stale or d.bn_image is None or not common.file_ok(d.bn_image):
+            yield from engine.bake_scan_normal_steps(context, obj)
+        was_final = final.is_final(obj)
+        try:
+            mask = yield from engine.bake_mask_steps(context, obj, size)
+        finally:
+            if final.is_final(obj) != was_final:
+                final.set_final(obj, scene, was_final)
+        yield jobs.Step("Normal: BNo_ -> High-pass by the mask")
+        base = _read_resized(d.bn_image, size)
+        m = mask[..., None] if mask is not None else np.zeros((size, size, 1), np.float32)
+        out = base * (np.float32(1.0) - m) + rgb * m
+        del base
+        n = out * np.float32(2.0) - np.float32(1.0)
+        n /= np.maximum(np.linalg.norm(n, axis=-1, keepdims=True), 1e-6)
+        rgb = (n * 0.5 + 0.5).astype(np.float32)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    yield jobs.Step(f"Normal: writing {os.path.basename(path)} (16-bit)")
+    pngio.write_rgb16(path, rgb, s.png_compression)
+    del rgb
+    img = d.nor_image or bpy.data.images.get(name)
+    if img is None:
+        img = bpy.data.images.load(path, check_existing=False)
+        img.name = name
+    elif img.name != name and not bpy.data.images.get(name):
+        img.name = name
+    img.colorspace_settings.name = 'Non-Color'     # before the reload: raw values
+    engine.link_file(img, path)
+    d.nor_image = img
+    d.nor_size = size
+    d.nor_source_used = source
+    d.nor_fingerprint = state(obj, scene)
+    d.last_nor_seconds = time.perf_counter() - t0
+    record_time(d, source, size, d.last_nor_seconds)
+    material.build(obj, scene)
+    final.write_inputs(obj, scene)
+    return d.last_nor_seconds
+
+
+def generate_route_steps(context, obj, source):
+    """(Before 07) NOR_ by the object's Bake Route, baking what the route needs first
+    (BAo_ / BNo_, BAp_, BNp_). Kept for reference; 07 uses generate_steps.
     A generator (jobs); returns the seconds."""
     from .. import route
     source = usable(source)

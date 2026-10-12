@@ -308,8 +308,122 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
 
 
+def draw_normal_settings(layout, context):
+    """07's gear: High-pass of ALB_ (default) or Bake from Scan, the engine and its options."""
+    s = common.settings(context.scene)
+    obj = context.active_object
+    d = common.data(obj) if obj is not None and obj.type == 'MESH' else None
+    col = layout.column()
+    col.label(text="Normal Map", icon='NORMALS_FACE')
+    if d is not None and not d.handmade:
+        col.row().prop(d, "original_normal", expand=True)
+        if d.original_normal == 'BAKED':
+            note = col.row()
+            note.active = False
+            note.label(text="BNo_ where the mask is 0, High-pass where it is 1"
+                       if d.bake_source is not None else
+                       "No Bake Source (2D): High-pass only", icon='INFO')
+    ai_on = s.nor_source == 'AI'
+    split = col.split(factor=0.34, align=True)
+    split.label(text="Engine")
+    row = split.row(align=True)
+    row.menu("MULTICAMPROJECT_MT_normal_engine", text="AI" if ai_on else "Lite",
+             icon='LIGHT_SUN' if ai_on else 'IMAGE_RGB')
+    if not ai_on:
+        row.menu("MULTICAMPROJECT_MT_normal_method", text=normal.LABELS.get(s.nor_source,
+                                                                             s.nor_source))
+    if s.nor_source == 'HIGHPASS':
+        opts = col.column(align=True)
+        row = opts.row(align=True)
+        row.prop(s, "nor_strength", text="Strength")
+        row.prop(s, "nor_radius", text="Radius")
+        opts.row(align=True).prop(s, "nor_invert", text="Invert", toggle=True)
+    if d is not None and d.original_normal == 'BAKED':
+        row = col.row(align=True)
+        row.prop(s, "smooth_source", text="Smooth the Scan")
+        sub = row.row(align=True)
+        sub.active = s.smooth_source
+        sub.prop(s, "smooth_iterations", text="")
+
+
+class MULTICAMPROJECT_PT_NormalSettings(bpy.types.Panel):
+    """07's gear: how NOR_ is made"""
+    bl_label = "Normal Settings"
+    bl_idname = "MULTICAMPROJECT_PT_normal_settings"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'HEADER'
+    bl_ui_units_x = 16
+
+    def draw(self, context):
+        draw_normal_settings(self.layout, context)
+
+
+class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
+    """07. Generate Normal: NOR_ from ALB_ (its inpaint when there is one) - High-pass by
+    default, or (gear) Bake from Scan: the scan's surface where the projection mask is 0.
+    Unlocks with 06 once ALB_ is baked; 06 is optional"""
+    bl_label = "07. Generate Normal"
+    bl_idname = "MULTICAMPROJECT_PT_generate_normal"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_parent_id = "MULTICAMPROJECT_PT_main"
+    bl_order = 6
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH'
+
+    def draw_header(self, context):
+        from ... import steps
+        done = 7 in steps.state(context.active_object, context.scene).done
+        self.layout.label(icon='CHECKMARK' if done else 'NORMALS_FACE')
+
+    def draw(self, context):
+        layout, _open = gate.step_box(self.layout, context, 7)
+        from . import jobs
+        if jobs.busy():
+            jobs.draw(layout)
+            return
+        obj = context.active_object
+        d = common.data(obj)
+        s = common.settings(context.scene)
+        if d.handmade:
+            layout.label(text="Handmade: NOR_ is made by hand", icon='INFO')
+            return
+        info = layout.column(align=True)
+        alb = common.alb_source(obj)
+        if alb is not None:
+            sub = info.row()
+            sub.active = False
+            sub.label(text=f"From {alb.name}", icon='IMAGE_RGB')
+        if d.nor_size and d.nor_image is not None:
+            label = normal.LABELS.get(d.nor_source_used, d.nor_source_used)
+            info.label(text=f"NOR {_res(d.nor_size)}  ·  {label}  ·  {d.last_nor_seconds:.1f} s",
+                       icon='NORMALS_FACE')
+            if normal.nor_outdated(obj, context.scene):
+                warn = info.row()
+                warn.alert = True
+                warn.label(text="ALB_ or the settings changed - generate again", icon='ERROR')
+        else:
+            info.label(text="No NOR_ yet", icon='INFO')
+        mode = ("Bake from Scan" if normal.from_scan(obj)
+                else normal.LABELS.get(normal.usable(s.nor_source), "High-pass"))
+        row = layout.row(align=True)
+        row.scale_y = 1.5
+        draw_object_size(row, obj)
+        row.separator(factor=0.5)
+        row.operator("multicamproject.bake_normal", text=f"07. Generate Normal ({mode})",
+                     icon='NORMALS_FACE')
+        row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
+        why = normal.problem(obj, context.scene, s.nor_source)
+        if why:
+            layout.label(text=why, icon='ERROR')
+
+
 def _draw_normal_settings(layout, context):
-    """The normal map's options (first part of the bake settings' gear)."""
+    """(Before 07) the normal map's options by route - kept for reference."""
     s = common.settings(context.scene)
     obj = context.active_object
     col = layout.column()
@@ -379,8 +493,6 @@ class MULTICAMPROJECT_PT_BakeSettings(bpy.types.Panel):
     def draw(self, context):
         s = common.settings(context.scene)
         obj = context.active_object
-        _draw_normal_settings(self.layout, context)
-        self.layout.separator()
         self.layout.label(text="Bake", icon='RENDER_STILL')
         col = self.layout.column(align=True)
         col.use_property_split = True
@@ -439,16 +551,18 @@ class MULTICAMPROJECT_MT_normal_method(bpy.types.Menu):
 
 
 _classes = (MULTICAMPROJECT_MT_normal_engine, MULTICAMPROJECT_MT_normal_method,
-            MULTICAMPROJECT_PT_BakeSettings)
+            MULTICAMPROJECT_PT_BakeSettings, MULTICAMPROJECT_PT_NormalSettings)
 
 
 def register():
     for c in _classes:
         bpy.utils.register_class(c)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Baking)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_GenerateNormal)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_GenerateNormal)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Baking)
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)
