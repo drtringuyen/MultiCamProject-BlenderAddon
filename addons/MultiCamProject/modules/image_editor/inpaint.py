@@ -61,6 +61,8 @@ OVERLAY_MAX = 512           # long side of the selection overlay texture
 _session = None
 _op = None                  # the running modal (one at a time)
 _draw_handle = None
+_panel_handles = []         # draw handlers measuring the overlapping sidebars (_measure_panels)
+_panels_bottom = {}         # region pointer -> lowest pixel row its panels cover (region space)
 
 
 def _baking():
@@ -639,6 +641,10 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         for o in self._area.regions:
             if (o.type != 'WINDOW' and o.width > 1 and o.height > 1
                     and o.x <= mx < o.x + o.width and o.y <= my < o.y + o.height):
+                # an overlapping sidebar / toolbar is see-through below its last panel
+                bottom = _panels_bottom.get(o.as_pointer())
+                if bottom is not None and my - o.y < bottom:
+                    continue
                 return False
         return True
 
@@ -878,8 +884,40 @@ def _report_save(op):
     return {'FINISHED'}
 
 
+def _measure_panels():
+    """Draw handler of the Image Editor's sidebar / toolbar: with Region Overlap they are
+    drawn see-through, opaque only where a panel is. One pixel column read back says where
+    the lowest panel ends - below it the strokes reach the image (Blender's API has no panel
+    bounds)."""
+    region = bpy.context.region
+    if region is None or region.height < 2 or region.width < 2:
+        return
+    try:
+        fb = gpu.state.active_framebuffer_get()
+        x = min(region.width - 1, max(0, region.width // 2))
+        col = fb.read_color(x, 0, 1, region.height, 4, 0, 'FLOAT')
+        col.dimensions = region.height * 4
+        a = np.asarray(col, dtype=np.float32)[3::4]
+    except Exception:
+        _panels_bottom.pop(region.as_pointer(), None)
+        return
+    drawn = np.nonzero(a > 0.5)[0]
+    _panels_bottom[region.as_pointer()] = int(drawn[0]) if len(drawn) else region.height
+
+
 def _ensure_handler():
     global _draw_handle
+    if not _panel_handles and gpu is not None and bpy.context.preferences.system.use_region_overlap:
+        for kind in ('UI', 'TOOLS'):
+            try:
+                _panel_handles.append((bpy.types.SpaceImageEditor.draw_handler_add(
+                    _measure_panels, (), kind, 'POST_PIXEL'), kind))
+            except Exception:
+                pass
+        for area in _image_editors():
+            for r in area.regions:
+                if r.type in {'UI', 'TOOLS'}:
+                    r.tag_redraw()
     if _draw_handle is None and gpu is not None:
         _draw_handle = bpy.types.SpaceImageEditor.draw_handler_add(_draw, (), 'WINDOW',
                                                                    'POST_PIXEL')
@@ -890,6 +928,13 @@ def _remove_handler():
     if _draw_handle is not None:
         bpy.types.SpaceImageEditor.draw_handler_remove(_draw_handle, 'WINDOW')
         _draw_handle = None
+    for h, kind in _panel_handles:
+        try:
+            bpy.types.SpaceImageEditor.draw_handler_remove(h, kind)
+        except Exception:
+            pass
+    _panel_handles.clear()
+    _panels_bottom.clear()
 
 
 # ── Panel operators ───────────────────────────────────────────────────────────
