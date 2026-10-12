@@ -268,7 +268,7 @@ def original_outdated(obj):
     """The route uses the Original and BAo_ is missing or outdated."""
     from . import route
     d = common.data(obj)
-    return (route.uses_original(obj) and d.bake_source is not None
+    return (route.uses_original(obj) and route.has_original(obj)
             and (d.ba_image is None or ba_outdated(obj)))
 
 

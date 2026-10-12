@@ -35,7 +35,8 @@ def has_projection(obj):
 
 
 def has_original(obj):
-    return common.data(obj).bake_source is not None
+    """A BAo_ to take: from the Bake Source, or (2D Only Project) the scan's own textures."""
+    return common.data(obj).bake_source is not None or common.self_bake(obj)
 
 
 def get(obj):

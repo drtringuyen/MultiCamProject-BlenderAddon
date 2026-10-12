@@ -344,25 +344,33 @@ def _flat_group():
     return ng
 
 
-def uv_render(context, obj, size, emit=True):
+def uv_render(context, obj, size, emit=True, prepare=None):
     """_uv_render with obj's MCP_ / MAT_ on their BSDF output and no texture cap (Preview
     must not reach a bake)."""
     from ... import quality
     with quality.final(quality.object_materials(obj)):
-        return _uv_render(context, obj, size, emit)
+        return _uv_render(context, obj, size, emit, prepare)
 
 
-def _uv_render(context, obj, size, emit=True):
+def _uv_render(context, obj, size, emit=True, prepare=None):
     """obj as its materials show it, rendered by EEVEE on uv_normal: (size, size, 4) linear
     floats, rows bottom-up, alpha > 0 where a face covers the pixel. `emit`: every material
     shows its color as Emission (the Diffuse Color a Cycles bake would read); else the
     materials must already show what to read (the blend mask).
     A copy of the evaluated object (projection, temporary subdivision) renders in a scene of
-    its own: nothing of the user's scene renders along, obj is not touched."""
+    its own: nothing of the user's scene renders along, obj is not touched.
+    `prepare(me)`: changes the copy first, `prepare(None)` gives the mesh to copy instead of
+    the evaluated object (e.g. the plain mesh, before its modifiers)."""
     s = common.settings(context.scene)
     dg = context.evaluated_depsgraph_get()
-    me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg), preserve_all_data_layers=True,
-                                         depsgraph=dg)
+    raw = prepare(None) if prepare is not None else None
+    if raw is not None:
+        me = raw.copy()
+    else:
+        me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg),
+                                             preserve_all_data_layers=True, depsgraph=dg)
+    if prepare is not None:
+        prepare(me)
     sc = bpy.data.scenes.new(UV_TMP)
     flat = bpy.data.objects.new(UV_TMP, me)
     cam_data = bpy.data.cameras.new(UV_TMP)
@@ -559,6 +567,8 @@ def source_problem(obj, context=None):
     """Why Bake from Source cannot run for `obj` ('' = it can)."""
     context = context or bpy.context
     src = common.data(obj).bake_source
+    if src is None and common.self_bake(obj):
+        return self_problem(obj)
     if src is None:
         return "No Bake Source (2B Remesh / 2C Retopo, or pick the high poly)"
     if src == obj or src.type != 'MESH':
@@ -575,20 +585,95 @@ def bake_from_source(context, obj):
     return jobs.run_sync(bake_from_source_steps(context, obj))
 
 
-def bake_from_source_steps(context, obj):
+def self_problem(obj):
+    """Why the 2D self-bake cannot run ('' = it can)."""
+    if not common.has_uv_normal(obj):
+        return f"No '{common.UV_NORMAL}' UV map - make it in 02 first"
+    if obj.data.attributes.get(cp.UV_INDEX) is None:
+        return "No uv_index: run 2D Only Project again (Reload All)"
+    if not cp._scan_uv(obj, []):
+        return "No scan UV map left to read the scan textures with"
+    if not any(s.material is not None and not cp._is_ours(s.material)
+               for s in obj.material_slots):
+        return "No scan material left to bake from"
+    return ""
+
+
+def _scan_mesh(obj):
+    """prepare() for the self-bake: the plain mesh, its faces back on their scan material
+    (uv_index), the scan UV rendering - its textures have no UV Map node."""
+    scan_uv = cp._scan_uv(obj, [])
+
+    def prepare(me):
+        if me is None:
+            return obj.data
+        n = len(me.polygons)
+        idx = np.zeros(n, np.int32)
+        me.attributes[cp.UV_INDEX].data.foreach_get("value", idx)
+        mi = np.empty(n, np.int32)
+        me.polygons.foreach_get("material_index", mi)
+        me.polygons.foreach_set("material_index", np.where(idx > 0, idx, mi))
+        uv = me.uv_layers.get(scan_uv)
+        if uv is not None:
+            uv.active_render = True
+    return prepare
+
+
+def _bake_self(context, obj):
+    """2D Only Project: BAo_ = the scan's own textures rendered by EEVEE onto uv_normal
+    (no Bake Source, no rays). A generator (jobs); returns the seconds."""
+    scene = context.scene
+    s = common.settings(scene)
+    d = common.data(obj)
+    why = self_problem(obj)
+    if why:
+        raise RuntimeError(why)
+    t0 = time.perf_counter()
+    size = common.resolution(obj, scene)
+    ba = _work_image(common.ba_name(obj), size, 'sRGB')
+    try:
+        yield jobs.Step("BAo_: the scan's own textures (EEVEE)")
+        px = uv_render(context, obj, size, prepare=_scan_mesh(obj))
+        yield jobs.Step("BAo_: margin")
+        covered = px[..., 3] > 0.0
+        px[..., 3] = 1.0
+        to_srgb(px[..., :3])
+        extend_margin(px, covered, common.margin_px(s, size))
+        ba.pixels.foreach_set(px.ravel())
+        del px
+    except Exception:
+        bpy.data.images.remove(ba)      # the old BAo_ stays as it was
+        raise
+    yield jobs.Step("BAo_: writing")
+    d.ba_image = store_work(scene, ba, d.ba_image, common.ba_name(obj))
+    d.bn_stale = d.bn_image is not None
+    d.ba_size = size
+    d.ba_far_share = d.ba_far_max = d.ba_fit_cage = 0.0
+    d.ba_fingerprint = fingerprint.stamp_source(obj)
+    d.last_ba_seconds = time.perf_counter() - t0
+    if hasattr(obj, "multicamproject_cam") and obj.multicamproject_cam.is_setup:
+        cp.ensure_material(obj)         # the BAKED frame shows the new BAo_
+    return d.last_ba_seconds
+
+
+def bake_from_source_steps(context, obj, normal=None):
     """BAo_ (the source's colors) and BNo_ (its surface, tangent normals - only when the
     object's Original Normal is From Original's Surface) onto obj's uv_normal - Selected to Active from the Bake Source, at the object's resolution. Both are
     files in the bake folder, overwritten on the next bake; MCP_ shows them under the
     projection. The low poly and its source are shown for the whole time (a Remesh original
-    usually sits in an excluded collection). A generator (jobs); returns the seconds."""
+    usually sits in an excluded collection). 2D Only Project: the self-bake instead.
+    `normal`: bake BNo_ too (None = when Original Normal is From Original's Surface; 03's
+    button bakes BAo_ only). A generator (jobs); returns the seconds."""
     why = source_problem(obj, context) or common.uv_collapsed_text(obj)
     if why:
         raise RuntimeError(why)
+    if common.data(obj).bake_source is None and common.self_bake(obj):
+        return (yield from _bake_self(context, obj))
     with common.shown(context, [obj, common.data(obj).bake_source]):
-        return (yield from _bake_from_source(context, obj))
+        return (yield from _bake_from_source(context, obj, normal))
 
 
-def _bake_from_source(context, obj):
+def _bake_from_source(context, obj, normal=None):
     from .normal import mesh_bake
     scene = context.scene
     s = common.settings(scene)
@@ -608,8 +693,10 @@ def _bake_from_source(context, obj):
     was_final = gn_final.is_final(obj)
     ba = _work_image(common.ba_name(obj), size, 'sRGB')
     # BNo_ (Cycles) only when picked: by default the original's normal is generated from BAo_
+    if normal is None:
+        normal = d.original_normal == 'BAKED'
     bn = (_work_image(common.bn_name(obj), size, 'Non-Color', is_float=True)    # 16-bit PNG
-          if d.original_normal == 'BAKED' else None)
+          if normal else None)
     prev = _uv_normal_active(obj)
     try:
         with render_state(scene), \
@@ -684,7 +771,7 @@ def needs_source_bake(obj):
     Original's Surface picked, no current BNo_): Bake Final bakes from the source first."""
     from . import route
     d = common.data(obj)
-    return (route.uses_original(obj) and d.bake_source is not None
+    return (route.uses_original(obj) and route.has_original(obj)
             and (d.ba_image is None or not common.file_ok(d.ba_image)
                  or fingerprint.ba_outdated(obj)
                  or (d.original_normal == 'BAKED'

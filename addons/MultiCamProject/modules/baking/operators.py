@@ -177,7 +177,7 @@ def _source_steps(context, objs):
         jobs.item_start(obj.name)
         loaded = _originals_loaded(obj)
         try:
-            yield from engine.bake_from_source_steps(context, obj)
+            yield from engine.bake_from_source_steps(context, obj, normal=False)    # BAo_ only
             done.append(obj)
             jobs.item_end(obj.name)
             _originals_offload(loaded, context.scene)   # back into their files
@@ -192,6 +192,9 @@ def source_poll_problem(obj):
     why = engine.source_problem(obj)
     if why:
         return why
+    from ... import steps
+    if steps.sent_out(obj):
+        return "In a work window: bake BAo_ there (or X ends the link)"
     try:
         from ..export import checks
     except ImportError:
@@ -230,10 +233,10 @@ class MULTICAMPROJECT_OT_FitCage(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
-    """Bake BAo_ (03): the Bake Source's colors into BAo_ and (Original Normal = From
-    Original's Surface only) its surface into BNo_, on
-    uv_normal at the scene's resolution (Selected to Active, Cage). Files in the bake folder, under
-    the projection - not the final textures (05 Bake Albedo makes those)"""
+    """Bake BAo_ (03): the Bake Source's colors into BAo_ on uv_normal at the object's
+    resolution (Selected to Active, Cage) - 2D Only Project: its own scan textures. A file in
+    the bake folder, under the projection - not the final texture (05 Bake Albedo makes it).
+    BNo_ (the scan's surface) is made in 07 Generate Normal"""
     bl_idname = "multicamproject.bake_from_source"
     bl_label = "Bake from Source"
     bl_options = {'REGISTER', 'UNDO'}

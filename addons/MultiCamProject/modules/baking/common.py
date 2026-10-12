@@ -212,6 +212,16 @@ def image_file(img):
     return os.path.normpath(bpy.path.abspath(img.filepath, library=img.library))
 
 
+def self_bake(obj):
+    """2D Only Project: no Bake Source - BAo_ is the object's own scan textures (scan UV,
+    the faces' uv_index slots) rendered onto uv_normal."""
+    d = data(obj)
+    if d.bake_source is not None or d.handmade:
+        return False
+    from ... import steps
+    return steps.workflow(obj) == 'PROJECT'
+
+
 def file_ok(img):
     from . import cache
     return cache.isfile(image_file(img))

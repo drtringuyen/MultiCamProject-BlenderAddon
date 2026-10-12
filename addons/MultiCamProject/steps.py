@@ -174,6 +174,17 @@ def why_locked(obj, step, scene=None):
     return "" if need in st.done else text
 
 
+def sent_out(obj, scene=None):
+    """The main file's object is out in a work window: 03 is worked on there, never here."""
+    scene = scene or bpy.context.scene
+    try:
+        from .modules.linking import core
+    except ImportError:
+        return False
+    return (obj is not None and not core.is_work_window(scene)
+            and core.out_record(obj) is not None)
+
+
 def stage(obj, scene=None):
     return state(obj, scene).stage
 

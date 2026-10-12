@@ -108,8 +108,17 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         self.layout.label(icon='CHECKMARK' if done else 'SCULPTMODE_HLT')
 
     def draw(self, context):
-        layout, _open = gate.step_box(self.layout, context, 3)
+        from ... import steps
         obj = context.active_object
+        if steps.sent_out(obj, context.scene):      # 03 happens in the work window
+            from ..linking import ui as link_ui
+            link_ui.draw_main(self.layout, context, obj)
+            hint = self.layout.row()
+            hint.active = False
+            hint.label(text="In its work window: edit and bake BAo_ there, Receive it here",
+                       icon='WINDOW')
+            return
+        layout, _open = gate.step_box(self.layout, context, 3)
         if obj.multicamproject_bake.handmade:
             _draw_handmade(layout, obj)
             return
@@ -129,6 +138,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             hint = layout.row()
             hint.active = False
             hint.label(text="Only Project: BAo_ comes from the scan's own textures", icon='INFO')
+            draw_bao(layout, context, obj)
             return
 
         # the high poly this low poly bakes from (only BAo_ uses it)
@@ -216,47 +226,54 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.label(text="Snap to Source (vg_Snap)", icon='MOD_SHRINKWRAP')
             row.operator("multicamproject.remesh_snap", text="", icon='X').on = False
 
-        # BAo_ from the Bake Source (the baking module's settings)
-        if not baking:
-            return
-        from ..baking import common, fingerprint, jobs, operators as bake_ops
-        if jobs.busy():
-            jobs.draw(layout)
-            return
-        box = layout.box().column(align=True)
-        row = box.row(align=True)
-        row.scale_y = 1.4
-        why = bake_ops.source_poll_problem(obj)
-        # the object's size: its own pick (06 / the EXPORT list), or the scene's in front of Export
-        row.operator("multicamproject.bake_from_source",
-                     text=f"Bake BAo_ ({_res(common.resolution(obj, context.scene))})",
-                     icon='RENDER_STILL')
-        if why:
+        draw_bao(layout, context, obj)
+
+
+def draw_bao(layout, context, obj):
+    """03's BAo_ box: Bake BAo_ (from the Bake Source, or 2D: the scan's own textures),
+    why it can't run, the last bake and why it is outdated."""
+    if not module_manager.is_loaded("baking"):
+        return
+    d = obj.multicamproject_bake
+    dec = wf.decimate_modifier(obj)
+    from ..baking import common, fingerprint, jobs, operators as bake_ops
+    if jobs.busy():
+        jobs.draw(layout)
+        return
+    box = layout.box().column(align=True)
+    row = box.row(align=True)
+    row.scale_y = 1.4
+    why = bake_ops.source_poll_problem(obj)
+    # the object's size: its own pick (05 / the EXPORT list), or the scene's in front of Export
+    row.operator("multicamproject.bake_from_source",
+                 text=f"Bake BAo_ ({_res(common.resolution(obj, context.scene))})",
+                 icon='RENDER_STILL')
+    if why:
+        sub = box.row()
+        sub.alert = True
+        sub.label(text=why, icon='ERROR')
+        if not obj.data.uv_layers.get("uv_normal") and dec is None:
+            from ..baking import operators as bops
+            bops.draw_uv_fix(box, obj)
+    else:
+        collapsed = common.uv_collapsed_text(obj)       # baking would give a black BA_
+        if collapsed:
             sub = box.row()
             sub.alert = True
-            sub.label(text=why, icon='ERROR')
-            if not obj.data.uv_layers.get("uv_normal") and dec is None:
-                from ..baking import operators as bops
-                bops.draw_uv_fix(box, obj)
-        else:
-            collapsed = common.uv_collapsed_text(obj)       # baking would give a black BA_
-            if collapsed:
-                sub = box.row()
-                sub.alert = True
-                sub.label(text=collapsed, icon='ERROR')
-        if d.ba_image is not None:
-            info = box.row()
-            info.active = False
-            what = "BAo_" if d.bn_stale or d.bn_image is None else "BAo_ + BNo_"
-            info.label(text=f"{what} {_res(d.ba_size)} (files, not final) · "
-                            f"{d.last_ba_seconds:.1f} s", icon='IMAGE_RGB')
-            why = fingerprint.ba_why(obj)
-            if why:
-                warn = box.row()
-                warn.alert = True
-                warn.label(text=f"{why[:1].upper()}{why[1:]} - bake from source again", icon='ERROR')
-            from ..baking import ui as bake_ui
-            bake_ui.draw_fit_cage(box, obj)
+            sub.label(text=collapsed, icon='ERROR')
+    if d.ba_image is not None:
+        info = box.row()
+        info.active = False
+        what = "BAo_" if d.bn_stale or d.bn_image is None else "BAo_ + BNo_"
+        info.label(text=f"{what} {_res(d.ba_size)} (files, not final) · "
+                        f"{d.last_ba_seconds:.1f} s", icon='IMAGE_RGB')
+        why = fingerprint.ba_why(obj)
+        if why:
+            warn = box.row()
+            warn.alert = True
+            warn.label(text=f"{why[:1].upper()}{why[1:]} - bake BAo_ again", icon='ERROR')
+        from ..baking import ui as bake_ui
+        bake_ui.draw_fit_cage(box, obj)
 
 
 def register():
