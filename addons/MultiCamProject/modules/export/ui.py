@@ -285,7 +285,9 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         if scene_row:
             _scene_label(layout.row(align=True), scene, es)
         self._draw_scenes(layout, scene, es)
-        unused = checks.unused_textures(scene, fresh=False)
+        from ... import steps       # a folder listing per redraw: memoized
+        unused = steps.memo(("unused_textures", scene.name),
+                            lambda: checks.unused_textures(scene, fresh=False))
         if unused:
             row = layout.row(align=True)
             sub = row.row()

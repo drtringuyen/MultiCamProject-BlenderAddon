@@ -415,6 +415,8 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
 
     def _end(self, context, result, error):
         global RUN
+        from ... import steps
+        steps.forget()              # what the job made shows at once
         try:
             self._gen.close()           # after an error: its context managers restore
         except Exception:

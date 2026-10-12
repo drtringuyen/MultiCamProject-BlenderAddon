@@ -214,7 +214,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # camera collection eye, coverage filter (how much of the object a camera must see),
         # restore removed
         flt = header.row(align=True)
-        hidden = cameras_hidden(context, obj)
+        from ... import steps       # every camera's collections per redraw: memoized
+        hidden = steps.memo(("cameras_hidden", obj.name), lambda: cameras_hidden(context, obj))
         flt.operator("multicamproject.toggle_camera_folder", text="", depress=not hidden,
                      icon='HIDE_ON' if hidden else 'HIDE_OFF')
         drop = flt.row(align=True)

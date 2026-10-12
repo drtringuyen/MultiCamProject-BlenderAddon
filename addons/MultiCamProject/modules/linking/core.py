@@ -136,10 +136,16 @@ def new_send(obj):
 
 
 def saved_window(obj):
-    """The linked work window's saved file ('' = not saved / gone)."""
+    """The linked work window's saved file ('' = not saved / gone). Memoized for the panels
+    (a JSON read and a file check on the Drive per row and redraw)."""
     rec = out_record(obj)
     if rec is None:
         return ""
+    from ... import steps
+    return steps.memo(("saved_window", rec["id"]), lambda: _saved_window(rec))
+
+
+def _saved_window(rec):
     try:
         with open(os.path.join(job_dir(rec["id"]), WINDOW_FILE), encoding="utf-8") as f:
             path = json.load(f).get("path", "")

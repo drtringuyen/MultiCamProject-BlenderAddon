@@ -216,7 +216,9 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         """[MCP_ picker] [MAT_ picker] [Refresh]: which projection / final material the
         object is linked to; Refresh checks and fixes both. Problems and what the last
         Refresh fixed show below, never in a popup."""
-        probs = matsync.problems(obj) if matsync.in_scope(obj) else []
+        from ... import steps       # every slot material's nodes per redraw: memoized
+        probs = (steps.memo(("matsync", obj.name), lambda: matsync.problems(obj))
+                 if matsync.in_scope(obj) else [])
         kinds = {k for k, _t in probs}
         if not matsync.is_projection(obj) and not common.data(obj).handmade:
             # no projection: the original it bakes from (Bake Source) + Cage on top

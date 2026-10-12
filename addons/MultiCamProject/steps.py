@@ -122,10 +122,10 @@ def nor_fresh(obj):
 # ---------------------------------------------------------------- the panels' memo
 # A sidebar redraw asks for the same object's state ~30 times (Stage cells, step locks,
 # headers) and scrolling redraws it many times a second. The answers are kept until anything
-# changes (depsgraph update, undo, load) or for MEMO_TTL at most (files on disk: the bake
-# cache reads them again after 2 s anyway).
+# changes (depsgraph update, undo, load, the end of a bake job) or for MEMO_TTL at most (a
+# file changed outside Blender shows after that).
 
-MEMO_TTL = 1.0
+MEMO_TTL = 5.0
 _memo = {}
 
 

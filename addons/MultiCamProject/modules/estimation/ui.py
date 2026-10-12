@@ -40,6 +40,12 @@ def _delta(nums, d):
 _LINES = {}     # row name -> core.Line of this draw (filter_items -> draw_item)
 
 
+def _table(context):
+    """core.table, memoized for the redraws (every row's triangles, as shown)."""
+    from ... import steps
+    return steps.memo(("estimation_table", context.scene.name), lambda: core.table(context))
+
+
 def _draw_links(layout, name):
     """Prototype: the original's Load / Offload, then Send Out / Receive, at the row's end."""
     from ... import module_manager
@@ -57,7 +63,7 @@ class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
-        lines = core.table(context)
+        lines = _table(context)
         _LINES.clear()
         _LINES.update({ln.name: ln for ln in lines})
         place = {ln.name: i for i, ln in enumerate(lines)}
@@ -133,7 +139,7 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
             _cell(nums, text)
         box.template_list("MULTICAMPROJECT_UL_Estimation", "", s, "rows", s, "active_index",
                           rows=len(s.rows), maxrows=len(s.rows))
-        lines = [ln for ln in core.table(context) if not ln.room]     # the budget's objects
+        lines = [ln for ln in _table(context) if not ln.room]     # the budget's objects
         col = box.column(align=True)
         tris = sum(ln.now for ln in lines)
         budget = sum(ln.budget for ln in lines)
