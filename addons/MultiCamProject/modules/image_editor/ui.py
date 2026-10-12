@@ -1,7 +1,7 @@
 import bpy
 
 from ... import gate
-from . import lasso_ops, props, session, tool
+from . import inpaint, lasso_ops, props, session, tool
 
 
 def draw_brush(context, layout, header=False):
@@ -166,13 +166,89 @@ class MULTICAMPROJECT_PT_LassoView3D(bpy.types.Panel):
         draw_lasso_settings(context, self.layout, img)
 
 
+class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
+    bl_label = "Inpaint"
+    bl_idname = "MULTICAMPROJECT_PT_inpaint"
+    bl_space_type = 'IMAGE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+
+    def draw_header(self, context):
+        self.layout.label(icon='BRUSHES_ALL')
+
+    def draw(self, context):
+        gate.lock(self.layout, context)     # greyed out until Setup File IO
+        layout = self.layout
+        s = inpaint.active()
+        st = props.inpaint_settings(context)
+        if s is None:
+            img, obj = inpaint.target(context)
+            reason = inpaint.start_reason(context)
+            if img is not None:
+                col = layout.column(align=True)
+                col.label(text=img.name, icon='IMAGE_DATA')
+                sub = col.column(align=True)
+                sub.active = False
+                sub.label(text=f"Baked ALB_ of {obj.name}")
+            row = layout.row()
+            row.scale_y = 1.4
+            row.operator("multicamproject.inpaint", icon='BRUSHES_ALL', text="Inpaint")
+            if reason:
+                layout.label(text=reason, icon='INFO')
+            self._draw_settings(layout, st)
+            return
+
+        box = layout.box()
+        box.label(text=s.alb_name, icon='IMAGE_DATA')
+        col = box.column(align=True)
+        col.active = False
+        col.label(text=f"Copy {s.w}x{s.h} · {len(s.undo)} fill(s)")
+        if not inpaint.running():
+            box.label(text="Paused - Resume, Save or Discard", icon='PAUSE')
+            row = box.row()
+            row.operator("multicamproject.inpaint", icon='PLAY', text="Resume")
+
+        self._draw_settings(layout, st)
+
+        row = layout.row(align=True)
+        sub = row.row(align=True)
+        sub.enabled = bool(s.undo)
+        sub.operator("multicamproject.inpaint_step", text="", icon='LOOP_BACK').redo = False
+        sub = row.row(align=True)
+        sub.enabled = bool(s.redo)
+        sub.operator("multicamproject.inpaint_step", text="", icon='LOOP_FORWARDS').redo = True
+        row.operator("multicamproject.inpaint_fill", icon='BRUSHES_ALL')
+
+        row = layout.row(align=True)
+        row.scale_y = 1.4
+        row.operator("multicamproject.inpaint_save", icon='CHECKMARK')
+        row.operator("multicamproject.inpaint_discard", icon='CANCEL')
+        col = layout.column(align=True)
+        col.active = False
+        col.label(text="Old ALB_ goes to _previous")
+        col.label(text="A rebake of ALB_ writes over it")
+
+    @staticmethod
+    def _draw_settings(layout, st):
+        row = layout.row(align=True)
+        row.prop(st, "mode", expand=True)
+        col = layout.column(align=True)
+        if st.mode == 'BRUSH':
+            col.prop(st, "size")
+        col.prop(st, "grow")
+        col.prop(st, "grain", slider=True)
+        layout.prop(st, "auto_fill")
+
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_PT_Liquify)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Lasso)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_Inpaint)
     bpy.utils.register_class(MULTICAMPROJECT_PT_LassoView3D)
 
 
 def unregister():
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_LassoView3D)
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_Inpaint)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Lasso)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Liquify)

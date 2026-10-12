@@ -1,4 +1,4 @@
-"""Liquify brush settings and the lasso's hole fill (per scene)."""
+"""Liquify brush settings, the lasso's hole fill and the Inpaint tool (per scene)."""
 import bpy
 from bpy.props import (BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty,
                        IntProperty, PointerProperty)
@@ -50,12 +50,40 @@ class MULTICAMPROJECT_LassoSettings(bpy.types.PropertyGroup):
         description="Colour that fills the hole of a cut (the eyedropper picks it from the photo)")
 
 
+class MULTICAMPROJECT_InpaintSettings(bpy.types.PropertyGroup):
+    mode: EnumProperty(
+        name="Tool", default='BRUSH',
+        items=[('BRUSH', "Brush", "Paint the selection over a spot (B). Alt / Ctrl: erase",
+                'BRUSH_DATA', 0),
+               ('LASSO', "Lasso", "Drag a free lasso, or click points (L). Alt / Ctrl: "
+                                  "subtract", 'SELECT_SET', 1)])
+    size: IntProperty(
+        name="Size", default=64, min=2, max=2048, subtype='PIXEL',
+        description="Brush diameter in pixels of the ALB_ ([ and ] to change)")
+    grow: IntProperty(
+        name="Grow", default=3, min=0, max=64, subtype='PIXEL',
+        description="Grow the selection by this many pixels before the fill: takes the "
+                    "soft edge of a marker too")
+    grain: FloatProperty(
+        name="Grain", default=1.0, min=0.0, max=2.0, subtype='FACTOR',
+        description="Fine detail copied in from a nearby area, so the fill is not "
+                    "smoother than the scan around it. 0: smooth fill only")
+    auto_fill: BoolProperty(
+        name="Fill on Release", default=True,
+        description="Fill as soon as a brush stroke or a lasso ends. Off: build the "
+                    "selection first, F fills it")
+
+
 def settings(context):
     return context.scene.multicamproject_liquify
 
 
 def lasso_settings(context=None):
     return (context or bpy.context).scene.multicamproject_lasso
+
+
+def inpaint_settings(context=None):
+    return (context or bpy.context).scene.multicamproject_inpaint
 
 
 def preview_long_side(context=None):
@@ -68,12 +96,16 @@ def preview_long_side(context=None):
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_LiquifySettings)
     bpy.utils.register_class(MULTICAMPROJECT_LassoSettings)
+    bpy.utils.register_class(MULTICAMPROJECT_InpaintSettings)
+    bpy.types.Scene.multicamproject_inpaint = PointerProperty(type=MULTICAMPROJECT_InpaintSettings)
     bpy.types.Scene.multicamproject_liquify = PointerProperty(type=MULTICAMPROJECT_LiquifySettings)
     bpy.types.Scene.multicamproject_lasso = PointerProperty(type=MULTICAMPROJECT_LassoSettings)
 
 
 def unregister():
     del bpy.types.Scene.multicamproject_lasso
+    del bpy.types.Scene.multicamproject_inpaint
+    bpy.utils.unregister_class(MULTICAMPROJECT_InpaintSettings)
     del bpy.types.Scene.multicamproject_liquify
     bpy.utils.unregister_class(MULTICAMPROJECT_LassoSettings)
     bpy.utils.unregister_class(MULTICAMPROJECT_LiquifySettings)
