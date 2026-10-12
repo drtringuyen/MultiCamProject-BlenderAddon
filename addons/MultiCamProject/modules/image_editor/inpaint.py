@@ -404,6 +404,7 @@ def _end(show):
     if temp is not None:
         _show(temp, show, s.pins)
         bpy.data.images.remove(temp)
+    _on_active_changed()        # the selection may have changed meanwhile: its ALB_
     redraw()
 
 
@@ -1023,7 +1024,54 @@ def _on_undo(_):
     s.push()
 
 
+# ── The editor follows the active object's ALB_ ───────────────────────────────
+#
+# Blender's UV editor follows the active material's active Image Texture node; MCP_ (slot 1)
+# has none, so selecting a baked object left the editor empty. A new active object puts its
+# ALB_ into every unpinned Image Editor that shows nothing or another object's ALB_ (camera
+# photos and any other image stay). Not while an Inpaint is open: its copy stays.
+
+_owner = object()
+
+
+def follow_active():
+    if active() is not None:
+        return None
+    obj = bpy.context.view_layer.objects.active
+    d = getattr(obj, "multicamproject_bake", None) if obj is not None else None
+    alb = d.alb_image if d is not None else None
+    if alb is None:
+        return None
+    for area in _image_editors():
+        sp = area.spaces.active
+        if sp.use_image_pin or sp.image == alb:
+            continue
+        if sp.image is not None and alb_owner(sp.image) is None:
+            continue
+        sp.image = alb
+        sp.use_image_pin = False        # setting it from Python pins it
+    return None
+
+
+def _on_active_changed():
+    # after Blender's own update of the editors (and outside the msgbus callback)
+    if not bpy.app.timers.is_registered(follow_active):
+        bpy.app.timers.register(follow_active, first_interval=0.05)
+
+
+def _subscribe():
+    bpy.msgbus.clear_by_owner(_owner)
+    bpy.msgbus.subscribe_rna(key=(bpy.types.LayerObjects, "active"), owner=_owner, args=(),
+                             notify=_on_active_changed, options={'PERSISTENT'})
+
+
+@persistent
+def _on_load_follow(_):
+    _subscribe()
+
+
 _HANDLERS = ((bpy.app.handlers.load_post, _on_load),
+             (bpy.app.handlers.load_post, _on_load_follow),
              (bpy.app.handlers.undo_post, _on_undo),
              (bpy.app.handlers.redo_post, _on_undo))
 
@@ -1041,11 +1089,15 @@ def register():
     for lst, fn in _HANDLERS:
         if fn not in lst:
             lst.append(fn)
+    _subscribe()
 
 
 def unregister():
     global _op
     _op = None
+    bpy.msgbus.clear_by_owner(_owner)
+    if bpy.app.timers.is_registered(follow_active):
+        bpy.app.timers.unregister(follow_active)
     _remove_handler()
     try:
         discard()
