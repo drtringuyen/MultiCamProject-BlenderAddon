@@ -294,6 +294,12 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         row.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
                      icon='RENDER_STILL')
         draw_green(row)
+        d = common.data(obj)
+        from ... import module_manager
+        if d.alb_image is not None and module_manager.is_loaded("image_editor"):
+            from ..image_editor import sources
+            if sources.draw_ready(obj):
+                sources.draw_button(row, 'ALB', obj)   # 06: inpaint ALB_
         if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
                 and getattr(obj, "multicamproject_cam", None) is not None
                 and obj.multicamproject_cam.is_setup):

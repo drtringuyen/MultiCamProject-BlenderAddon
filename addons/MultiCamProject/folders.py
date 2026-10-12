@@ -303,6 +303,14 @@ def relink_photos(scene, view_layer, top):
     for cam in _cameras(scene, view_layer):
         bgs = cam.data.background_images
         img = bgs[0].image if len(bgs) else None
+        cd = getattr(cam, "multicamproject_camera", None)
+        if cd is not None and cd.bg_original is not None:
+            # inpainted (06): the background stays the _inpaint copy, the photo is relinked
+            r, n, miss = relink([cd.bg_original], top, listing)
+            relinked, reloaded = relinked + r, reloaded + n
+            if miss:
+                missing.append(cam.name)
+            continue
         if img is not None:
             r, n, miss = relink([img], top, listing)
             if miss:        # the image's own name failed: try the camera's

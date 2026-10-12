@@ -257,7 +257,8 @@ def write_inputs(obj, scene):
     # GN samples the image as floats (1 GB at 8K): only hand it over while an export
     # evaluates the Color (albedo_on), never in the viewport
     source = color_source(obj, scene)
-    cp.set_input(mod, "Albedo", d.alb_image if _albedo_on and uses_alb(obj, scene) else None)
+    cp.set_input(mod, "Albedo", common.alb_source(obj) if _albedo_on and uses_alb(obj, scene)
+                 else None)
     cp.set_input(mod, "Keep UV", common.UV_NORMAL)
     cp.set_input(mod, "Scan Color", s.scan_color_name)
     cp.set_input(mod, "Scan UV", scan_uv(obj))

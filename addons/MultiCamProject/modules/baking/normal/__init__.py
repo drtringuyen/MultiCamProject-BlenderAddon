@@ -101,8 +101,9 @@ def bng_steps(context, obj, source):
     if d.bng_image is not None and d.bng_fingerprint == state and common.file_ok(d.bng_image):
         return
     yield jobs.Step(f"Normal: {LABELS[source]} from BAo_ (BNoG_)")
-    rgb = (ai.generate(d.ba_image, size) if source == 'AI'
-           else highpass.generate(d.ba_image, size, s))
+    ba = common.bao_source(obj)
+    rgb = (ai.generate(ba, size) if source == 'AI'
+           else highpass.generate(ba, size, s))
     yield jobs.Step("Normal: writing BNoG_ (16-bit)")
     d.bng_image = engine.store_work(scene, rgb, d.bng_image, common.bng_name(obj), normal=True)
     d.bng_fingerprint = state

@@ -248,6 +248,10 @@ def draw_bao(layout, context, obj):
     row.operator("multicamproject.bake_from_source",
                  text=f"Bake BAo_ ({_res(common.resolution(obj, context.scene))})",
                  icon='RENDER_STILL')
+    if d.ba_image is not None and module_manager.is_loaded("image_editor"):
+        from ..image_editor import sources
+        if sources.draw_ready(obj):
+            sources.draw_button(row, 'BAO', obj)       # 06: inpaint BAo_
     if why:
         sub = box.row()
         sub.alert = True

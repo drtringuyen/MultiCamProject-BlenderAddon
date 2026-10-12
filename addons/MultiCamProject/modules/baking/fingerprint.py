@@ -39,6 +39,15 @@ def _vec_checksum(attr, width):
     return f"{float(buf.sum(dtype=np.float64)):.4f}/{float(np.dot(buf, w)):.1f}"
 
 
+def inpaint_sig(img):
+    """(name, mtime) of a saved _inpaint file - a new save is a change - or None."""
+    if img is None:
+        return None
+    path = common.image_file(img)
+    ok, mtime = cache.file_state(path) if path else (False, 0.0)
+    return (img.name, round(mtime)) if ok else None
+
+
 def _source_parts(obj):
     me = obj.data
     pos = me.attributes.get("position")
@@ -178,7 +187,11 @@ def _projection_parts(obj, cached=False):
     parts.append(n)
     for i, cam in enumerate(cp.get_slots(d), 1):
         img = cp.cam_image(cam) if cam else None
-        parts.append((cam.name if cam else "", _path(img) if img else ""))
+        part = (cam.name if cam else "", _path(img) if img else "")
+        cd = getattr(cam, "multicamproject_camera", None) if cam else None
+        if cd is not None and cd.bg_original is not None:      # the photo inpainted (06)
+            part += (inpaint_sig(img),)
+        parts.append(part)
     for k in ("Mode", "Previous Bake") + tuple(f"UV Shift Cam{i}" for i in range(1, n + 1)):
         try:
             v = cp.get_input(mod, k)
@@ -249,6 +262,9 @@ def compute(obj, cached=False):
     parts = [obj.name, obj.data.name, r]
     if r in {route.ORIGINAL, route.MIXED}:
         parts.append(d.ba_fingerprint)
+        sig = inpaint_sig(getattr(d, "ba_inpaint", None))
+        if sig is not None:                 # BAo_ inpainted (06)
+            parts.append(sig)
     if r in {route.PROJECTION, route.MIXED}:
         parts += _projection_parts(obj, cached)
     return hashlib.sha1(repr(parts).encode()).hexdigest()

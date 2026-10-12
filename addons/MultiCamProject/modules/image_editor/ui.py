@@ -1,7 +1,7 @@
 import bpy
 
 from ... import gate
-from . import inpaint, lasso_ops, props, session, tool
+from . import inpaint, lasso_ops, props, session, sources, tool
 
 
 def draw_brush(context, layout, header=False):
@@ -182,17 +182,24 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         s = inpaint.active()
         st = props.inpaint_settings(context)
         if s is None:
-            img, obj = inpaint.target(context)
+            img, src = inpaint.target(context)
             reason = inpaint.start_reason(context)
             if img is not None:
                 col = layout.column(align=True)
                 col.label(text=img.name, icon='IMAGE_DATA')
                 sub = col.column(align=True)
                 sub.active = False
-                sub.label(text=f"Baked ALB_ of {obj.name}")
-            row = layout.row()
+                sub.label(text=sources.label(src)
+                          + ("  ·  inpainted" if sources.has_inpaint(src) else ""))
+            # [Inpaint] [Reload] [Remove]: the last two only once there is an _inpaint
+            row = layout.row(align=True)
             row.scale_y = 1.4
             row.operator("multicamproject.inpaint", icon='BRUSHES_ALL', text="Inpaint")
+            if src is not None and sources.inpaint_image(src) is not None:
+                for op_id, icon in (("multicamproject.inpaint_reload", 'FILE_REFRESH'),
+                                    ("multicamproject.inpaint_remove", 'TRASH')):
+                    op = row.operator(op_id, text="", icon=icon)
+                    op.kind, op.owner = src.kind, src.owner.name
             if reason:
                 layout.label(text=reason, icon='INFO')
             self._draw_settings(layout, st)
@@ -225,8 +232,7 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         row.operator("multicamproject.inpaint_discard", icon='CANCEL')
         col = layout.column(align=True)
         col.active = False
-        col.label(text="Old ALB_ goes to _previous")
-        col.label(text="A rebake of ALB_ writes over it")
+        col.label(text="Saves <name>_inpaint, the original stays")
 
     @staticmethod
     def _draw_settings(layout, st):
@@ -240,7 +246,58 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         layout.prop(st, "auto_fill")
 
 
+class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
+    """06. Inpainting: the active object's images to inpaint - ALB_, BAo_ and its cameras'
+    photos. Each opens in the Image Editor with Inpaint on; a saved one is <name>_inpaint
+    (the original stays), which the materials and 05 / 07 / Export use. Optional: 07 does not
+    wait for it"""
+    bl_label = "06. Inpainting"
+    bl_idname = "MULTICAMPROJECT_PT_inpainting"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_parent_id = "MULTICAMPROJECT_PT_main"
+    bl_order = 5
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and hasattr(obj, "multicamproject_bake")
+
+    def draw_header(self, context):
+        self.layout.label(icon='BRUSHES_ALL')
+
+    def draw(self, context):
+        layout, _open = gate.step_box(self.layout, context, 6)
+        obj = context.active_object
+        if not sources.draw_ready(obj):
+            hint = layout.row()
+            hint.active = False
+            hint.label(text="Bake BAo_ first (03)", icon='INFO')
+            return
+        if inpaint.active() is not None:
+            layout.label(text=f"Inpaint open on {inpaint.active().alb_name}", icon='PAUSE')
+        col = layout.column(align=True)
+        for src in sources.object_sources(obj):
+            row = col.row(align=True)
+            done = sources.has_inpaint(src)
+            name = (f"{sources.KINDS[src.kind]}" if src.kind != 'BG'
+                    else f"BG {src.owner.name}")
+            row.label(text=name + ("  ·  inpainted" if done else ""),
+                      icon='CHECKMARK' if done else 'IMAGE_DATA')
+            sources.draw_button(row, src.kind, src.owner)
+            if sources.inpaint_image(src) is not None:
+                for op_id, icon in (("multicamproject.inpaint_reload", 'FILE_REFRESH'),
+                                    ("multicamproject.inpaint_remove", 'TRASH')):
+                    op = row.operator(op_id, text="", icon=icon)
+                    op.kind, op.owner = src.kind, src.owner.name
+        hint = layout.column(align=True)
+        hint.active = False
+        hint.label(text="BG / BAo_ inpainted: 05 bakes again · ALB_: 07 again", icon='INFO')
+
+
 def register():
+    bpy.utils.register_class(MULTICAMPROJECT_PT_Inpainting)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Liquify)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Lasso)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Inpaint)
@@ -252,3 +309,4 @@ def unregister():
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Inpaint)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Lasso)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Liquify)
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_Inpainting)

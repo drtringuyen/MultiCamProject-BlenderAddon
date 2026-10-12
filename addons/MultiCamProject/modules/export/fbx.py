@@ -59,7 +59,7 @@ def copy_textures(objs, folder):
                     or int(os.path.getmtime(dst)) != int(st.st_mtime)):
                 if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(dst)):
                     shutil.copy2(src, dst)
-            out[img.name] = dst
+            out[img.name] = out[src_img.name] = dst      # MAT_ may show the _inpaint
     return out
 
 

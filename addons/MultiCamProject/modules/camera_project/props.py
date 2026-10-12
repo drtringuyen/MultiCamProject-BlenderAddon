@@ -171,6 +171,10 @@ class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
     side: StringProperty(
         description="View this camera was created for by Project from Sides (Front, Left, ...). "
                     "Empty = not a sides camera")
+    bg_original: PointerProperty(
+        type=bpy.types.Image, name="Original Photo",
+        description="06 Inpainting: the photo, while the background shows its _inpaint copy "
+                    "(<bake folder>/_inpaint) - every object this camera projects on uses it")
     shift: FloatVectorProperty(
         name="Shift", size=2, default=(0.0, 0.0), subtype='XYZ',
         min=-1.0, max=1.0, step=0.1, precision=5, update=_on_global_shift,

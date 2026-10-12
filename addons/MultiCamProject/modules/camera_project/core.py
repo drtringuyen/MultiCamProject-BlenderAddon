@@ -143,8 +143,12 @@ def relink_missing(obj, scene):
 
 def resolve_cam_image(cam, folder, listing):
     """Fetch/reload the camera's photo. Returns the image (may be None)."""
-    path = _find_in_folder(folder, listing, cam) if listing else None
     img = cam_image(cam)
+    cd = getattr(cam, "multicamproject_camera", None)
+    if cd is not None and cd.bg_original is not None:
+        _reload(img)                # an inpainted photo (06) stays its _inpaint copy
+        return img
+    path = _find_in_folder(folder, listing, cam) if listing else None
     if path:
         same = img and os.path.normcase(bpy.path.abspath(img.filepath)) == os.path.normcase(path)
         if not same:
@@ -329,7 +333,12 @@ def baked_images(obj):
     bn = getattr(d, "bn_image", None)
     if getattr(d, "original_normal", 'BAKED') == 'GENERATED' and getattr(d, "bng_image", None):
         bn = d.bng_image
-    return getattr(d, "ba_image", None), bn
+    try:                                # BAo_ as inpainted (06), when it was
+        from ..baking import common
+        ba = common.bao_source(obj)
+    except ImportError:
+        ba = getattr(d, "ba_image", None)
+    return ba, bn
 
 
 def generated_normal(obj):

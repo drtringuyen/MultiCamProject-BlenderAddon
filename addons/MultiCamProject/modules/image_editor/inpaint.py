@@ -1,8 +1,9 @@
 """
-inpaint.py — Inpaint: remove spots (the scan's markers) from a baked ALB_, like Photoshop's
-content-aware fill. Image Editor only, next to Liquify and Lasso.
+inpaint.py — Inpaint: remove spots (the scan's markers) from a camera photo, a BAo_ or an ALB_,
+like Photoshop's content-aware fill. Image Editor only, next to Liquify and Lasso. The sources
+and their _inpaint files: sources.py.
 
-One working copy: Start loads the ALB_ file fresh into MCP_IP_<ALB name> (a generated
+One working copy: Start loads the shown image's file fresh into MCP_IP_<name> (a generated
 image, never saved) and the editor shows it. Every edit goes into that copy only:
   B  Brush   paint the selection (Alt / Ctrl: erase it)
   L  Lasso   drag a free lasso, or click points (click point 1 / double-click / Enter
@@ -14,11 +15,11 @@ foreach_set + the GPU upload); each is drawn as a texture over the editor (the c
 sRGB image shown without view transform, so its pixels draw as they are). The copy gets the
 pixels at Save, or when the undo limit drops a fill.
 
-Enter / Save to ALB_: the old file goes to <bake folder>/_previous/<name>_<date>.png, the
-copy is written over ALB_<name>.png and ALB_ reloads - the fingerprint stays (paths only),
-so the bake is not outdated. Esc, another selection or another image in the editor end the
-modal like Esc and ask: Save / Discard / Keep (the copy waits; the panel resumes or ends it).
-A rebake of ALB_ writes over the inpaint.
+Enter / Save: the copy is written as the source's _inpaint file (the original stays as it was)
+and everything that shows the source takes it - what was made from it is outdated (a BG or
+BAo_: 05 Bake Albedo again, an ALB_: 07 Generate Normal again). Esc, another selection or
+another image in the editor end the modal like Esc and ask: Save / Discard / Keep (the copy
+waits; the panel resumes or ends it).
 
 The fill itself is inpaint_fill.py (pure numpy). Each UV island of uv_normal (plus its bake
 margin) is filled from itself only: a selection across a seam never pulls the other side's
@@ -47,10 +48,10 @@ except Exception:
 import numpy as np
 
 from . import inpaint_fill as ipf
-from . import lasso_raster, props
+from . import lasso_raster, props, sources
 
 PREFIX = "MCP_IP_"
-KEY = "mcp_ip_alb"          # on the copy: the ALB_ image's name (leftover clean-up)
+KEY = "mcp_ip_alb"          # on the copy: the edited image's name (leftover clean-up)
 
 UNDO_BYTES = 1024 * 1024 * 1024
 CLOSE_PX = 12.0             # region pixels: a click this close to point 1 closes the lasso
@@ -70,14 +71,16 @@ def _baking():
 # ── Session ───────────────────────────────────────────────────────────────────
 
 class Session:
-    """The working copy of one ALB_: pixels, selection, undo. Names only - undo reloads IDs."""
+    """The working copy of one image (a source's original or its _inpaint): pixels,
+    selection, undo. Names only - undo reloads IDs."""
 
-    def __init__(self, alb, obj, temp, buf, tris, margin):
+    def __init__(self, img, src, temp, buf, tris, margin):
         tris, islands = tris if tris is not None else (None, None)
-        self.alb_name = alb.name
-        self.obj_name = obj.name
+        self.alb_name = img.name                # the edited image (any source)
+        self.kind = src.kind
+        self.obj_name = src.owner.name          # the object, or the camera of a BG
         self.temp_name = temp.name
-        self.path = _baking()[0].image_file(alb)
+        self.path = _baking()[0].image_file(img)
         self.buf = buf                          # (h, w, 4) float32, the copy's pixels
         self.h, self.w = buf.shape[:2]
         self.tris = tris                        # uv_normal triangles in pixels, or None
@@ -91,6 +94,8 @@ class Session:
         self.overlay_dirty = False
         self.tex = {}                           # id(undo record) -> GPU texture of its after
         self.pins = {}                          # editor area pointer -> its pin at Start
+        act = bpy.context.view_layer.objects.active
+        self.active_name = act.name if act is not None else ""     # the selection at Start
 
     @property
     def temp(self):
@@ -103,6 +108,11 @@ class Session:
     @property
     def obj(self):
         return bpy.data.objects.get(self.obj_name)
+
+    @property
+    def src(self):
+        owner = self.obj
+        return sources.Source(self.kind, owner) if owner is not None else None
 
     # selection
     def touch(self, rect):
@@ -236,29 +246,25 @@ def redraw():
 
 # ── Target ────────────────────────────────────────────────────────────────────
 
-def alb_owner(img):
-    """The object whose ALB_ `img` is, or None."""
-    if img is None:
-        return None
-    for o in bpy.data.objects:
-        d = getattr(o, "multicamproject_bake", None)
-        if d is not None and d.alb_image == img:
-            return o
-    return None
-
-
 def target(context):
-    """(ALB_ image, object): the ALB_ this editor shows, else the active object's."""
+    """(image, Source): the source image this editor shows, else the active object's
+    preferred one (sources.preferred)."""
     sp = context.space_data
     img = sp.image if sp is not None and sp.type == 'IMAGE_EDITOR' else None
-    obj = alb_owner(img)
-    if obj is not None:
-        return img, obj
-    obj = context.active_object
-    d = getattr(obj, "multicamproject_bake", None) if obj is not None else None
-    if d is not None and d.alb_image is not None:
-        return d.alb_image, obj
-    return None, None
+    src = sources.classify(img)
+    if src is not None:
+        return img, src
+    img = sources.preferred(context.active_object)
+    src = sources.classify(img)
+    return (img, src) if src is not None else (None, None)
+
+
+def locked(src):
+    """Why the source can't be inpainted now: its object is Locked Finish ('' = it can)."""
+    if src is None or src.kind == 'BG':
+        return ""
+    d = getattr(src.owner, "multicamproject_bake", None)
+    return "Locked Finish: unlock it in 08 first" if d is not None and d.locked else ""
 
 
 def start_reason(context):
@@ -272,9 +278,12 @@ def start_reason(context):
         return "The lasso is running"
     if session.active() is not None:
         return "A Liquify session is running - Bake or Cancel it first"
-    img, _obj = target(context)
+    img, src = target(context)
     if img is None:
-        return "Show an ALB_ here, or select an object with a baked ALB_"
+        return "Show an ALB_, BAo_ or camera photo here, or select a baked object"
+    why = locked(src)
+    if why:
+        return why
     path = _baking()[0].image_file(img)
     if not path or not os.path.isfile(path):
         return f"{img.name} has no file - bake it again"
@@ -312,23 +321,25 @@ def start(context):
     if active() is not None:
         return _session
     common, _engine, _hm = _baking()
-    alb, obj = target(context)
+    alb, src = target(context)
     path = common.image_file(alb)
-    src = bpy.data.images.load(path, check_existing=False)     # the file, not the float
+    file = bpy.data.images.load(path, check_existing=False)    # the file, not the float
     try:                                                       # buffer GN-Final may hold
-        w, h = src.size
+        w, h = file.size
         if w < 2 or h < 2:
             raise ValueError(f"Cannot read {os.path.basename(path)}")
-        buf = lasso_raster.read_pixels(src)
-        is_float = src.is_float
+        buf = lasso_raster.read_pixels(file)
+        is_float = file.is_float
     finally:
-        bpy.data.images.remove(src)
+        bpy.data.images.remove(file)
     temp = bpy.data.images.new((PREFIX + alb.name)[:63], w, h, alpha=False,
                                float_buffer=is_float)
     temp.colorspace_settings.name = 'sRGB'
     temp[KEY] = alb.name
     margin = common.margin_px(common.settings(context.scene), w)
-    _session = Session(alb, obj, temp, buf, _uv_triangles(obj, w, h), margin)
+    # a baked texture fills per UV island of uv_normal; a photo is one piece
+    tris = _uv_triangles(src.owner, w, h) if src.kind != 'BG' else None
+    _session = Session(alb, src, temp, buf, tris, margin if src.kind != 'BG' else 0)
     _session.push()
     _ensure_handler()
     return _session
@@ -354,7 +365,7 @@ def _show(img_from, img_to, pins=None):
         if pins is None:
             continue
         pin = pins.get(area.as_pointer(), False)
-        if not pin:
+        if not pin and img_to is None:      # else it stays on what was inpainted
             follow = _auto_image(bpy.context.view_layer.objects.active)
             if follow is not None and follow != sp.image:
                 sp.image = follow
@@ -362,8 +373,11 @@ def _show(img_from, img_to, pins=None):
 
 
 def _auto_image(obj):
-    """The image Blender's UV editor follows for `obj`: its active material's active Image
-    Texture node, or None."""
+    """The image an unpinned editor follows for `obj`: the add-on's preferred source image
+    (sources.preferred), else Blender's - the active material's active Image Texture node."""
+    img = sources.preferred(obj)
+    if img is not None:
+        return img
     mat = obj.active_material if obj is not None else None
     nt = mat.node_tree if mat is not None else None
     node = nt.nodes.active if nt is not None else None
@@ -373,24 +387,18 @@ def _auto_image(obj):
 
 
 def save():
-    """The copy over ALB_<name>.png (the old file to _previous first). Ends the session.
-    Returns the _previous path."""
+    """The copy written as the source's _inpaint file (the original is never written); the
+    source's users take it. Ends the session. Returns the _inpaint image."""
     s = active()
     if s is None:
         raise ValueError("No Inpaint open")
-    common, engine, handmade = _baking()
-    alb, temp = s.alb, s.temp
-    if alb is None:
+    src, temp = s.src, s.temp
+    if src is None or s.alb is None:
         raise ValueError(f"{s.alb_name} is gone - Discard")
-    path = common.image_file(alb) or s.path
-    prev = handmade.copy_to_previous(path, bpy.context.scene) if os.path.isfile(path) else ""
     temp.pixels.foreach_set(s.buf.ravel())      # the fills were only drawn so far
-    temp.filepath_raw = path
-    temp.file_format = 'PNG'
-    temp.save(filepath=path)
-    engine.link_file(alb, path)         # reload: the new pixels, no stale float buffer
-    _end(alb)
-    return prev
+    img = sources.save(src, bpy.context.scene, temp)
+    _end(img)
+    return img
 
 
 def discard():
@@ -411,7 +419,9 @@ def _end(show):
     if temp is not None:
         _show(temp, show, s.pins)
         bpy.data.images.remove(temp)
-    _on_active_changed()        # the selection may have changed meanwhile: its ALB_
+    act = bpy.context.view_layer.objects.active
+    if (act.name if act is not None else "") != s.active_name:
+        _on_active_changed()    # another object meanwhile: the editors follow it now
     redraw()
 
 
@@ -562,9 +572,10 @@ def _selection_key(context):
 
 
 class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
-    """Remove spots (markers) from the baked ALB_ on a copy: Brush or Lasso a selection, it
-    fills from the pixels around it. Enter saves the copy over ALB_ (the old file goes to
-    _previous), Esc asks. Another selection or another image in this editor asks too"""
+    """Remove spots (markers) from the shown ALB_, BAo_ or camera photo on a copy: Brush or
+    Lasso a selection, it fills from the pixels around it. Enter saves the copy as the
+    _inpaint file (the original stays), Esc asks. Another selection or another image in this
+    editor asks too"""
     bl_idname = "multicamproject.inpaint"
     bl_label = "Inpaint"
     bl_options = {'REGISTER'}       # pixel writes are outside Blender's undo
@@ -858,15 +869,12 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
 
 
 def _report_save(op):
-    s = active()
-    name = s.alb_name if s else ""
     try:
-        prev = save()
+        img = save()
     except Exception as e:
         op.report({'ERROR'}, f"Inpaint save failed: {e}")
         return {'CANCELLED'}
-    op.report({'INFO'}, f"Inpaint saved into {name}"
-                        + (f" (old file: _previous/{os.path.basename(prev)})" if prev else ""))
+    op.report({'INFO'}, f"Inpaint saved as {img.name} (the original stays as it was)")
     return {'FINISHED'}
 
 
@@ -887,7 +895,7 @@ def _remove_handler():
 # ── Panel operators ───────────────────────────────────────────────────────────
 
 class MULTICAMPROJECT_OT_inpaint_exit(bpy.types.Operator):
-    """Save the Inpaint copy into ALB_, discard it, or keep it for later"""
+    """Save the Inpaint copy as the _inpaint file, discard it, or keep it for later"""
     bl_idname = "multicamproject.inpaint_exit"
     bl_label = "Inpaint"
     bl_options = {'REGISTER', 'INTERNAL'}
@@ -895,7 +903,7 @@ class MULTICAMPROJECT_OT_inpaint_exit(bpy.types.Operator):
     reason: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     action: EnumProperty(
         name="Action", default='SAVE',
-        items=[('SAVE', "Save", "Write the copy over ALB_ (the old file goes to _previous)"),
+        items=[('SAVE', "Save", "Write the copy as the _inpaint file (the original stays)"),
                ('DISCARD', "Discard", "Throw the fills away"),
                ('KEEP', "Keep", "Keep the copy - Resume, Save or Discard it in the panel")])
 
@@ -926,10 +934,10 @@ class MULTICAMPROJECT_OT_inpaint_exit(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_inpaint_save(bpy.types.Operator):
-    """Write the Inpaint copy over ALB_<name>.png (the old file goes to
-    <bake folder>/_previous) and end the Inpaint (Enter)"""
+    """Write the Inpaint copy as the _inpaint file (the original stays as it was) and end the
+    Inpaint (Enter). What was made from the source goes back a step"""
     bl_idname = "multicamproject.inpaint_save"
-    bl_label = "Save to ALB_"
+    bl_label = "Save _inpaint"
     bl_options = {'REGISTER'}
 
     @classmethod
@@ -942,7 +950,7 @@ class MULTICAMPROJECT_OT_inpaint_save(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_inpaint_discard(bpy.types.Operator):
-    """Throw the Inpaint copy away: ALB_ stays as it was"""
+    """Throw the Inpaint copy away: the image stays as it was"""
     bl_idname = "multicamproject.inpaint_discard"
     bl_label = "Discard"
     bl_options = {'REGISTER'}
@@ -994,6 +1002,139 @@ class MULTICAMPROJECT_OT_inpaint_fill(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _source_from(kind, owner_name):
+    owner = bpy.data.objects.get(owner_name)
+    return sources.Source(kind, owner) if owner is not None and kind in sources.KINDS else None
+
+
+def _editor_area(context):
+    """An Image Editor to show a source in: this one, else the first of this window, else of
+    any window. (window, area) or (None, None)."""
+    if context.area is not None and context.area.type == 'IMAGE_EDITOR':
+        return context.window, context.area
+    wins = [context.window] + [w for w in context.window_manager.windows if w != context.window]
+    for win in wins:
+        for area in (win.screen.areas if win is not None else ()):
+            if area.type == 'IMAGE_EDITOR':
+                return win, area
+    return None, None
+
+
+_SRC_PROPS = dict(
+    kind=EnumProperty(items=[('ALB', "ALB_", ""), ('BAO', "BAo_", ""), ('BG', "Camera BG", ""),
+                             ('SHOWN', "Shown", "The image the editor shows")],
+                      default='SHOWN', options={'HIDDEN', 'SKIP_SAVE'}),
+    owner=StringProperty(options={'HIDDEN', 'SKIP_SAVE'}))
+
+
+def _op_source(op, context):
+    if op.kind == 'SHOWN':
+        return target(context)[1]
+    return _source_from(op.kind, op.owner)
+
+
+class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
+    """Show this image in the Image Editor and start Inpaint on it - its _inpaint copy when
+    there is one. Nothing is written until you Save (then <name>_inpaint is made)"""
+    bl_idname = "multicamproject.inpaint_load"
+    bl_label = "Inpaint"
+    bl_options = {'REGISTER'}
+
+    __annotations__ = dict(_SRC_PROPS)
+
+    def execute(self, context):
+        src = _op_source(self, context)
+        if src is None:
+            self.report({'ERROR'}, "Nothing to inpaint")
+            return {'CANCELLED'}
+        why = locked(src)
+        if why:
+            self.report({'WARNING'}, why)
+            return {'CANCELLED'}
+        if running() or active() is not None:
+            self.report({'WARNING'}, "An Inpaint is open - Save or Discard it first")
+            return {'CANCELLED'}
+        img = sources.current(src)
+        win, area = _editor_area(context)
+        if area is None:
+            self.report({'WARNING'}, "Open an Image Editor (e.g. the UV Editing workspace), "
+                                     "then press this again")
+            return {'CANCELLED'}
+        sp = area.spaces.active
+        pin = sp.use_image_pin
+        sp.image = img
+        sp.use_image_pin = pin
+        region = _window_region(area)
+        with context.temp_override(window=win, area=area, region=region,
+                                   space_data=sp, screen=win.screen):
+            if bpy.ops.multicamproject.inpaint.poll():
+                bpy.ops.multicamproject.inpaint('INVOKE_DEFAULT')
+            else:
+                self.report({'INFO'}, f"{img.name} shown - Inpaint: {start_reason(context)}")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_inpaint_reload(bpy.types.Operator):
+    """Start the _inpaint over: the original's pixels are copied into it (the materials keep
+    showing the _inpaint). What was made from it goes back a step"""
+    bl_idname = "multicamproject.inpaint_reload"
+    bl_label = "Reload from Original"
+    bl_options = {'REGISTER'}
+
+    __annotations__ = dict(_SRC_PROPS)
+
+    @classmethod
+    def poll(cls, context):
+        return active() is None
+
+    def execute(self, context):
+        src = _op_source(self, context)
+        if src is None or locked(src):
+            self.report({'WARNING'}, locked(src) or "Nothing to reload")
+            return {'CANCELLED'}
+        try:
+            img = sources.reload(src, context.scene)
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, f"{img.name}: the original again")
+        redraw()
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_inpaint_remove(bpy.types.Operator):
+    """Remove the _inpaint: its file goes to the Recycle Bin and the materials show the
+    original again. What was made from it goes back a step"""
+    bl_idname = "multicamproject.inpaint_remove"
+    bl_label = "Remove Inpaint"
+    bl_options = {'REGISTER'}
+
+    __annotations__ = dict(_SRC_PROPS)
+
+    @classmethod
+    def poll(cls, context):
+        return active() is None
+
+    def execute(self, context):
+        src = _op_source(self, context)
+        if src is None or locked(src):
+            self.report({'WARNING'}, locked(src) or "Nothing to remove")
+            return {'CANCELLED'}
+        if sources.inpaint_image(src) is None:
+            self.report({'INFO'}, "No _inpaint to remove")
+            return {'CANCELLED'}
+        ip = sources.inpaint_image(src)
+        orig = sources.original(src)
+        for area in _image_editors():           # editors on the copy show the original
+            if area.spaces.active.image == ip:
+                area.spaces.active.image = orig
+                area.spaces.active.use_image_pin = False
+        sources.remove(src, context.scene)
+        self.report({'INFO'}, f"{sources.label(src)}: back to the original")
+        redraw()
+        return {'FINISHED'}
+
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 
 def recover():
@@ -1031,12 +1172,14 @@ def _on_undo(_):
     s.push()
 
 
-# ── The editor follows the active object's ALB_ ───────────────────────────────
+# ── The editor follows the active object ──────────────────────────────────────
 #
 # Blender's UV editor follows the active material's active Image Texture node; MCP_ (slot 1)
 # has none, so selecting a baked object left the editor empty. A new active object puts its
-# ALB_ into every unpinned Image Editor that shows nothing or another object's ALB_ (camera
-# photos and any other image stay). Not while an Inpaint is open: its copy stays.
+# preferred image (ALB_ inpainted > ALB_ > BAo_ inpainted > BAo_, sources.preferred) into
+# every unpinned Image Editor that shows nothing or another source image; any other image
+# stays. Not while an Inpaint is open: its copy stays. A msgbus on the active object - no
+# timer runs while nothing changes.
 
 _owner = object()
 
@@ -1045,17 +1188,16 @@ def follow_active():
     if active() is not None:
         return None
     obj = bpy.context.view_layer.objects.active
-    d = getattr(obj, "multicamproject_bake", None) if obj is not None else None
-    alb = d.alb_image if d is not None else None
-    if alb is None:
+    img = sources.preferred(obj)
+    if img is None:
         return None
     for area in _image_editors():
         sp = area.spaces.active
-        if sp.use_image_pin or sp.image == alb:
+        if sp.use_image_pin or sp.image == img:
             continue
-        if sp.image is not None and alb_owner(sp.image) is None:
+        if sp.image is not None and sources.classify(sp.image) is None:
             continue
-        sp.image = alb
+        sp.image = img
         sp.use_image_pin = False        # setting it from Python pins it
     return None
 
@@ -1083,6 +1225,9 @@ _HANDLERS = ((bpy.app.handlers.load_post, _on_load),
              (bpy.app.handlers.redo_post, _on_undo))
 
 CLASSES = (MULTICAMPROJECT_OT_inpaint,
+           MULTICAMPROJECT_OT_inpaint_load,
+           MULTICAMPROJECT_OT_inpaint_reload,
+           MULTICAMPROJECT_OT_inpaint_remove,
            MULTICAMPROJECT_OT_inpaint_exit,
            MULTICAMPROJECT_OT_inpaint_save,
            MULTICAMPROJECT_OT_inpaint_discard,

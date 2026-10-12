@@ -900,7 +900,7 @@ def bake_albedo_steps(context, obj):
         yield from bake_projection_steps(context, obj)
     if r == route.ORIGINAL:
         yield jobs.Step(f"Albedo: copying BAo_ to {os.path.basename(path)}")
-        d.alb_image = copy_file(scene, d.ba_image, name, d.alb_image)
+        d.alb_image = copy_file(scene, common.bao_source(obj), name, d.alb_image)
     elif r == route.PROJECTION:
         yield jobs.Step(f"Albedo: copying BAp_ to {os.path.basename(path)}")
         d.alb_image = copy_file(scene, d.bap_image, name, d.alb_image)

@@ -68,6 +68,13 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                     "another size are listed to bake again")
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
     nor_image: PointerProperty(type=bpy.types.Image, name="Normal")
+    # 06 Inpainting: the saved copies (files next to the originals, which stay as baked)
+    alb_inpaint: PointerProperty(type=bpy.types.Image, name="Albedo Inpainted",
+                                 description="ALB_<name>_inpaint: ALB_ inpainted - exported as "
+                                             "ALB_ and NOR_ is made from it")
+    ba_inpaint: PointerProperty(type=bpy.types.Image, name="Baked Albedo Inpainted",
+                                description="BAo_<name>_inpaint: BAo_ inpainted - MCP_ and "
+                                            "05 Bake Albedo use it")
     # handmade Rebake: the textures as painted on uv_old (files in <bake folder>/_previous)
     prev_alb: PointerProperty(type=bpy.types.Image, name="Previous Albedo")
     prev_nor: PointerProperty(type=bpy.types.Image, name="Previous Normal")

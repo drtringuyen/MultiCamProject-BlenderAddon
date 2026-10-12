@@ -110,6 +110,20 @@ def cmx2_name(obj):
 PAINT_IMAGES = (("msk_image", msk_name), ("cmx1_image", cmx1_name), ("cmx2_image", cmx2_name))
 
 
+def alb_inpaint_name(obj):
+    """ALB_<name>_inpaint: ALB_ inpainted (06)."""
+    return alb_name(obj) + "_inpaint"
+
+
+def ba_inpaint_name(obj):
+    """BAo_<name>_inpaint: BAo_ inpainted (06)."""
+    return ba_name(obj) + "_inpaint"
+
+
+# the object's own files beside the bakes: renamed and owned with it
+OBJECT_IMAGES = PAINT_IMAGES + (("alb_inpaint", alb_inpaint_name), ("ba_inpaint", ba_inpaint_name))
+
+
 def mat_name(obj):
     from .naming import typed_name
     return typed_name("MAT", obj)
@@ -201,6 +215,16 @@ def texture_path(scene, image_name):
     """<name>.png in the bake folder - every bake, ALB_ / NOR_ too (since 2026-10-12: Export
     copies them into <export folder>/Textures)."""
     return os.path.join(output_dir(scene), image_name + ".png")
+
+
+def bao_source(obj):
+    """The BAo_ MCP_ and 05 take: BAo_<name>_inpaint when the user inpainted and saved it,
+    else BAo_<name>."""
+    d = data(obj)
+    ip = getattr(d, "ba_inpaint", None)
+    if ip is not None and file_ok(ip):
+        return ip
+    return d.ba_image
 
 
 def alb_source(obj):

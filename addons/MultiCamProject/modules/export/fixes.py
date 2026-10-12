@@ -103,7 +103,7 @@ def rename_object(obj, new, fresh=None, mcp=None):
     for img, name in ((d.ba_image, common.ba_name(obj)), (d.bn_image, common.bn_name(obj)),
                       (d.bap_image, common.bap_name(obj)), (d.bnp_image, common.bnp_name(obj)),
                       (d.bng_image, common.bng_name(obj)),
-                      *((getattr(d, p), fn(obj)) for p, fn in common.PAINT_IMAGES)):
+                      *((getattr(d, p), fn(obj)) for p, fn in common.OBJECT_IMAGES)):
         if img is not None and img.name != name:
             _rename_file(img, name)
     if fresh:       # same bake, new names: still up to date

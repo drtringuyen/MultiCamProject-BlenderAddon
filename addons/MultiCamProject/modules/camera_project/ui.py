@@ -40,6 +40,19 @@ def _draw_bake_row(context, layout, obj):
     bake_ui.draw_bake_box(context, layout, obj, route_rows=True)
 
 
+def _inpaint_ready(obj):
+    from ... import module_manager
+    if not module_manager.is_loaded("image_editor"):
+        return False
+    from ..image_editor import sources
+    return sources.draw_ready(obj)
+
+
+def _draw_inpaint(layout, kind, owner):
+    from ..image_editor import sources
+    sources.draw_button(layout, kind, owner)
+
+
 def _icon(icon):
     """Keyword for layout.operator: a UI icon name, "file:<name>" for one of the add-on's
     icons, or "tool:<handle>" for a toolbar icon."""
@@ -259,12 +272,12 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         solo = item.camera == solo_cam
         col.active = solo_cam is None or solo
         m = self._metrics(context, debug, core.slot_count(core.data(obj)))
-        self._draw_row(col, obj, item, debug, m, solo)
+        self._draw_row(col, obj, item, debug, m, solo, inpaint=_inpaint_ready(obj))
         if shift:
             self._draw_shift(col, obj, item.camera, m, flood)
 
     @staticmethod
-    def _draw_row(col, obj, item, debug, m, solo, removable=False):
+    def _draw_row(col, obj, item, debug, m, solo, removable=False, inpaint=False):
         slots_f, name_f = m[:2]
         cam = item.camera
         split = col.row().split(factor=1.0 - slots_f, align=True)
@@ -279,6 +292,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         nsplit = left.split(factor=name_f, align=True)
         nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
         mid = nsplit.row(align=True)
+        if inpaint and core.image_ok(core.cam_image(cam)):
+            _draw_inpaint(mid, 'BG', cam)       # 06: inpaint this photo (all its objects)
 
         # image field takes all remaining width
         bg = core.bg_entry(cam)

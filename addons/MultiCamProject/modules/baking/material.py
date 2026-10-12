@@ -106,7 +106,7 @@ def build(obj, scene, place_slots=True):
     bsdf.inputs["Metallic"].default_value = 0.0
     b.link(bsdf.outputs[0], out.inputs["Surface"])
     uv = node("ShaderNodeUVMap", "uv", (-700, -100), uv_map=common.UV_NORMAL)
-    alb = node("ShaderNodeTexImage", "alb", (-400, 100), image=d.alb_image)
+    alb = node("ShaderNodeTexImage", "alb", (-400, 100), image=common.alb_source(obj))
     alb.label = "ALB"
     b.link(uv.outputs["UV"], alb.inputs["Vector"])
     b.link(alb.outputs["Color"], bsdf.inputs["Base Color"])
