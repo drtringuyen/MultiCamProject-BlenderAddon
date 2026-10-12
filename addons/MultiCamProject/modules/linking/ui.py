@@ -10,9 +10,9 @@ from . import core, operators as ops
 
 def _state(obj):
     """(text, icon) of a linked object's window."""
-    if core.new_send(obj) is not None:
+    if core.new_send(obj, cached=True) is not None:
         return "New Send Back to receive", 'IMPORT'
-    if core.sent_back(obj) is not None:
+    if core.sent_back(obj, cached=True) is not None:
         return "Received - up to date", 'CHECKMARK'
     return "Waiting for Send Back", 'TIME'
 
@@ -147,22 +147,26 @@ def _draw_folder(row, scene, role, wide):
 
 def draw_row_button(layout, obj, relink=False):
     """Send Out, or Receive (blue once sent back) [+ open] [+ relink] + X - the EXPORT rows,
-    the Linking list."""
+    the Linking list. Always the same width (empty places first), so the columns after it
+    line up on every row, linked or not."""
+    slots = 3 + relink                  # the most a row can show: Receive, open, (relink,) X
+    cell = layout.row(align=True)
+    cell.ui_units_x = 1.1 * slots
     rec = core.out_record(obj)
     if rec is None:
         last = core.last_window(obj)
-        cell = layout.row(align=True)
-        cell.ui_units_x = 1.1 * (1 + bool(last))
+        for _i in range(slots - 1 - bool(last)):
+            cell.label(text="", icon='BLANK1')     # an empty place, one icon wide
         if last:        # after X: the earlier work file again, with the current mesh
             cell.operator(ops.MULTICAMPROJECT_OT_WorkReopen.bl_idname, text="",
                           icon='FILE_BLEND').object_name = obj.name
         cell.operator(ops.MULTICAMPROJECT_OT_WorkSendOut.bl_idname, text="",
                       icon='WINDOW').object_name = obj.name
         return
-    ready = core.new_send(obj) is not None
+    ready = core.new_send(obj, cached=True) is not None
     saved = bool(core.saved_window(obj))
-    cell = layout.row(align=True)
-    cell.ui_units_x = 1.1 * (2 + saved + relink)
+    for _i in range(slots - 2 - saved - relink):
+        cell.label(text="", icon='BLANK1')
     sub = cell.row(align=True)
     sub.enabled = ready
     sub.operator(ops.MULTICAMPROJECT_OT_WorkReceive.bl_idname, text="", icon='IMPORT',
@@ -184,7 +188,7 @@ def draw_main(layout, context, obj):
         layout.operator(ops.MULTICAMPROJECT_OT_WorkSendOut.bl_idname,
                         text="Send Out to Work Window", icon='WINDOW').object_name = obj.name
         return
-    ready = core.new_send(obj) is not None
+    ready = core.new_send(obj, cached=True) is not None
     col = layout.column(align=True)
     info = col.row()
     info.active = False

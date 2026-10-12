@@ -67,10 +67,16 @@ SCENE_GROUPS = ("multicamproject_bake_settings", "multicamproject_export",
 
 # ---------------------------------------------------------------- paths
 
+_made = set()
+
+
 def exchange_dir():
-    """<temp>/mcp_workfile: what the two Blenders hand each other (never next to the .blend)."""
+    """<temp>/mcp_workfile: what the two Blenders hand each other (never next to the .blend).
+    Made once per session (the panels ask for it on every redraw)."""
     folder = os.path.join(os.path.dirname(os.path.normpath(bpy.app.tempdir)), "mcp_workfile")
-    os.makedirs(folder, exist_ok=True)
+    if folder not in _made or not os.path.isdir(folder):
+        os.makedirs(folder, exist_ok=True)
+        _made.add(folder)
     return folder
 
 
@@ -114,11 +120,20 @@ def out_record(obj):
         return None
 
 
-def sent_back(obj):
-    """The manifest of what the work window sent back for obj (None = nothing yet)."""
+def sent_back(obj, cached=False):
+    """The manifest of what the work window sent back for obj (None = nothing yet).
+    `cached` (the panels): memoized - the window writes it from another Blender, so a new
+    Send Back shows within steps.MEMO_TTL; Receive always reads the file."""
     rec = out_record(obj)
     if rec is None:
         return None
+    if cached:
+        from ... import steps
+        return steps.memo(("sent_back", rec["id"]), lambda: _read_manifest(rec))
+    return _read_manifest(rec)
+
+
+def _read_manifest(rec):
     path = os.path.join(job_dir(rec["id"]), MANIFEST)
     try:
         with open(path, encoding="utf-8") as f:
@@ -127,9 +142,9 @@ def sent_back(obj):
         return None
 
 
-def new_send(obj):
+def new_send(obj, cached=False):
     """The manifest when the window sent back something not received yet, else None."""
-    man = sent_back(obj)
+    man = sent_back(obj, cached)
     if man is None:
         return None
     return man if man.get("time", 0) > out_record(obj).get("received", 0) else None
