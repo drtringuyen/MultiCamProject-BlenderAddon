@@ -1,14 +1,14 @@
 """Paint Textures: the camera mix and the blend mask painted at 1K on uv_normal, so the
-paint no longer follows the mesh's vertices (VCMix / VCMix2 stay as the base).
+paint no longer follows the mesh's vertices. They work exactly as VCMix / VCMix2:
 
-    MSK_<name>   R = blend mask (1 projected, 0 baked), A = painted here
-    CMX1_<name>  R, G, B = cameras 1-3, A = painted here
-    CMX2_<name>  R, G, B = cameras 4-6, A = painted here
+    CMX1_<name>  R, G, B = cameras 1-3, A = blend mask (1 projected, 0 baked)
+    CMX2_<name>  R, G, B = cameras 4-6, A = stroke marker (paint_sync), kept at 0
 
-Transparent = not painted: the vertex layers (the cameras' own weights, earlier VCMix
-painting) show through, so moving a camera still updates every area nobody painted.
-MCP_ mixes vertex layer -> texture by the texture's alpha x the scene's Paint Textures
-toggle (a Value node, no rebuild): toggled off, everything is as before.
+Each starts as a copy of what VCMix / VCMix2 show now (rasterized on uv_normal), then MCP_
+reads the texture instead of the vertex layer - the scene's Paint Textures toggle (a Value
+node, no rebuild) switches back to the vertex layers. Painting a camera brings the
+projection back (alpha 1), Erase lowers CMX1_ alpha (the baked scan shows), Shift+Erase
+raises it again.
 
 PNG files in the bake folder, named like the export (typed_name), pointers on the
 object's multicamproject_bake. Created on the first stroke, saved with the .blend.
@@ -27,8 +27,12 @@ import numpy as np
 from bpy.app.handlers import persistent
 
 SIZE = 1024
-KINDS = ("MSK", "CMX1", "CMX2")
-POINTER = {"MSK": "msk_image", "CMX1": "cmx1_image", "CMX2": "cmx2_image"}
+KINDS = ("CMX1", "CMX2")
+POINTER = {"MSK": "msk_image", "CMX1": "cmx1_image", "CMX2": "cmx2_image"}  # MSK_: before v2
+LAYER = {"CMX1": "VCMix", "CMX2": "VCMix2"}
+VERSION_KEY = "multicamproject_paint_version"   # on the image: 2 = alpha is the mask
+VERSION = 2
+DILATE = 8                          # pixels the copy grows into the UV space no face uses
 TOGGLE = "Paint Textures"           # MCP_'s Value node: the scene toggle (0 = vertex layers only)
 UV_NORMAL = "uv_normal"
 BRUSH = "brushes/essentials_brushes-mesh_texture.blend/Brush/Paint Hard"
@@ -76,19 +80,22 @@ def problem(obj, scene):
 
 
 def ensure(obj, kind, scene):
-    """obj's MSK_ / CMX1_ / CMX2_: its own, or a new transparent 1K PNG in the bake folder.
-    Returns (image, created)."""
+    """obj's CMX1_ / CMX2_: its own (brought to the current format), or a new 1K PNG in the
+    bake folder holding what VCMix / VCMix2 show now. Object Mode. Returns (image, created)."""
     import os
     from ..baking import common, engine
     img = get(obj, kind)
     if img is not None:
+        if img.get(VERSION_KEY, 1) < VERSION:
+            migrate(obj)
         return img, False
+    px = layer_pixels(obj, kind)
     name = image_name(obj, kind)
     path = common.texture_path(scene, name)
     engine._check_length(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = bpy.data.images.new(name + "_MCP_TMP", SIZE, SIZE, alpha=True)
-    tmp.pixels.foreach_set(np.zeros(SIZE * SIZE * 4, np.float32))
+    tmp.pixels.foreach_set(px.ravel())
     tmp.filepath_raw = path
     tmp.file_format = 'PNG'
     tmp.save(filepath=path)
@@ -101,10 +108,83 @@ def ensure(obj, kind, scene):
         img.name = name
     setup_image(img)
     engine.link_file(img, path)
+    img[VERSION_KEY] = VERSION
     setattr(obj.multicamproject_bake, POINTER[kind], img)
     from ..baking import owned
     owned.add(scene, [path])
     return img, True
+
+
+def layer_pixels(obj, kind, previous=None):
+    """(SIZE*SIZE, 4) pixels of VCMix (CMX1) / VCMix2 (CMX2) as MCP_ shows them now
+    (`previous` 0: the cameras' own weights, Reset Camera Mix), rasterized on uv_normal and
+    grown into the free UV space. CMX2's alpha is 0 (the stroke marker)."""
+    from . import core
+    if obj.mode == 'EDIT':
+        obj.update_from_editmode()
+    me = obj.data
+    got = core.projection_layers(obj, [LAYER[kind]], previous).get(LAYER[kind])
+    me.calc_loop_triangles()
+    nloops = len(me.loops)
+    if got is None:
+        raise RuntimeError(f"{LAYER[kind]} could not be read from the projection (a live "
+                           "Decimate? apply it first)")
+    domain, buf = got
+    col = buf.reshape(-1, 4)
+    if domain == 'POINT':
+        vi = np.empty(nloops, np.int32)
+        me.loops.foreach_get("vertex_index", vi)
+        if len(col) != len(me.vertices):
+            raise RuntimeError(f"{LAYER[kind]} does not match the mesh")
+        col = col[vi]
+    elif len(col) != nloops:
+        raise RuntimeError(f"{LAYER[kind]} does not match the mesh")
+    t = len(me.loop_triangles)
+    loops = np.empty(t * 3, np.int32)
+    me.loop_triangles.foreach_get("loops", loops)
+    tris = mesh_triangles(me)
+    px, cov = raster_colors(tris, col[loops].reshape(t, 3, 4))
+    px = grow(px, cov)
+    if kind == "CMX2":
+        px[:, 3] = 0.0
+    return px
+
+
+def migrate(obj):
+    """CMX1_ / CMX2_ of v1 (alpha = painted here, MSK_ = the mask) -> v2 (alpha = the mask):
+    the vertex layers under the painted pixels, MSK_ into CMX1_'s alpha."""
+    msk = getattr(obj.multicamproject_bake, POINTER["MSK"], None)
+    done = False
+    for kind in KINDS:
+        img = get(obj, kind)
+        if img is None or img.get(VERSION_KEY, 1) >= VERSION:
+            continue
+        old = read(img)
+        new = layer_pixels(obj, kind)
+        a = old[:, 3:4]
+        new[:, :3] = new[:, :3] * (1.0 - a) + old[:, :3] * a
+        if kind == "CMX1" and msk is not None and msk.has_data:
+            m = read(msk)
+            new[:, 3] = new[:, 3] * (1.0 - m[:, 3]) + m[:, 0] * m[:, 3]
+        img.pixels.foreach_set(new.ravel())
+        img.update()
+        img[VERSION_KEY] = VERSION
+        bump(img)
+        done = True
+        print(f"[MultiCamProject] {img.name}: alpha is the blend mask now (converted)")
+    if done:
+        from . import core
+        core.ensure_material(obj)       # MCP_ reads the alpha as the mask
+
+
+def migrate_all():
+    for obj in bpy.data.objects:
+        if obj.type == 'MESH' and not obj.library and any(
+                img.get(VERSION_KEY, 1) < VERSION for img in images(obj).values()):
+            try:
+                migrate(obj)
+            except Exception as e:
+                print(f"[MultiCamProject] {obj.name}: paint textures not converted: {e}")
 
 
 def setup_image(img):
@@ -277,6 +357,59 @@ def raster(tris, size=SIZE):
     return np.asarray(buf, dtype=np.uint8).reshape(-1, 4)[:, 0] > 127
 
 
+def raster_colors(tris, colors, size=SIZE):
+    """(pixels (size*size, 4) float, coverage bool) of uv triangles with per-corner colors
+    (n, 3, 4), interpolated over each triangle."""
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    from mathutils import Matrix
+    if not len(tris):
+        return np.zeros((size * size, 4), np.float32), np.zeros(size * size, bool)
+    pos = tris.reshape(-1, 2) * 2.0 - 1.0
+    pos = np.c_[pos, np.zeros(len(pos))].astype(np.float32)
+    shader = gpu.shader.from_builtin('SMOOTH_COLOR')
+    batch = batch_for_shader(shader, 'TRIS', {"pos": pos,
+                                              "color": colors.reshape(-1, 4).astype(np.float32)})
+    off = gpu.types.GPUOffScreen(size, size, format='RGBA32F')
+    try:
+        with off.bind():
+            fb = gpu.state.active_framebuffer_get()
+            fb.clear(color=(0.0, 0.0, 0.0, -1.0))       # alpha -1: no face here
+            with gpu.matrix.push_pop():
+                gpu.matrix.load_matrix(Matrix.Identity(4))
+                gpu.matrix.load_projection_matrix(Matrix.Identity(4))
+                gpu.state.blend_set('NONE')
+                batch.draw(shader)
+            buf = fb.read_color(0, 0, size, size, 4, 0, 'FLOAT')
+    finally:
+        off.free()
+    buf.dimensions = size * size * 4
+    px = np.asarray(buf, dtype=np.float32).reshape(-1, 4).copy()
+    cov = px[:, 3] > -0.5
+    px[~cov] = 0.0
+    return np.clip(px, 0.0, 1.0), cov
+
+
+def grow(px, cov, steps=DILATE, size=SIZE):
+    """Pixels no face covers take their covered neighbours' mean, `steps` rings out: the
+    texture filters across an island's border without a seam."""
+    img = px.reshape(size, size, 4).copy()
+    have = cov.reshape(size, size).copy()
+    for _ in range(steps):
+        acc = np.zeros_like(img)
+        cnt = np.zeros((size, size), np.float32)
+        for dy, dx in ((1, 0), (-1, 0), (0, 1), (0, -1)):
+            sh = np.roll(have, (dy, dx), axis=(0, 1))
+            acc += np.roll(img, (dy, dx), axis=(0, 1)) * sh[:, :, None]
+            cnt += sh
+        add = ~have & (cnt > 0)
+        if not add.any():
+            break
+        img[add] = acc[add] / cnt[add][:, None]
+        have |= add
+    return img.reshape(-1, 4)
+
+
 def dilate(cov, free, px=2, size=SIZE):
     """cov grown by `px` pixels into `free` (UV space no face covers): no seam shows
     where the texture filters across an island's border."""
@@ -322,9 +455,23 @@ def claim_fn(claim):
     return fn
 
 
-def clear_fn(arr):
-    arr[:] = 0.0
-    return arr
+def mask_fn(cov, value):
+    """fn for queue() on CMX1: the blend mask (alpha) = value over the covered pixels
+    (cov None: all of them)."""
+    c = None if cov is None else cov.astype(np.float32)
+
+    def fn(arr):
+        arr[:, 3] = value if c is None else arr[:, 3] * (1.0 - c) + value * c
+        return arr
+    return fn
+
+
+def weights_fn(fresh):
+    """fn for queue(): R, G, B = `fresh` (the cameras' own weights), the alpha stays."""
+    def fn(arr):
+        arr[:, :3] = fresh[:, :3]
+        return arr
+    return fn
 
 
 # ---------------------------------------------------------------- material toggle
@@ -348,15 +495,16 @@ def on_toggle(props, context):
 # ---------------------------------------------------------------- brush / saving
 
 def set_brush(context, color, blend='MIX'):
-    """Texture Paint brush: a Draw brush with `color`."""
+    """Texture Paint brush: a Draw brush with `color` (None: kept) and `blend`."""
     ip = context.tool_settings.image_paint
     if ip.brush is None or ip.brush.image_brush_type != 'DRAW':
         bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
                                      relative_asset_identifier=BRUSH)
     br = ip.brush
     br.blend = blend
-    br.color = color
-    ip.unified_paint_settings.color = color
+    if color is not None:
+        br.color = color
+        ip.unified_paint_settings.color = color
 
 
 def start_painting(context, obj, img, through):
@@ -394,11 +542,20 @@ def _on_save_pre(*_):
         print(f"[MultiCamProject] paint textures not saved: {e}")
 
 
+def _migrate_later():
+    try:
+        migrate_all()
+    except Exception as e:      # never break loading
+        print(f"[MultiCamProject] paint texture conversion skipped: {e}")
+    return None
+
+
 @persistent
 def _on_load(*_):
     _redo.clear()
     _rev.clear()
     _queue.clear()
+    bpy.app.timers.register(_migrate_later, first_interval=1.0)
 
 
 def register():
@@ -406,6 +563,7 @@ def register():
     bpy.app.handlers.undo_post.append(_on_undo)
     bpy.app.handlers.save_pre.append(_on_save_pre)
     bpy.app.handlers.load_post.append(_on_load)
+    bpy.app.timers.register(_migrate_later, first_interval=1.0)     # an add-on reload too
 
 
 def unregister():

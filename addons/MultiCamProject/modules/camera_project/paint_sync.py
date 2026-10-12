@@ -23,8 +23,11 @@ mesh (or around its silhouette) must not hand the far side to a camera that cann
 
 Paint Textures (paint_tex) work the same way in Texture Paint: a stroke into CMX2_ claims
 CMX1_ under it (cameras 1-3 painted to 0 there, its alpha up), pixel by pixel, only where
-the faces turn toward the painted camera. The mask is its own texture (MSK_), so there is
-no marker or stash. The clear is its own undo step (paint_tex.write).
+the faces turn toward the painted camera. CMX2_'s alpha is the marker (the mask is CMX1_'s
+alpha alone): 0 between strokes, the brush raises it wherever it passes, so a stroke claims
+even where CMX2_ already had that color - and brings the projection back there. The
+marker goes back to 0 without an undo step (undoing the stroke restores 0 anyway). The
+clear is its own undo step (paint_tex.write).
 """
 import bpy
 import numpy as np
@@ -286,7 +289,13 @@ def reset_texture(obj):
     """Snapshot CMX2_: the next stroke is measured from here."""
     _tsnap.pop(obj.name, None)
     if _tex_qualifies(obj):
-        _tsnap[obj.name] = paint_tex.read(paint_tex.get(obj, "CMX2"))
+        tex = paint_tex.get(obj, "CMX2")
+        cur = paint_tex.read(tex)
+        if cur[:, 3].max(initial=0.0) > 0.0:    # a marker an undo brought back: 0 again
+            cur[:, 3] = 0.0
+            tex.pixels.foreach_set(cur.ravel())
+            tex.update()
+        _tsnap[obj.name] = cur
 
 
 def _facing_pixels(obj, cam):
@@ -325,11 +334,16 @@ def sync_texture(obj):
     tex = paint_tex.get(obj, "CMX2")
     old = _tsnap.get(obj.name)
     cur = paint_tex.read(tex)
+    marked = cur[:, 3].copy()
+    if marked.max(initial=0.0) > 0.0:   # the marker back to 0 for the next stroke
+        cur[:, 3] = 0.0
+        tex.pixels.foreach_set(cur.ravel())
+        tex.update()
     _tsnap[obj.name] = cur
     if old is None or old.shape != cur.shape or _brush_is_black():
         return False
     claim = np.clip((cur[:, :3] - old[:, :3]).max(axis=1), 0.0, 1.0)
-    claim = np.maximum(claim, np.clip(cur[:, 3] - old[:, 3], 0.0, 1.0))
+    claim = np.maximum(claim, np.clip(marked - old[:, 3], 0.0, 1.0))
     if claim.max(initial=0.0) <= CLAIM_MIN:
         return False
     cam = _painted_camera(obj, L2)

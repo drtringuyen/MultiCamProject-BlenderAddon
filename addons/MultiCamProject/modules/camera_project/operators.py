@@ -693,8 +693,9 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         return {'FINISHED'}
 
     def _texture(self, context, obj, cam, slot):
-        """Paint Textures: Texture Paint on MSK_ (Erase) / CMX1_ / CMX2_ through uv_normal.
-        Erase paints the mask black (Shift: white); Fill fills the selected faces' UV."""
+        """Paint Textures: Texture Paint on CMX1_ / CMX2_ through uv_normal, as VCMix:
+        a camera's color with alpha 1 (the projection shows), Erase lowers CMX1_ alpha
+        (Shift: raises it); Fill fills the selected faces' UV."""
         scene = context.scene
         why = paint_tex.problem(obj, scene)
         if why:
@@ -703,7 +704,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         leave_paint(obj)
         if context.mode != 'OBJECT':        # edit-mode selection syncs to the mesh here
             bpy.ops.object.mode_set(mode='OBJECT')
-        kind = "MSK" if self.mode == 'ERASE' else paint_tex.kind_of_slot(slot)
+        kind = "CMX1" if self.mode == 'ERASE' else paint_tex.kind_of_slot(slot)
         try:
             img, new = paint_tex.ensure(obj, kind, scene)
             if kind == "CMX2":      # made here, in this undo step: a stroke's clear writes it
@@ -744,7 +745,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             del obj[MASK_KEY]
         paint_tex.start_painting(context, obj, img, through)
         if self.mode == 'ERASE':
-            paint_tex.set_brush(context, (1.0, 1.0, 1.0) if self.shift else (0.0, 0.0, 0.0))
+            paint_tex.set_brush(context, None, 'ADD_ALPHA' if self.shift else 'ERASE_ALPHA')
         else:
             paint_tex.set_brush(context, color)
         paint_sync.reset_texture(obj)
@@ -808,26 +809,20 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
         return {'FINISHED'}
 
     def _texture(self, context, obj):
-        """Paint Textures: MSK_ = value everywhere (painted, so it wins over the vertex alphas)."""
+        """Paint Textures: CMX1_ alpha (the blend mask) = value everywhere."""
         why = paint_tex.problem(obj, context.scene)
         if why:
             self.report({'ERROR'}, why)
             return {'CANCELLED'}
         leave_paint(obj)
         try:
-            _img, new = paint_tex.ensure(obj, "MSK", context.scene)
+            _img, new = paint_tex.ensure(obj, "CMX1", context.scene)
         except (RuntimeError, OSError) as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         if new:
             core.ensure_material(obj)
-        v = self.value
-
-        def fill(arr):
-            arr[:, :3] = v
-            arr[:, 3] = 1.0
-            return arr
-        paint_tex.queue(obj, "MSK", fill)
+        paint_tex.queue(obj, "CMX1", paint_tex.mask_fn(None, self.value))
         return {'FINISHED'}
 
 
@@ -846,9 +841,14 @@ class MULTICAMPROJECT_OT_ResetCameraMix(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         done = core.reset_camera_mix(obj)
-        for kind in ("CMX1", "CMX2"):       # the painted camera textures: nothing painted
+        for kind in paint_tex.KINDS:        # the camera textures' R, G, B too (alpha kept)
             if paint_tex.get(obj, kind) is not None:
-                paint_tex.queue(obj, kind, paint_tex.clear_fn)
+                try:
+                    fresh = paint_tex.layer_pixels(obj, kind, previous=0.0)
+                except RuntimeError as e:
+                    self.report({'WARNING'}, str(e))
+                    continue
+                paint_tex.queue(obj, kind, paint_tex.weights_fn(fresh))
                 done.append(paint_tex.image_name(obj, kind))
         if not done:
             self.report({'WARNING'}, "Nothing reset (no painted layers, or a live Decimate)")

@@ -244,7 +244,7 @@ def scene_cameras(scene):
 
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
-MAT_VERSION = 9         # bump when the material's node setup changes
+MAT_VERSION = 10        # bump when the material's node setup changes
 LAYOUT_VERSION = 6      # from here on nodes have stable names: a rebuild keeps their spots
 PREFIX = "MCP_"
 OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
@@ -499,9 +499,8 @@ def _named_math(b, name, *args, **kw):
     return out
 
 
-def _paint_tex_node(b, f, obj, kind, loc, toggle):
-    """The object's MSK_ / CMX1_ / CMX2_ on uv_normal: (color, alpha x Paint Textures),
-    None without that image."""
+def _paint_tex_node(b, f, obj, kind, loc):
+    """The object's CMX1_ / CMX2_ on uv_normal: (color, alpha), None without that image."""
     from . import paint_tex
     img = paint_tex.get(obj, kind) if obj is not None else None
     if img is None:
@@ -512,9 +511,16 @@ def _paint_tex_node(b, f, obj, kind, loc, toggle):
     tex = _named(b.n("ShaderNodeTexImage", loc, f, image=img), paint_tex.node_name(kind))
     tex.label = f"{kind} (painted)"
     b.link(uv.outputs["UV"], tex.inputs["Vector"])
-    a = _named_math(b, f"{kind} Painted", "MULTIPLY", tex.outputs["Alpha"], toggle,
-                    (loc[0] + 300, loc[1] - 150), f"{kind} painted x toggle", f)
-    return tex.outputs["Color"], a
+    return tex.outputs["Color"], tex.outputs["Alpha"]
+
+
+def _toggled(b, f, toggle, vertex, painted, data_type, name, loc):
+    """The vertex layer (toggle 0) or the paint texture (toggle 1)."""
+    mx = _named(b.n("ShaderNodeMix", loc, f, data_type=data_type), name)
+    b.link(toggle, mx.inputs[0])
+    b.link(vertex, gn_builder._sock(mx.inputs, "A"))
+    b.link(painted, gn_builder._sock(mx.inputs, "B"))
+    return gn_builder._sock(mx.outputs, "Result")
 
 
 def _build_projection(b, n, obj=None):
@@ -523,8 +529,8 @@ def _build_projection(b, n, obj=None):
     (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
     mask = VCMix alpha x VCMix2 alpha x (s1 + w2): erasing either alpha, or no camera
     covering the face, shows the scan.
-    Paint Textures (paint_tex): CMX1_ / CMX2_ replace VCMix / VCMix2 R, G, B and MSK_ the
-    alphas where painted (their alpha x the Paint Textures Value).
+    Paint Textures (paint_tex), the Paint Textures Value at 1: CMX1_ / CMX2_ replace VCMix /
+    VCMix2 R, G, B, and CMX1_ alpha the blend mask (CMX2_ alpha is a stroke marker).
     Returns (color, blend mask, camera cover)."""
     from . import paint_tex
     f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
@@ -549,14 +555,10 @@ def _build_projection(b, n, obj=None):
                     f"{name} Attribute")
         sepc = _named(b.n("ShaderNodeSeparateColor", (550, -950 - layer * 250), f), f"{name} Separate")
         weights = vc.outputs["Color"]
-        painted = _paint_tex_node(b, f, obj, f"CMX{layer + 1}", (0, -1900 - layer * 350), toggle)
-        if painted is not None:     # CMXk_ over the vertex layer where painted
-            pm = _named(b.n("ShaderNodeMix", (400, -1900 - layer * 350), f, data_type="RGBA"),
-                        f"CMX{layer + 1} over {name}")
-            b.link(painted[1], pm.inputs[0])
-            b.link(weights, gn_builder._sock(pm.inputs, "A"))
-            b.link(painted[0], gn_builder._sock(pm.inputs, "B"))
-            weights = gn_builder._sock(pm.outputs, "Result")
+        painted = _paint_tex_node(b, f, obj, f"CMX{layer + 1}", (0, -1900 - layer * 350))
+        if painted is not None:     # CMXk_ instead of the vertex layer
+            weights = _toggled(b, f, toggle, weights, painted[0], "RGBA", f"CMX{layer + 1} or {name}",
+                               (400, -1900 - layer * 350))
         b.link(weights, sepc.inputs[0])
         ws = [sepc.outputs[k] for k in ("Red", "Green", "Blue")]
         if layer == 0:      # R, G, B fan out to many nodes: one reroute each keeps it readable
@@ -567,8 +569,8 @@ def _build_projection(b, n, obj=None):
                 routed.append(r.outputs[0])
             ws = routed
         col, _tot = _weighted(b, f, ws, cams, 700 + layer * 1000, name)
-        layers.append((col, vc, ws))
-    color, vc1, ws1 = layers[0]
+        layers.append((col, vc, ws, painted))
+    color, vc1, ws1, cmx1 = layers[0]
     mask = vc1.outputs["Alpha"]
 
     def layer_sum(ws, y, label):
@@ -579,22 +581,15 @@ def _build_projection(b, n, obj=None):
 
     s1 = layer_sum(ws1, -1200, "1-3 Cover")
     cover = s1                  # where the cameras see the face (From Projection's mask)
-    msk = _paint_tex_node(b, f, obj, "MSK", (0, -2700), toggle)
 
     def painted_mask(alpha, loc):
-        """MSK_ R over the vertex alphas where painted."""
-        if msk is None:
+        """CMX1_ alpha instead of the vertex alphas."""
+        if cmx1 is None:
             return alpha
-        sep = _named(b.n("ShaderNodeSeparateColor", (loc[0] - 200, loc[1] - 100), f), "MSK Separate")
-        b.link(msk[0], sep.inputs[0])
-        mm = _named(b.n("ShaderNodeMix", loc, f, data_type="FLOAT"), "MSK over Alphas")
-        b.link(msk[1], mm.inputs[0])
-        b.link(alpha, gn_builder._sock(mm.inputs, "A"))
-        b.link(sep.outputs["Red"], gn_builder._sock(mm.inputs, "B"))
-        return gn_builder._sock(mm.outputs, "Result")
+        return _toggled(b, f, toggle, alpha, cmx1[1], "FLOAT", "CMX1 Alpha or Vertex", loc)
 
     if len(layers) > 1:
-        col2, vc2, ws2 = layers[1]
+        col2, vc2, ws2, _cmx2 = layers[1]
         s2 = layer_sum(ws2, -1400, "4-6 Weight")
         free = _named_math(b, "1-3 Uncovered", "SUBTRACT", 1.0, s1, (3050, -1300), parent=f)
         w2 = _named_math(b, "4-6 Share", "MULTIPLY", s2, free, (3200, -1400),
@@ -615,9 +610,8 @@ def _build_projection(b, n, obj=None):
                              (3650, -1100), "VCMix a x VCMix2 a", f)
         alphas = painted_mask(alphas, (3650, -1600))
         mask = _named_math(b, "Blend Mask", "MULTIPLY", alphas, both, (3800, -1200), "Blend Mask", f)
-    elif msk is not None:       # painted mask x where cameras 1-3 see it (nothing shows elsewhere)
-        mixed = painted_mask(mask, (3650, -1600))
-        mask = _named_math(b, "Blend Mask", "MULTIPLY", mixed, s1, (3800, -1200), "Blend Mask", f)
+    else:
+        mask = painted_mask(mask, (3650, -1600))
     return color, mask, cover
 
 
@@ -1761,9 +1755,10 @@ def slot_layer(slot):
 PAINT_BRUSH = "brushes/essentials_brushes-mesh_vertex.blend/Brush/Paint Hard"
 
 
-def projection_layers(obj, names):
+def projection_layers(obj, names, previous=0.0):
     """{name: (domain, RGBA buffer)} of what GN-CameraProject computes from the cameras
-    alone (Previous Bake 0), read with the projection on and every modifier after it off -
+    alone (Previous Bake 0; `previous` None: as set, i.e. what MCP_ shows), read with the
+    projection on and every modifier after it off -
     Final hides the projection and GN-Final drops the layers, so reading the evaluated mesh
     as it is could give nothing (and a blank layer mixes all cameras equally)."""
     mod = get_modifier(obj)
@@ -1779,7 +1774,8 @@ def projection_layers(obj, names):
         mod.show_viewport = True
         for m in mods[idx + 1:]:
             m.show_viewport = False
-        set_input(mod, "Previous Bake", 0.0)
+        if previous is not None:
+            set_input(mod, "Previous Bake", previous)
         obj.update_tag()
         vl.update()
         ev = obj.evaluated_get(bpy.context.evaluated_depsgraph_get()).data

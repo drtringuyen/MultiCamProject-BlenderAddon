@@ -5,17 +5,22 @@
 ### Paint Textures: camera mix and blend mask painted at 1K on uv_normal (2026-10-12)
 - New toggle **Paint** in the projection box (on by default): the camera paint buttons paint
   1K textures through uv_normal instead of the mesh's vertices - precise, whatever the
-  topology. Off: VCMix / VCMix2 painting as before; MCP_ then ignores the textures (kept).
-- **MSK_<name>**: blend mask (Erase paints black = baked, Shift+Erase white = projected; Clear
-  Alpha and 02 Projected / Baked fill it). **CMX1_ / CMX2_<name>**: cameras 1-3 / 4-6.
-  Named like the export textures, PNGs in the bake folder, saved with the .blend.
-- Transparent = not painted: the vertex layers (the cameras' own weights, earlier VCMix
-  painting) show through, so moving a camera still updates every unpainted area.
-- A camera 4-6 stroke turns cameras 1-3 off under it in CMX1_ (only where the faces turn
-  toward the painted camera), its own undo step: Ctrl+Z once the clear, twice the stroke;
-  redo works. Selection Fill fills the selected faces' UV. Reset Camera Mix clears CMX1_/CMX2_.
+  topology. Off: VCMix / VCMix2 painting as before; MCP_ then reads the vertex layers again.
+- **CMX1_<name>**: R, G, B = cameras 1-3, **A = the blend mask**; **CMX2_<name>**: cameras
+  4-6 - they work exactly as VCMix / VCMix2: painting a camera brings the projection back,
+  Erase lowers the alpha (BAo_ shows), Shift+Erase raises it. Each starts as a copy of what
+  VCMix / VCMix2 show. Named like the export textures, PNGs in the bake folder, saved with
+  the .blend. (The separate MSK_ of the first version is converted into CMX1_'s alpha.)
+- A camera 4-6 stroke turns cameras 1-3 off under it in CMX1_ and brings the projection back
+  there (only where the faces turn toward the painted camera; CMX2_'s alpha is the stroke
+  marker) - its own undo step: Ctrl+Z once the clear, twice the stroke. Known limit: after a
+  Redo, undoing further back can show that area as before the stroke.
+- Selection Fill, Clear Alpha, 02 Projected / Baked and Reset Camera Mix (R, G, B from the
+  cameras, mask kept) write the textures. A camera may paint a face it sees any part of.
 - The bake fingerprint follows the painted pixels; Send Out / Send Back save them first;
-  rename, Receive and the clean-up know the three textures.
+  rename, Receive and the clean-up know the textures.
+- 05 shows the Bake Route prompt under Processing | Baked, and a warning while From Original
+  hides the projection.
 - Needs uv_normal and a bake folder (the panel says what is missing). Not yet: carrying the
   paint over to a new uv_normal (0D Retopo, Edit UV) - paint after the UV is final.
 
