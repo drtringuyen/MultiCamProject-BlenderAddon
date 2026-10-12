@@ -133,6 +133,9 @@ def can_start(img):
         return "No image"
     if is_preview(img):
         return "This is a Liquify preview"
+    from . import inpaint
+    if inpaint.is_temp(img):
+        return "This is the Inpaint copy - Save or Discard the Inpaint first"
     if img.library is not None:
         return "Linked image - make it local first"
     if img.source not in {'FILE', 'GENERATED'}:

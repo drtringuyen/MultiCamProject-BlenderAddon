@@ -127,6 +127,9 @@ def target_reason(img):
         return "No image"
     if session.is_preview(img):
         return "This is a Liquify preview - Bake or Cancel Liquify first"
+    from . import inpaint
+    if inpaint.is_temp(img):
+        return "This is the Inpaint copy - use the Inpaint tools"
     if img.library is not None:
         return "Linked image - make it local first"
     if img.source not in {'FILE', 'GENERATED'}:

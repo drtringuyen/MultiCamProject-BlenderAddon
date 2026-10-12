@@ -2,8 +2,11 @@
 Painted in the Image Editor (panel + tool) or through a soloed camera in the 3D Viewport (the
 Liquify button of a camera row, camera_op.py). See docs/PLAN_image_editor_liquify.md.
 Lasso: cut / move / rotate / scale pixels of the shown image (Ctrl+Alt+K), ported from DomeAnimatic
-(lasso_ops.py, lasso_draw.py, lasso_raster.py)."""
-from . import camera_op, lasso_draw, lasso_ops, lasso_raster, operators, props, session, tool, ui
+(lasso_ops.py, lasso_draw.py, lasso_raster.py).
+Inpaint: fill spots (scan markers) of a baked ALB_ on a copy, saved over ALB_ (inpaint.py,
+inpaint_fill.py)."""
+from . import (camera_op, inpaint, inpaint_fill, lasso_draw, lasso_ops, lasso_raster, operators,
+               props, session, tool, ui)
 
 
 def register():
@@ -13,11 +16,13 @@ def register():
     tool.register()
     camera_op.register()
     lasso_ops.register()
+    inpaint.register()
     ui.register()
 
 
 def unregister():
     ui.unregister()
+    inpaint.unregister()
     lasso_ops.unregister()
     camera_op.unregister()
     tool.unregister()

@@ -402,12 +402,11 @@ def _reload_file(path):
             img.reload()
 
 
-def _keep_previous(img, scene, kind):
-    """A copy of img's file in <bake folder>/_previous/<name>_<date>.png, loaded as an image
-    the object points at (PREV_<name>, never in a material). Returns it."""
+def copy_to_previous(src, scene):
+    """A copy of the file `src` in <bake folder>/_previous/<name>_<date>.png (_2, _3... when
+    taken). Returns its path. Also used by Inpaint before it writes over ALB_."""
     import datetime
     import shutil
-    src = common.image_file(img)
     folder = os.path.join(common.output_dir(scene), PREVIOUS_DIR)
     os.makedirs(folder, exist_ok=True)
     stem = os.path.splitext(os.path.basename(src))[0]
@@ -418,6 +417,15 @@ def _keep_previous(img, scene, kind):
         dst = os.path.join(folder, f"{base}_{n}.png")
         n += 1
     shutil.copy2(src, dst)
+    return dst
+
+
+def _keep_previous(img, scene, kind):
+    """A copy of img's file in <bake folder>/_previous/<name>_<date>.png, loaded as an image
+    the object points at (PREV_<name>, never in a material). Returns it."""
+    src = common.image_file(img)
+    stem = os.path.splitext(os.path.basename(src))[0]
+    dst = copy_to_previous(src, scene)
     prev = bpy.data.images.load(dst, check_existing=False)
     prev.name = f"PREV_{stem}"
     prev.colorspace_settings.name = 'Non-Color' if kind == "NOR" else 'sRGB'
