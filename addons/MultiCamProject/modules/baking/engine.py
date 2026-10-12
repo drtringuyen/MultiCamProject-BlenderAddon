@@ -766,15 +766,15 @@ def source_distance(obj, src, samples=4000):
             float(np.percentile(dist, 99)) * 1.1)
 
 
-def needs_source_bake(obj):
-    """A route that uses the Original, a Bake Source and no current BAo_ (or, From
-    Original's Surface picked, no current BNo_): Bake Final bakes from the source first."""
+def needs_source_bake(obj, normal=False):
+    """A route that uses the Original and no current BAo_ (or, `normal` - 07 with From
+    Original's Surface picked - no current BNo_): 05 / 07 bake from the source first."""
     from . import route
     d = common.data(obj)
     return (route.uses_original(obj) and route.has_original(obj)
             and (d.ba_image is None or not common.file_ok(d.ba_image)
                  or fingerprint.ba_outdated(obj)
-                 or (d.original_normal == 'BAKED'
+                 or (normal and d.bake_source is not None
                      and (d.bn_stale or d.bn_image is None or not common.file_ok(d.bn_image)))))
 
 
@@ -894,8 +894,8 @@ def bake_albedo_steps(context, obj):
     path = common.texture_path(scene, name)
     r = route.get(obj)
     if needs_source_bake(obj):
-        yield jobs.Step("Bake from Source", 0.0)
-        yield from bake_from_source_steps(context, obj)
+        yield jobs.Step("Bake BAo_", 0.0)
+        yield from bake_from_source_steps(context, obj, normal=False)
     if needs_projection_bake(obj):
         yield from bake_projection_steps(context, obj)
     if r == route.ORIGINAL:

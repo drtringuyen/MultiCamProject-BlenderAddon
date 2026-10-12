@@ -175,7 +175,7 @@ def generate_steps(context, obj, source):
     t0 = time.perf_counter()
     name = common.nor_name(obj)
     path = common.texture_path(scene, name)
-    if engine.needs_source_bake(obj):
+    if engine.needs_source_bake(obj, normal=common.data(obj).original_normal == 'BAKED'):
         yield jobs.Step("Bake from Source", 0.0)
         yield from engine.bake_from_source_steps(context, obj)
     if engine.needs_projection_bake(obj):

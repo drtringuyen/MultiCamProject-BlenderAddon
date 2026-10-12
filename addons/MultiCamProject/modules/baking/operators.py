@@ -317,6 +317,11 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
         if not all(common.has_uv_normal(o) for o in objs):
             cls.poll_message_set(f"Every selected mesh needs a '{common.UV_NORMAL}' UV map")
             return False
+        for o in objs:
+            why = route.problem(o)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
         return True
 
     def execute(self, context):

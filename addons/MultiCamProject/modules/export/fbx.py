@@ -39,15 +39,18 @@ def names_aside(ids):
 
 
 def copy_textures(objs, folder):
-    """ALB_/NOR_ files into <folder>/Textures/ (skipped when size and time match).
-    Returns {image name: copied path}."""
+    """ALB_/NOR_ files into <folder>/Textures/ as ALB_<name>.png / NOR_<name>.png - the ALB_
+    as inpainted when it was (common.alb_source). Skipped when size and time match.
+    Returns {MAT_'s image name: copied path}."""
     tex = os.path.join(folder, "Textures")
     os.makedirs(tex, exist_ok=True)
     out = {}
     for obj in objs:
         d = common.data(obj)
-        for img in (d.alb_image, d.nor_image):
-            src = common.image_file(img)
+        for img, src_img in ((d.alb_image, common.alb_source(obj)), (d.nor_image, d.nor_image)):
+            if img is None or src_img is None:
+                continue
+            src = common.image_file(src_img)
             if not src or not os.path.isfile(src):
                 continue
             dst = os.path.join(tex, img.name + ".png")

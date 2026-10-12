@@ -1,7 +1,8 @@
 """Baking data: per object (its ALB/NOR images, MAT_ material, last bake state) and per
 scene (the bake settings)."""
 import bpy
-from bpy.props import (BoolProperty, EnumProperty, FloatProperty, IntProperty, PointerProperty,
+from bpy.props import (BoolProperty, EnumProperty, FloatProperty, FloatVectorProperty,
+                       IntProperty, PointerProperty,
                        StringProperty)
 
 
@@ -303,9 +304,13 @@ def register():
         name="View", items=VIEW_ITEMS, get=_get_obj_view, set=_set_obj_view,
         options={'SKIP_SAVE'}, description="Projection setup or Final baked result (GN-Final)")
     bpy.types.Scene.multicamproject_bake_settings = PointerProperty(type=MULTICAMPROJECT_BakeSettings)
+    bpy.types.Scene.multicamproject_green = FloatVectorProperty(
+        size=3, subtype='COLOR_GAMMA', get=lambda self: (0.20, 0.75, 0.25),
+        options={'SKIP_SAVE'}, description="05 Bake Albedo")
 
 
 def unregister():
+    del bpy.types.Scene.multicamproject_green
     del bpy.types.Scene.multicamproject_bake_settings
     del bpy.types.Object.multicamproject_view
     del bpy.types.Object.multicamproject_bake

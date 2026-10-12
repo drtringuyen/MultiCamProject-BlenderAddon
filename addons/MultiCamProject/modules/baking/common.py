@@ -188,20 +188,29 @@ def output_dir(scene):
 EXPORT_TEXTURES = "Textures"    # <export folder>/Textures: the FBX's textures
 
 
-def final_dir(scene):
-    """Where ALB_/NOR_ are written: <export folder>/Textures, next to the FBX (the export
-    finds them there, nothing to copy). A Work Window (Receive takes them from its bake
-    folder) or no Export module: the bake folder."""
+def export_textures_dir(scene):
+    """<export folder>/Textures, next to the FBX: Export copies ALB_ / NOR_ there (the
+    ALB_ as inpainted when it was). '' without the Export module or its folder."""
     ex = getattr(scene, "multicamproject_export", None)
-    if ex is None or not ex.folder or is_work_window(scene):
-        return output_dir(scene)
+    if ex is None or not ex.folder:
+        return ""
     return os.path.normpath(os.path.join(bpy.path.abspath(ex.folder), EXPORT_TEXTURES))
 
 
 def texture_path(scene, image_name):
-    """<name>.png: ALB_/NOR_ in final_dir, the work textures in the bake folder."""
-    folder = final_dir(scene) if image_name.startswith(FINAL_PREFIXES) else output_dir(scene)
-    return os.path.join(folder, image_name + ".png")
+    """<name>.png in the bake folder - every bake, ALB_ / NOR_ too (since 2026-10-12: Export
+    copies them into <export folder>/Textures)."""
+    return os.path.join(output_dir(scene), image_name + ".png")
+
+
+def alb_source(obj):
+    """The ALB_ to export and to make NOR_ from: ALB_<name>_inpaint when the user inpainted
+    and saved it, else ALB_<name>."""
+    d = data(obj)
+    ip = getattr(d, "alb_inpaint", None)
+    if ip is not None and file_ok(ip):
+        return ip
+    return d.alb_image
 
 
 def image_file(img):

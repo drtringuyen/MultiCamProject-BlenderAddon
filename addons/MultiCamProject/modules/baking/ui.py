@@ -33,6 +33,13 @@ def draw_final_toggle(layout, data, prop):
     row.prop(data, prop, expand=True)
 
 
+def draw_green(layout):
+    """A green block: 05 Bake Albedo stands out (panels cannot colour a button)."""
+    cell = layout.row(align=True)
+    cell.ui_units_x = 0.7
+    cell.prop(bpy.context.scene, "multicamproject_green", text="")
+
+
 def draw_fit_cage(layout, obj):
     """[x% beyond the Cage (up to n m)] [Fit Cage n]: only when the last Bake from Source
     left a share of the surface outside the Cage (04, and the bake box of 05 / 06)."""
@@ -149,23 +156,12 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         # [route v] what to bake (+ the normal map's options behind the gear), what was
         # baked last
         box = top.box().column()
-        split = box.split(factor=0.36, align=True)      # the route's full name always fits
-        split.prop(d, "route", text="")
-        row = split.row(align=True)
-        row.prop_enum(s, "bake_what", 'ALBEDO')
-        row.prop_enum(s, "bake_what", 'NORMAL')
-        row.prop_enum(s, "bake_what", 'BOTH')
+        box.prop(d, "route", text="Route")
         self._draw_route(box, obj)
         info = box.column(align=True)
         if d.alb_size:
             info.label(text=f"ALB {_res(d.alb_size)}  ·  {d.last_bake_seconds:.1f} s",
                        icon='IMAGE_RGB')
-        if d.nor_size:
-            label = normal.LABELS.get(d.nor_source_used, d.nor_source_used)
-            info.label(text=f"NOR {_res(d.nor_size)}  ·  {label}  ·  {d.last_nor_seconds:.1f} s",
-                       icon='NORMALS_FACE')
-            if d.alb_size and d.nor_size != d.alb_size:
-                info.label(text="ALB and NOR sizes differ - bake again", icon='INFO')
         res = common.resolution(obj, context.scene)
         if d.tex_size == 'AUTO':
             info.label(text=f"Auto Resolution = {_res(res)} (the scene's, set in front of Export)",
@@ -173,20 +169,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         if d.alb_size and d.alb_size != res:
             info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(res)}",
                        icon='INFO')
-        # earlier normal map runs (other methods / sizes) to compare the times with
-        current = (normal.LABELS.get(d.nor_source_used, d.nor_source_used), d.nor_size)
-        others = [r for r in normal.times(d) if (r[0], r[1]) != current]
-        if others:
-            t = info.column(align=True)
-            t.active = False
-            for label, size, sec in others:
-                t.label(text=f"NOR {_res(size)}  ·  {label}  ·  {sec:.1f} s", icon='TIME')
-
         draw_bake_box(context, layout, obj)
-        why = normal.problem(obj, context.scene, s.nor_source)
-        if (why and s.bake_what != 'ALBEDO'
-                and not (s.bake_what == 'BOTH' and why == "Bake the albedo first")):
-            layout.label(text=why, icon='ERROR')      # the popover is mostly closed
 
     @staticmethod
     def _draw_route(box, obj):
@@ -301,20 +284,16 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
     @staticmethod
     def _draw_bake_button(layout, s, obj):
-        """[A v] (the active object's own size), one Bake for everything the options
-        say, the bake settings' gear at its end."""
-        parts = {'ALBEDO': "Albedo", 'NORMAL': "Normal", 'BOTH': "Albedo + Normal"}[s.bake_what]
-        if s.bake_what != 'ALBEDO':
-            d = common.data(obj)
-            if route.get(obj) == route.ORIGINAL and d.original_normal == 'BAKED':
-                parts += " (BNo_)"
-            else:
-                parts += f" ({normal.LABELS.get(s.nor_source, s.nor_source)})"
+        """[A v] (the active object's own size), the green "05. Bake Albedo" (ALB_ only:
+        NOR_ is 07's), the bake settings' gear at its end."""
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
         row.separator(factor=0.5)
-        row.operator("multicamproject.bake", text=f"Bake {parts}", icon='RENDER_STILL')
+        draw_green(row)
+        row.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
+                     icon='RENDER_STILL')
+        draw_green(row)
         if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
                 and getattr(obj, "multicamproject_cam", None) is not None
                 and obj.multicamproject_cam.is_setup):
