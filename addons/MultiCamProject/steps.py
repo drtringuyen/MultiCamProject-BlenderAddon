@@ -186,7 +186,7 @@ _NEEDS = {
     4: (3, "Finish 03: bake BAo_"),
     5: (3, "Finish 03: bake BAo_"),
     6: (5, "Finish 05: bake the Albedo"),
-    7: (5, "Finish 05: bake the Albedo"),
+    7: (3, "Finish 03: bake BAo_"),            # 07 bakes an outdated ALB_ first
     8: (7, "Finish 07: generate the Normal"),
 }
 

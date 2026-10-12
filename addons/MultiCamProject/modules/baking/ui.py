@@ -384,6 +384,7 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
 
     def draw(self, context):
         layout, _open = gate.step_box(self.layout, context, 7)
+        from ... import steps
         from . import jobs
         if jobs.busy():
             jobs.draw(layout)
@@ -400,6 +401,10 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
             sub = info.row()
             sub.active = False
             sub.label(text=f"From {alb.name}", icon='IMAGE_RGB')
+        if not steps.alb_fresh(obj):
+            note = info.row()
+            note.alert = True
+            note.label(text="ALB_ outdated or missing - 07 bakes it first (05)", icon='INFO')
         if d.nor_size and d.nor_image is not None:
             label = normal.LABELS.get(d.nor_source_used, d.nor_source_used)
             info.label(text=f"NOR {_res(d.nor_size)}  ·  {label}  ·  {d.last_nor_seconds:.1f} s",

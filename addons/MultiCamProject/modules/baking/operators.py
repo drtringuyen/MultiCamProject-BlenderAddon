@@ -335,9 +335,9 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
-    """07 Generate Normal: NOR_<name> (16-bit PNG) from ALB_ - its inpaint when there is one -
-    by High-pass / AI, or with Bake from Scan the scan's surface where the projection mask
-    is 0. Into MAT_"""
+    """07 Generate Normal: NOR_<name> (16-bit PNG) from the latest ALB_ - its inpaint when
+    there is one - by High-pass / AI, or with Bake from Scan the scan's surface where the
+    projection mask is 0. An outdated or missing ALB_ is baked first (05). Into MAT_"""
     bl_idname = "multicamproject.bake_normal"
     bl_label = "Generate Normal"
     bl_options = {'REGISTER', 'UNDO'}
@@ -362,10 +362,27 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
         return True
 
     def execute(self, context):
+        from ... import steps
         _leave_mode(context)            # bakes in Object Mode, then back to the mode
         s = common.settings(context.scene)
         objs = scope_objects(context, self.scope)
-        return _start_bake(self, context, "Make Normal", objs, False, s.nor_source, "Normal map")
+        # NOR_ always from the latest ALB_: an outdated / missing one is baked first
+        stale = [o for o in objs if not steps.alb_fresh(o)]
+        fresh = [o for o in objs if o not in stale]
+        log = []
+
+        def run():
+            done, failed = [], []
+            for group, albedo in ((stale, True), (fresh, False)):
+                if group:
+                    d2, f2 = yield from bake_objects_steps(context, group, albedo, s.nor_source,
+                                                           log=lambda t: log.append(t))
+                    done, failed = done + d2, failed + f2
+            return done, failed
+        finish = _finisher("Normal map", len(objs))
+        title = "Bake Albedo + Make Normal" if stale else "Make Normal"
+        return jobs.start(self, context, title, [o.name for o in stale + fresh], run(),
+                          lambda r, e: [('INFO', t) for t in log] + finish(r, e))
 
 
 class MULTICAMPROJECT_OT_BakeNormalMode(bpy.types.Operator):

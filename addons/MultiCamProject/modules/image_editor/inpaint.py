@@ -395,8 +395,8 @@ def save():
     src, temp = s.src, s.temp
     if src is None or s.alb is None:
         raise ValueError(f"{s.alb_name} is gone - Discard")
-    temp.pixels.foreach_set(s.buf.ravel())      # the fills were only drawn so far
-    img = sources.save(src, bpy.context.scene, temp)
+    # the copy's pixels with every fill (they were only drawn so far), straight to the PNG
+    img = sources.save_pixels(src, bpy.context.scene, s.buf, skip=temp)
     _end(img)
     return img
 

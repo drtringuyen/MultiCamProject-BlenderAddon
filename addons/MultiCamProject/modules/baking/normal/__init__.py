@@ -41,11 +41,10 @@ def usable(source):
 
 
 def problem(obj, scene, source):
-    """Why NOR_ cannot be made for `obj` ('' = it can): 07 needs ALB_ (05)."""
-    alb = common.alb_source(obj)
-    if alb is None or not common.file_ok(alb):
-        return "Bake the albedo first"
-    return ""
+    """Why NOR_ cannot be made for `obj` ('' = it can). A missing / outdated ALB_ is baked
+    first by 07, so only the route can stop it."""
+    from .. import route
+    return route.problem(obj)
 
 
 def _read_resized(img, size):

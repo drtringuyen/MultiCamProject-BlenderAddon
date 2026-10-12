@@ -186,15 +186,25 @@ def _image_on(path, name, colorspace, skip=None):
 def save(src, scene, image):
     """`image` (pixels set) written as the source's _inpaint file; the materials take it.
     Returns the _inpaint image."""
+    import numpy as np
+    w, h = image.size
+    px = np.empty(w * h * 4, np.float32)
+    image.pixels.foreach_get(px)
+    return save_pixels(src, scene, px.reshape(h, w, 4), skip=image)
+
+
+def save_pixels(src, scene, px, skip=None):
+    """`px` ((h, w, >=3) floats as stored, rows bottom-up) written as the source's _inpaint
+    PNG - by pngio's parallel writer (an 8K texture in ~0.5 s, Blender's save takes ~2 s) -
+    and the materials take it. Returns the _inpaint image."""
     from ..baking import owned
+    from ..baking.normal import pngio
     path = inpaint_path(src, scene)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    image.filepath_raw = path
-    image.file_format = 'PNG'
-    image.save(filepath=path)
+    pngio.write_rgb8(path, px)
     orig = original(src)
     img = _image_on(path, inpaint_name(src),
-                    orig.colorspace_settings.name if orig is not None else 'sRGB', skip=image)
+                    orig.colorspace_settings.name if orig is not None else 'sRGB', skip=skip)
     _point(src, img)
     if src.kind != 'BG':
         owned.add(scene, [path])
