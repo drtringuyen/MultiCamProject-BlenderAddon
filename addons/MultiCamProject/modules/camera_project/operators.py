@@ -814,7 +814,10 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             self.report({'ERROR'}, why)
             return {'CANCELLED'}
         leave_paint(obj)
-        if context.mode != 'OBJECT':        # edit-mode selection syncs to the mesh here
+        # edit-mode selection syncs to the mesh here. Texture Paint stays: entering or
+        # leaving it makes Blender rebuild every image's GPU texture (~6 s in Material
+        # Preview with many 8K images), so another camera / tool must not pay that twice
+        if context.mode not in {'OBJECT', 'PAINT_TEXTURE'}:
             bpy.ops.object.mode_set(mode='OBJECT')
         kind = "CMX1" if self.mode == 'ERASE' else paint_tex.kind_of_slot(slot)
         try:
