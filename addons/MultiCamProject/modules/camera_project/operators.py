@@ -132,6 +132,21 @@ class MULTICAMPROJECT_OT_AssignSlot(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_ConfirmCameras(bpy.types.Operator):
+    """Keep the cameras as they are now: Resort is no longer red (no new sort)"""
+    bl_idname = "multicamproject.confirm_cameras"
+    bl_label = "Confirm Selected Cameras"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _list_poll(context) and not core.data(context.active_object).resorted
+
+    def execute(self, context):
+        core.data(context.active_object).resorted = True
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
     """Resort: score every camera again and pick the best for the slots - Camera 1 looks
     most along +-Y, 2 along +-X, 3 along +-Z, 4-6 the most coverage left (only cameras
@@ -353,6 +368,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         _save_state(context, key, state)
         cam.hide_set(False)
         cam.local_view_set(space, True)
+        _isolate(context, space, obj, cam)
         cam.data.show_background_images = True
         if bg:
             bg.show_background_image = True
@@ -450,6 +466,54 @@ def _restore_collections(context, state):
             lc = path[-1]
             lc.hide_viewport, coll.hide_viewport = hide, coll_hide
             lc.exclude = exclude
+
+
+def _shown(context, o):
+    """Visible outside the local view (visible_get asks the active 3D View: inside solo
+    every neighbour counts as hidden)."""
+    if o.hide_get() or o.hide_viewport:
+        return False
+    root = context.view_layer.layer_collection
+    for c in o.users_collection:
+        if c == context.scene.collection:
+            return True
+        path = _layer_path(root, c)
+        if path and not any(lc.exclude or lc.hide_viewport or lc.collection.hide_viewport
+                            for lc in path):
+            return True
+    return False
+
+
+def _isolate(context, space, obj, cam):
+    """The panel's Isolate: the solo (local) view holds only obj + cam, or every object
+    visible outside it too (to check how obj meets its neighbours)."""
+    isolate = getattr(context.scene.multicamproject_props, "solo_isolate", True)
+    for o in context.view_layer.objects:
+        if o in (obj, cam):
+            continue
+        want = not isolate and o.type == 'MESH' and _shown(context, o)
+        try:
+            if o.local_view_get(space) != want:
+                o.local_view_set(space, want)
+        except RuntimeError:        # no base in this view layer
+            pass
+    context.view_layer.update()     # local_view_get reads the synced bases
+
+
+def apply_isolate(context):
+    """Isolate toggled: every soloed 3D View follows now."""
+    obj = context.active_object
+    if obj is None:
+        return
+    for win in context.window_manager.windows:
+        for area in win.screen.areas:
+            sp = area.spaces.active if area.type == 'VIEW_3D' else None
+            if sp is None or sp.local_view is None:
+                continue
+            if _load_state(context, str(sp.as_pointer())) is None:
+                continue        # a local view of the user's own, not solo
+            _isolate(context, sp, obj, sp.camera)
+            area.tag_redraw()
 
 
 def _redraw_sidebars():
@@ -1142,6 +1206,7 @@ _classes = (
     MULTICAMPROJECT_OT_MaskFill,
     MULTICAMPROJECT_OT_ResetCameraMix,
     MULTICAMPROJECT_OT_AutoPick,
+    MULTICAMPROJECT_OT_ConfirmCameras,
     MULTICAMPROJECT_OT_CheckSlots,
     MULTICAMPROJECT_OT_MeasureCoverage,
     MULTICAMPROJECT_OT_RemoveCamera,

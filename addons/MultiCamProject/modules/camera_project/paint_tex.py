@@ -534,6 +534,21 @@ def camera_mask_on(scene, obj):
     return bool(getattr(props, "camera_mask", True)) and not core.data(obj).project_through
 
 
+def on_airbrush(context):
+    """Airbrush toggled while a camera brush paints: switch it now, same color and blend."""
+    from . import core, paint_session
+    obj = context.active_object
+    using = paint_session.current(obj)
+    if using is None:
+        return
+    color = paint_session.color() if using[1] == 'PAINT' else None
+    if obj.mode == 'TEXTURE_PAINT':
+        set_brush(context, color, context.tool_settings.image_paint.brush.blend, force=True)
+    elif obj.mode == 'VERTEX_PAINT':
+        core.set_paint_brush(context, color, context.tool_settings.vertex_paint.brush.blend,
+                             force=True)
+
+
 def on_camera_mask(context):
     """Camera Mask toggled while a camera brush paints: its stencil on / off right away."""
     from . import paint_session
@@ -652,12 +667,34 @@ def on_toggle(props, context):
 
 # ---------------------------------------------------------------- brush / saving
 
-def set_brush(context, color, blend='MIX'):
-    """Texture Paint brush: a Draw brush with `color` (None: kept) and `blend`."""
-    ip = context.tool_settings.image_paint
-    if ip.brush is None or ip.brush.image_brush_type != 'DRAW':
+AIRBRUSH = "Airbrush"       # the essentials brush (texture and vertex paint both have one)
+
+
+def airbrush_on(scene):
+    return bool(getattr(getattr(scene, "multicamproject_props", None), "airbrush", False))
+
+
+def brush_asset(path, brush, airbrush, draw_ok, force=False):
+    """Activate the right essentials brush: Airbrush when asked for, else keep any Draw
+    brush (`draw_ok`) - `force`: back to `path` (Paint Hard) even so."""
+    if airbrush:
+        want = path.rsplit("/", 1)[0] + "/" + AIRBRUSH
+        ok = brush is not None and brush.name.startswith(AIRBRUSH)
+    else:
+        want = path
+        ok = draw_ok and not (force and brush.name.startswith(AIRBRUSH))
+    if not ok:
         bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
-                                     relative_asset_identifier=BRUSH)
+                                     relative_asset_identifier=want)
+
+
+def set_brush(context, color, blend='MIX', force=False):
+    """Texture Paint brush: a Draw brush (Airbrush when the panel says so) with `color`
+    (None: kept) and `blend`."""
+    ip = context.tool_settings.image_paint
+    br = ip.brush
+    brush_asset(BRUSH, br, airbrush_on(context.scene),
+                br is not None and br.image_brush_type == 'DRAW', force)
     br = ip.brush
     br.blend = blend
     if color is not None:

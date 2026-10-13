@@ -83,6 +83,16 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "(Texture Paint's Stencil Mask, per pixel; a part hidden behind the mesh "
                     "stays as it is). Off: the brush paints every surface under it. Project "
                     "through also turns it off")
+    airbrush: BoolProperty(
+        name="Airbrush", default=False,
+        update=lambda self, context: _on_airbrush(self, context),
+        description="The camera Paint and Erase buttons use Blender's Airbrush (soft, builds "
+                    "up while held) - blends into the surroundings. Off: Paint Hard")
+    solo_isolate: BoolProperty(
+        name="Isolate", default=True,
+        update=lambda self, context: _on_solo_isolate(self, context),
+        description="Solo shows only the active object (and the camera). Off: the other "
+                    "visible objects stay around it, to check how it meets them")
 
     # role folders (folders.py; the bake and export folders live in their modules)
     scan_textures_folder: StringProperty(
@@ -115,6 +125,22 @@ def _on_camera_mask(props, context):
     except ImportError:
         return
     paint_tex.on_camera_mask(context)
+
+
+def _on_airbrush(props, context):
+    try:
+        from .modules.camera_project import paint_tex
+    except ImportError:
+        return
+    paint_tex.on_airbrush(context)
+
+
+def _on_solo_isolate(props, context):
+    try:
+        from .modules.camera_project import operators
+    except ImportError:
+        return
+    operators.apply_isolate(context)
 
 
 def _on_original_normal(props, context):

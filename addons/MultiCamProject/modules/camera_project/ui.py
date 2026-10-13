@@ -196,6 +196,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
         # material's Cam textures against the slots) at the end, like Other Cameras
         sub = header.row(align=True)
+        # Isolate (solo shows only this object) · Airbrush (camera Paint / Erase)
+        props = context.scene.multicamproject_props
+        sub.prop(props, "solo_isolate", text="Isolate")
+        sub.separator()
+        sub.prop(props, "airbrush", text="", toggle=True, icon='BRUSH_DATA')
+        # yellow: keep the cameras as picked - Resort no longer red
+        sub.operator("multicamproject.confirm_cameras", text="", icon='CHECKMARK',
+                     depress=d.resorted)
         resort = sub.row(align=True)
         resort.alert = not d.resorted       # red until the cameras were resorted once
         resort.operator("multicamproject.auto_pick", text="", icon='SORTSIZE')

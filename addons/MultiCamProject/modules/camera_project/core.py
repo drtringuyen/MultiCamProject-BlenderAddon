@@ -1876,13 +1876,14 @@ def ensure_paint_layer(obj, layer="VCMix"):
     return info
 
 
-def set_paint_brush(context, color=None, blend='MIX'):
+def set_paint_brush(context, color=None, blend='MIX', force=False):
     """Vertex Paint brush for VCMix: a Draw brush (Shift+drag smooths, Blender's own
-    keymap) with the camera's color and the given blend."""
+    keymap; Airbrush when the panel says so) with the camera's color and the given blend."""
+    from . import paint_tex
     vp = context.tool_settings.vertex_paint
-    if vp.brush is None or vp.brush.vertex_brush_type != 'DRAW':
-        bpy.ops.brush.asset_activate(asset_library_type='ESSENTIALS',
-                                     relative_asset_identifier=PAINT_BRUSH)
+    br = vp.brush
+    paint_tex.brush_asset(PAINT_BRUSH, br, paint_tex.airbrush_on(context.scene),
+                          br is not None and br.vertex_brush_type == 'DRAW', force)
     br = vp.brush
     br.blend = blend
     if color is not None:

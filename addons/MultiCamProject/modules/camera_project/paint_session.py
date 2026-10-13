@@ -56,6 +56,10 @@ def _valid():
     return True
 
 
+def color():
+    return _state.get("color")
+
+
 def current(obj):
     """(camera name, 'PAINT' / 'ERASE') of the brush `obj` is painted with, or None."""
     if not _state or obj is None or obj.name != _state["obj"] or not _valid():
