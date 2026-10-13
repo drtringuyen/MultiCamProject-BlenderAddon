@@ -37,6 +37,13 @@ def _draw_bake_row(context, layout, obj):
         layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
                         icon='RENDER_STILL')
         return
+    from ... import module_manager
+    from ..baking import jobs
+    if module_manager.is_loaded("remesh") and not jobs.busy():
+        # 03's BAo_ box again (Bake BAo_ + its Inpaint): BAo_ shows where the mask
+        # leaves the projection out, fix it here without scrolling up
+        from ..remesh.ui import draw_bao
+        draw_bao(layout, context, obj)
     bake_ui.draw_bake_box(context, layout, obj, route_rows=True)
 
 
