@@ -294,6 +294,28 @@ class MULTICAMPROJECT_OT_ToggleGlobal(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def enter_camera_view(context, space):
+    """Look through space.camera the way Blender's own View Camera does: setting
+    view_perspective = 'CAMERA' directly skips Blender remembering the view it came from,
+    and leaving the camera view later (orbiting, Numpad 0) brings back a stale one - often
+    Orthographic. Perspective is what we come back to; no smooth-view animation."""
+    rv3d = space.region_3d
+    if rv3d.view_perspective == 'CAMERA':
+        return
+    rv3d.view_perspective = 'PERSP'
+    view = context.preferences.view
+    smooth = view.smooth_view
+    view.smooth_view = 0
+    try:
+        bpy.ops.view3d.view_camera()
+    except RuntimeError:
+        pass
+    finally:
+        view.smooth_view = smooth
+    if rv3d.view_perspective != 'CAMERA':
+        rv3d.view_perspective = 'CAMERA'
+
+
 class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
     """Solo the active object in local view and look through this camera
     (click again to leave solo)"""
@@ -377,7 +399,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
 
         scene.camera = cam
         space.camera = cam   # local view looks through the view's own camera
-        rv3d.view_perspective = 'CAMERA'
+        enter_camera_view(context, space)
         show_in_list(obj, cam)
         if not cam.visible_get():
             self.report({'WARNING'}, f"'{cam.name}' is in a hidden collection - "
