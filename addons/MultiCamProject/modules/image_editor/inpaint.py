@@ -634,17 +634,14 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         except (ValueError, RuntimeError) as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        region = _window_region(context.area)
-        if region is None:
+        if _window_region(context.area) is None:
             return {'CANCELLED'}
         sp = context.space_data
         s.pins.setdefault(context.area.as_pointer(), sp.use_image_pin)
         sp.image = s.temp                   # pins the editor: _end puts the pin back
         apply_uv(s)                         # UV overlay off (panel toggle); _end restores it
         self._s = s
-        self._area = context.area
-        self._region = region
-        self._region_ptr = region.as_pointer()
+        self._bind(context.area)
         self._sel_key = _selection_key(context)
         self._points = []           # lasso, image pixels
         self._dragging = False      # LMB is down
@@ -690,8 +687,35 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         a = self._area
         return a.x <= event.mouse_x < a.x + a.width and a.y <= event.mouse_y < a.y + a.height
 
+    def _bind(self, area):
+        region = _window_region(area)
+        if region is None:
+            return False
+        self._area, self._region = area, region
+        self._region_ptr = region.as_pointer()
+        return True
+
+    def _follow(self, context):
+        """The editor moved - Ctrl+Space (full window) and back swap the area: take the
+        Image Editor of this window that shows the working copy. False: there is none."""
+        screen = context.window.screen if context.window else None
+        for area in (screen.areas if screen else ()):
+            if area.type == 'IMAGE_EDITOR' and area.spaces.active.image == self._s.temp:
+                return self._bind(area)
+        return False
+
+    def _area_ok(self):
+        try:
+            return self._area.type == 'IMAGE_EDITOR' and self._region.type == 'WINDOW'
+        except Exception:
+            return False
+
     def _lost(self, context):
         """Why the modal has to stop (asks Save / Discard), or None."""
+        screen = context.window.screen if context.window else None
+        if not self._area_ok() or (screen is not None and self._area not in screen.areas[:]):
+            if not self._follow(context):
+                return "the editor closed"
         try:
             img = self._area.spaces.active.image
         except Exception:
@@ -731,13 +755,10 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         if s is not self._s:                    # saved / discarded from the panel
             self._stop(context)
             return {'FINISHED'}
-        try:
-            self._area.tag_redraw()
-        except Exception:
-            return self._ask(context, "the editor closed")
         why = self._lost(context)
         if why:
             return self._ask(context, why)
+        self._area.tag_redraw()
 
         et, ev = event.type, event.value
         if et in {'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM',
@@ -767,6 +788,8 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
             return {'RUNNING_MODAL'} if self._in_region(event) else {'PASS_THROUGH'}
 
         if ev != 'PRESS' or not self._in_area(event):
+            return {'PASS_THROUGH'}
+        if et == 'SPACE' and event.ctrl:        # full window and back: _lost follows the area
             return {'PASS_THROUGH'}
 
         if et == 'ESC':
