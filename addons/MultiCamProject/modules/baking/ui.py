@@ -315,7 +315,7 @@ def draw_bao_buttons(row, obj):
     BAo_'s Inpaint."""
     n = common.resolution(obj, bpy.context.scene)
     size = f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
-    row.operator("multicamproject.bake_from_source", text=f"Bake from Scan BAo_ ({size})",
+    row.operator("multicamproject.bake_from_source", text=f"03. Bake from Scan BAo_ ({size})",
                  icon='RENDER_STILL')
     from ... import module_manager
     if common.data(obj).ba_image is not None and module_manager.is_loaded("image_editor"):

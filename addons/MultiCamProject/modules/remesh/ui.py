@@ -246,7 +246,7 @@ def draw_bao(layout, context, obj):
     why = bake_ops.source_poll_problem(obj)
     # the object's size: its own pick (05 / the EXPORT list), or the scene's in front of Export
     row.operator("multicamproject.bake_from_source",
-                 text=f"Bake from Scan BAo_ ({_res(common.resolution(obj, context.scene))})",
+                 text=f"03. Bake from Scan BAo_ ({_res(common.resolution(obj, context.scene))})",
                  icon='RENDER_STILL')
     if d.ba_image is not None and module_manager.is_loaded("image_editor"):
         from ..image_editor import sources
