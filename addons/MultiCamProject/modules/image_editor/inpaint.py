@@ -99,6 +99,8 @@ class Session:
         self.tex = {}                           # id(undo record) -> GPU texture of its after
         self.pins = {}                          # editor area pointer -> its pin at Start
         self.uv = {}                            # editor area pointer -> (show_uv, opacity) at Start
+        self.back_3d = None                     # area pointer: a 3D View turned UV Editor for
+                                                # this Inpaint - a 3D View again at the end
         act = bpy.context.view_layer.objects.active
         self.active_name = act.name if act is not None else ""     # the selection at Start
 
@@ -457,10 +459,28 @@ def _end(show):
     if temp is not None:
         _show(temp, show, s.pins)
         bpy.data.images.remove(temp)
+    if s.back_3d is not None:
+        _back_to_3d(s.back_3d)
     act = bpy.context.view_layer.objects.active
     if (act.name if act is not None else "") != s.active_name:
         _on_active_changed()    # another object meanwhile: the editors follow it now
     redraw()
+
+
+def _area_by_pointer(ptr):
+    for win in bpy.context.window_manager.windows:
+        for area in win.screen.areas:
+            if area.as_pointer() == ptr:
+                return area
+    return None
+
+
+def _back_to_3d(ptr):
+    """The area Inpaint was started from a 3D View in: the 3D View again - Blender keeps the
+    area's 3D View space, so the view is as it was."""
+    area = _area_by_pointer(ptr)
+    if area is not None and area.type == 'IMAGE_EDITOR':
+        area.ui_type = 'VIEW_3D'
 
 
 # ── Region mapping / drawing ──────────────────────────────────────────────────
@@ -699,8 +719,11 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         """The editor moved - Ctrl+Space (full window) and back swap the area: take the
         Image Editor of this window that shows the working copy. False: there is none."""
         screen = context.window.screen if context.window else None
+        old = self._area.as_pointer()
         for area in (screen.areas if screen else ()):
             if area.type == 'IMAGE_EDITOR' and area.spaces.active.image == self._s.temp:
+                if self._s.back_3d == old:
+                    self._s.back_3d = area.as_pointer()
                 return self._bind(area)
         return False
 
@@ -1199,6 +1222,8 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
             from ..camera_project.operators import processing_preview
             processing_preview(context, context.active_object)
         img = sources.current(src)
+        if context.area is not None and context.area.type == 'VIEW_3D':
+            return self._from_3d(context, img)
         win, area = _editor_area(context)
         if area is None:
             self.report({'WARNING'}, "Open an Image Editor (e.g. the UV Editing workspace), "
@@ -1216,6 +1241,60 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
             else:
                 self.report({'INFO'}, f"{img.name} shown - Inpaint: {start_reason(context)}")
         return {'FINISHED'}
+
+    def _from_3d(self, context, img):
+        """This 3D View becomes a UV Editor showing `img`, Inpaint starts there once the
+        editor is laid out; Save / Discard turn it back into the 3D View."""
+        win, area = context.window, context.area
+        ptr = area.as_pointer()
+        area.ui_type = 'UV'
+        sp = area.spaces.active
+        sp.image = img
+        sp.use_image_pin = False
+        sp.show_region_ui = True            # the Inpaint panel
+        bpy.app.timers.register(lambda: _start_in(win, ptr), first_interval=0.05)
+        return {'FINISHED'}
+
+
+def _start_in(win, ptr):
+    """Timer: Inpaint in the area a 3D View just turned into; back to 3D when it can't."""
+    area = _area_by_pointer(ptr)
+    if area is None or area.type != 'IMAGE_EDITOR':
+        return None
+    region = _window_region(area)
+    sp = area.spaces.active
+    try:
+        ui = next((r for r in area.regions if r.type == 'UI'), None)
+        if ui is not None:
+            ui.active_panel_category = "MultiCamProject"
+        with bpy.context.temp_override(window=win, area=area, region=region,
+                                       space_data=sp, screen=win.screen):
+            if bpy.ops.multicamproject.inpaint.poll():
+                bpy.ops.multicamproject.inpaint('INVOKE_DEFAULT')
+            else:
+                print(f"[MultiCamProject] Inpaint: {start_reason(bpy.context)}")
+    except Exception as e:
+        print(f"[MultiCamProject] Inpaint did not start: {e}")
+    s = active()
+    if s is not None and running():
+        s.back_3d = area.as_pointer()
+        bpy.app.timers.register(lambda: _fit_in(win, ptr), first_interval=0.15)
+    else:
+        area.ui_type = 'VIEW_3D'
+    return None
+
+
+def _fit_in(win, ptr):
+    """Timer: the whole image in view - only once the new editor has its size."""
+    area = _area_by_pointer(ptr)
+    if area is not None and area.type == 'IMAGE_EDITOR':
+        try:
+            with bpy.context.temp_override(window=win, area=area,
+                                           region=_window_region(area)):
+                bpy.ops.image.view_all(fit_view=True)
+        except Exception:
+            pass
+    return None
 
 
 class MULTICAMPROJECT_OT_inpaint_reload(bpy.types.Operator):
