@@ -62,9 +62,9 @@ def remember_face_set(obj, fs):
 
 
 def _in_textures(obj):
-    """Projected / Baked go into CMX1_'s alpha (Paint Textures on and possible for obj)."""
+    """Projected / Baked go into CMX1_'s alpha (when obj can paint into textures)."""
     from ..camera_project import paint_tex
-    return paint_tex.enabled() and not paint_tex.problem(obj, bpy.context.scene)
+    return paint_tex.can_paint(obj)
 
 
 def _set_mask_texture(obj, tris, all_tris, value):

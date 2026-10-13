@@ -653,14 +653,9 @@ def leave_paint(obj):
 
 
 def finish_painting(context, obj):
-    """End the camera brush: the last stroke synced, stencil off, Object Mode, overlays
-    back."""
+    """End the camera brush: the last stroke synced, Object Mode, overlays back."""
     leave_paint(obj)
-    if obj.mode == 'TEXTURE_PAINT':
-        paint_tex.set_stencil(context, obj, None)
-    stay = (obj.mode == 'TEXTURE_PAINT'
-            and getattr(context.scene.multicamproject_props, "stay_in_paint", False))
-    if obj.mode != 'OBJECT' and not stay:   # leaving Texture Paint: ~6 s of GPU textures
+    if obj.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
     paint_session.end()
 
@@ -719,21 +714,19 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         cam = bpy.data.objects.get(props.camera)
         slot = core.slot_of(obj, cam) if obj and cam else 0
         layer = core.slot_layer(slot) if slot else "VCMix"
-        if paint_tex.enabled(context.scene):
+        textures = obj is not None and paint_tex.can_paint(obj, context.scene)
+        if textures:
             layer = f"{paint_tex.kind_of_slot(slot or 1)}_, 1K on uv_normal"
-        through = obj is not None and core.data(obj).project_through
-        reach = ("Project through is on: the brush also reaches faces the mesh hides from "
-                 "this camera" if through else
-                 "Project through is off: the mesh blocks it - only what this camera "
-                 "really sees takes paint (a stencil, per pixel)")
-        reach += ".\nThe brush stops at the first surface under it. Overlays are off while "
-        reach += "this brush is in use - click it again, Enter or Esc finishes"
+        # the vertices (no uv_normal yet): Fill still keeps to what the camera sees
+        through = textures or (obj is not None and core.data(obj).project_through)
+        reach = ("The brush paints the first surface under it. Overlays are off while this "
+                 "brush is in use - click it again, Enter or Esc finishes")
         return {
             'PAINT': f"Paint Camera Projection: paint where this camera's photo shows "
                      f"({layer}).\n{reach}.\nShift+drag while painting: smooth"
                      + ("\nA stroke also clears cameras 1-3 under it" if slot > 3 else ""),
             'FLOOD': "Selection Fill: fill whatever is selected with this camera (Edit Mode, "
-                     "faces selected).\n" + ("Project through is on: every selected face"
+                     "faces selected).\n" + ("Every selected face"
                                              if through else
                                              "Project through is off: only the selected faces "
                                              "this camera really sees - the mesh blocks the rest"),
@@ -761,7 +754,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             finish_painting(context, obj)       # the pressed button again: done
             return {'FINISHED'}
         processing_preview(context, obj)
-        if paint_tex.enabled(context.scene):
+        if paint_tex.can_paint(obj, context.scene):
             return self._texture(context, obj, cam, slot)
 
         leave_paint(obj)
@@ -845,11 +838,6 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             return {'CANCELLED'}
         if new:
             core.ensure_material(obj)       # MCP_ gets the texture's nodes
-        # per pixel: what the camera really sees (a chair hides the table behind it); the
-        # brush is kept there by Texture Paint's stencil - no face selection on screen
-        seen = None
-        if self.mode != 'ERASE' and paint_tex.camera_mask_on(scene, obj):
-            seen = paint_tex.seen_pixels(obj, cam, scene)
         if MASK_KEY in obj:
             del obj[MASK_KEY]
         polys = obj.data.polygons
@@ -858,19 +846,13 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             picked = np.zeros(len(polys), dtype=bool)
             polys.foreach_get("select", picked)
             cov = paint_tex.coverage(obj, paint_tex.mesh_triangles(obj.data, picked))
-            if seen is not None:
-                hidden = int((cov & ~seen).sum())
-                cov = cov & seen
-                if hidden:
-                    self.report({'INFO'}, f"Parts of the selection hidden from '{cam.name}' "
-                                          "left out (Project through fills them)")
             paint_tex.queue(obj, kind, paint_tex.fill_fn(cov, color))
             if kind == "CMX2":              # cameras 4-6 show: cameras 1-3 off there
                 paint_tex.queue(obj, "CMX1", paint_tex.claim_fn(cov))
         # the face selection mask never stays on while the camera brush paints: it hides
         # the colors (Fill needed it for its selection - read above, so off after it too)
         obj.data.use_paint_mask = False
-        paint_tex.start_painting(context, obj, img, seen)
+        paint_tex.start_painting(context, obj, img)
         if self.mode == 'ERASE':
             paint_tex.set_brush(context, None, 'ADD_ALPHA' if self.shift else 'ERASE_ALPHA')
         else:
@@ -908,7 +890,7 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
         import numpy as np
         obj = context.active_object
         processing_preview(context, obj)
-        if paint_tex.enabled(context.scene):
+        if paint_tex.can_paint(obj, context.scene):
             return self._texture(context, obj)
         mode = obj.mode
         if mode == 'VERTEX_PAINT':

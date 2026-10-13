@@ -150,9 +150,8 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
 
 
 def _on_project_through(self):
-    from . import core, paint_tex
+    from . import core
     core.sync_occlusion(self.id_data)
-    paint_tex.on_camera_mask(bpy.context)      # a camera brush in use: its stencil follows
 
 
 def _on_global_shift(self, context):

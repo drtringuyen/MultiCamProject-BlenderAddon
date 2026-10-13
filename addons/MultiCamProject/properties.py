@@ -58,18 +58,6 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         update=lambda self, context: _on_quality(self, context),
         description="Preview: the add-on's materials as flat color, no lighting or normal "
                     "maps, textures capped at 2K. Final: full quality, up to 8K")
-    # speed tests (2026-10-13) - to be decided after trying them
-    light_preview: BoolProperty(
-        name="Light Preview", default=False,
-        update=lambda self, context: _on_quality(self, context),
-        description="Test: Preview shows 2K copies of the big images (_preview folder next "
-                    "to each, made in the background the first time) and the texture cap "
-                    "stays Final's - switching Preview / Final and entering / leaving "
-                    "Texture Paint no longer rebuild every 8K texture")
-    stay_in_paint: BoolProperty(
-        name="Stay in Paint", default=False,
-        description="Test: finishing the camera brush (Enter / Esc / the pressed button) "
-                    "keeps Texture Paint - the overlays come back, no ~6 s mode switch")
     file_io_done: BoolProperty(
         name="File IO Set Up", default=False,
         description="Setup File IO ran in this file (gate.py: the add-on unlocks)")
@@ -81,20 +69,6 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "the scan materials in Objects and Original Mesh). The add-on's MCP_ / "
                     "MAT_ are not touched")
 
-    paint_textures: BoolProperty(
-        name="Paint Textures", default=True,
-        update=lambda self, context: _on_paint_textures(self, context),
-        description="On: the camera paint buttons paint 1K textures on uv_normal (MSK_ blend "
-                    "mask, CMX1_ / CMX2_ cameras) - precise, not tied to the vertices. Off: they "
-                    "paint VCMix / VCMix2 as before, and MCP_ ignores the textures (kept, "
-                    "toggle back any time)")
-    camera_mask: BoolProperty(
-        name="Camera Mask", default=True,
-        update=lambda self, context: _on_camera_mask(self, context),
-        description="Paint Textures: the brush only paints what the camera really sees "
-                    "(Texture Paint's Stencil Mask, per pixel; a part hidden behind the mesh "
-                    "stays as it is). Off: the brush paints every surface under it. Project "
-                    "through also turns it off")
     airbrush: BoolProperty(
         name="Airbrush", default=False,
         update=lambda self, context: _on_airbrush(self, context),
@@ -121,22 +95,6 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="Folder holding all camera photos. Reload relinks every camera's "
                     "background photo from it; every object with Camera Projection uses it "
                     "(new setups too) and gets a Reload All")
-
-
-def _on_paint_textures(props, context):
-    try:
-        from .modules.camera_project import paint_tex
-    except ImportError:
-        return
-    paint_tex.on_toggle(props, context)
-
-
-def _on_camera_mask(props, context):
-    try:
-        from .modules.camera_project import paint_tex
-    except ImportError:
-        return
-    paint_tex.on_camera_mask(context)
 
 
 def _on_airbrush(props, context):

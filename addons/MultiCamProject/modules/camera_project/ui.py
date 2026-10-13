@@ -163,34 +163,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         split.prop(d, "project_through", text="Project through", toggle=True,
                    icon='XRAY')
-        # where the camera paint buttons paint: 1K textures on uv_normal, or the vertices
-        props = context.scene.multicamproject_props
-        row = self._labeled(context, col, "Paint")
-        on = props.paint_textures
-        split = row.split(factor=self.MODE_SPLIT, align=True)     # Camera Mask under Project through
-        split.prop(props, "paint_textures", toggle=True, icon='TEXTURE' if on else 'VPAINT_HLT',
-                   text="Textures 1K (CMX1_ / CMX2_)" if on else "Vertices (VCMix)")
-        sub = split.row(align=True)
-        sub.enabled = on                        # a stencil exists in Texture Paint only
-        sub.active = not d.project_through      # Project through paints everything anyway
-        sub.prop(props, "camera_mask", toggle=True, icon='MOD_MASK')
-        # speed tests (2026-10-13), to be decided after trying them
-        row = self._labeled(context, col, "Test")
-        split = row.split(factor=self.MODE_SPLIT, align=True)
-        from ... import preview_copies
-        used, making = preview_copies.status() if props.light_preview else (0, 0)
-        text = "Light Preview (2K copies)"
-        if making:
-            text = f"Light Preview: making {making}..."
-        elif used:
-            text = f"Light Preview: {used} copies"
-        split.prop(props, "light_preview", toggle=True, icon='IMAGE_REFERENCE', text=text)
-        split.prop(props, "stay_in_paint", toggle=True, icon='TPAINT_HLT')
-        why = paint_tex.problem(obj, context.scene) if on else ""
+        # the camera paint buttons paint CMX1_ / CMX2_ - the vertices only until they can
+        why = paint_tex.problem(obj, context.scene)
         if why:
-            r = col.row()
-            r.alert = True
-            r.label(text=why, icon='ERROR')
+            col.label(text=why + " - painting the vertices (VCMix) meanwhile", icon='INFO')
 
         box.separator(type='LINE')
         if not d.cameras:

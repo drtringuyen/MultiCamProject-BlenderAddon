@@ -33,7 +33,7 @@ LAYER = {"CMX1": "VCMix", "CMX2": "VCMix2"}
 VERSION_KEY = "multicamproject_paint_version"   # on the image: 2 = alpha is the mask
 VERSION = 2
 DILATE = 8                          # pixels the copy grows into the UV space no face uses
-TOGGLE = "Paint Textures"           # MCP_'s Value node: the scene toggle (0 = vertex layers only)
+TOGGLE = "Paint Textures"           # MCP_'s Value node: 1 (0 = vertex layers only, old files)
 UV_NORMAL = "uv_normal"
 BRUSH = "brushes/essentials_brushes-mesh_texture.blend/Brush/Paint Hard"
 REDO_KEEP = 20                      # writes per image a redo can still put back
@@ -43,10 +43,9 @@ def node_name(kind):
     return f"{kind} Paint"
 
 
-def enabled(scene=None):
-    scene = scene or bpy.context.scene
-    props = getattr(scene, "multicamproject_props", None)
-    return bool(getattr(props, "paint_textures", False))
+def can_paint(obj, scene=None):
+    """obj paints into CMX1_ / CMX2_ (else: into VCMix / VCMix2, until it can)."""
+    return not problem(obj, scene or bpy.context.scene)
 
 
 def kind_of_slot(slot):
@@ -72,7 +71,7 @@ def problem(obj, scene):
     if getattr(obj, "multicamproject_bake", None) is None:
         return "Paint Textures need the Baking module"
     if obj.data.uv_layers.get(UV_NORMAL) is None:
-        return "No uv_normal to paint on - make it first (Bake), or turn Paint Textures off"
+        return "No uv_normal to paint on yet (step 02 makes it)"
     from ..baking import common
     if not common.settings(scene).output_dir:
         return "No bake folder set - the paint textures are saved there"
@@ -398,142 +397,6 @@ def raster_colors(tris, colors, size=SIZE, depth=None, clip=True):
     return (np.clip(px, 0.0, 1.0) if clip else px), cov
 
 
-DEPTH_SIZE = 1024       # the camera's depth map for seen_pixels (the GPU read back is the cost)
-SEEN_REL = 0.02         # a pixel this much (of its distance) behind the nearest surface is still seen
-SEEN_ABS = 0.01         # + this many metres
-
-
-_seen = {}          # (object, camera, their state) -> seen_pixels, the last few
-SEEN_KEEP = 6
-
-
-def _seen_key(obj, cam, scene):
-    from . import core
-    me = obj.data
-    co = np.empty(len(me.vertices) * 3, np.float32)
-    me.vertices.foreach_get("co", co)
-    cd = cam.data
-    return (obj.name, cam.name, len(me.polygons), float(co.sum()), float(np.abs(co).sum()),
-            tuple(round(x, 6) for row in core.world_matrix(obj) for x in row),
-            tuple(round(x, 6) for row in core.world_matrix(cam) for x in row),
-            cd.type, round(cd.lens, 5), round(cd.sensor_width, 5), round(cd.ortho_scale, 5),
-            round(cd.clip_start, 6), round(core.image_aspect(core.cam_image(cam), scene, load=False), 6))
-
-
-def seen_pixels(obj, cam, scene, size=SIZE):
-    """seen_pixels_now, remembered: clicking the same camera again (or back) is instant
-    until the mesh, the object or the camera moves."""
-    key = _seen_key(obj, cam, scene)
-    got = _seen.get(key)
-    if got is None:
-        got = _seen[key] = seen_pixels_now(obj, cam, scene, size)
-        for k in list(_seen)[:-SEEN_KEEP]:
-            del _seen[k]
-    return got
-
-
-def clear_seen():
-    _seen.clear()
-
-
-def seen_pixels_now(obj, cam, scene, size=SIZE):
-    """Per pixel of uv_normal: `cam` really sees it - in its frame, facing it and not
-    behind another part of the mesh (a chair in front of the table). Two GPU passes: the
-    mesh's depth from the camera, then every pixel's own depth compared with it."""
-    me = obj.data
-    me.calc_loop_triangles()
-    n = len(me.loop_triangles)
-    uv = mesh_triangles(me)
-    if not n or len(uv) != n:
-        return np.zeros(size * size, bool)
-    tv = np.empty(n * 3, np.int32)
-    me.loop_triangles.foreach_get("vertices", tv)
-    poly = np.empty(n, np.int32)
-    me.loop_triangles.foreach_get("polygon_index", poly)
-    vco = np.empty(len(me.vertices) * 3, np.float32)
-    me.vertices.foreach_get("co", vco)
-    from . import core
-    om = core.world_matrix(obj)
-    mw = np.array(om, dtype=np.float32)
-    co = vco.reshape(-1, 3)[tv] @ mw[:3, :3].T + mw[:3, 3]        # (n*3, 3) world corners
-    fn = np.empty(len(me.polygons) * 3, np.float32)
-    me.polygons.foreach_get("normal", fn)
-    nmat = np.array(om.to_3x3().inverted_safe().transposed(), dtype=np.float32)
-    nr = np.repeat(fn.reshape(-1, 3)[poly] @ nmat.T, 3, axis=0)
-    u, v, d = core.cam_uvd(cam, scene, co)
-    cm = core.world_matrix(cam)
-    if cam.data.type == 'ORTHO':
-        to_cam = np.array(cm.to_3x3().col[2], dtype=np.float32)[None, :]
-        far = max(float(d.max(initial=1.0)), 1e-3) * 1.01
-        z = d / far * 2.0 - 1.0                     # ortho: depth is linear on screen
-    else:
-        to_cam = np.array(cm.translation, dtype=np.float32) - co
-        near = max(cam.data.clip_start, 1e-3)
-        z = 1.0 - 2.0 * near / np.maximum(d, near)  # perspective: 1/depth is linear on screen
-    facing = ((nr * to_cam).sum(axis=1) > 0.0).astype(np.float32)
-    front = (d > 1e-6).reshape(n, 3).all(axis=1)    # a triangle through the camera plane: left out
-
-    # pass 1: the camera's depth map (nearest surface per photo pixel)
-    tri_uv = np.c_[u, v].astype(np.float32).reshape(n, 3, 2)[front]
-    tri_z = z.reshape(n, 3)[front]
-    zc = np.c_[np.repeat(tri_z.reshape(-1, 1), 3, axis=1), np.ones(tri_z.size)].reshape(-1, 3, 4)
-    zmap, zcov = raster_colors(tri_uv, zc, DEPTH_SIZE, depth=tri_z, clip=False)
-    zmap = np.where(zcov, zmap[:, 0], 2.0).reshape(DEPTH_SIZE, DEPTH_SIZE)
-
-    # pass 2: every uv_normal pixel's photo position, depth and facing
-    attrs = np.c_[u, v, z, facing * front.repeat(3)].astype(np.float32).reshape(n, 3, 4)
-    px, cov = raster_colors(uv, attrs, size, clip=False)
-    pu, pv, pz = px[:, 0], px[:, 1], px[:, 2]
-    seen = cov & (px[:, 3] > 0.5) & (pu > 0.0) & (pu < 1.0) & (pv > 0.0) & (pv < 1.0)
-    iu = np.clip((pu * DEPTH_SIZE).astype(np.int32), 0, DEPTH_SIZE - 1)
-    iv = np.clip((pv * DEPTH_SIZE).astype(np.int32), 0, DEPTH_SIZE - 1)
-    ref = zmap[iv, iu]
-    if cam.data.type == 'ORTHO':
-        tol = (SEEN_REL * (pz + 1.0) + SEEN_ABS * 2.0 / far)
-    else:
-        inv = np.clip((1.0 - pz) * 0.5, 1e-6, 1.0)  # near / depth
-        tol = 2.0 * inv * (SEEN_REL + SEEN_ABS * inv / near)
-    seen &= pz <= ref + tol
-    return dilate(seen, ~cov)
-
-
-STENCIL = "MCP_Camera Sees"     # the stencil image: white where the camera sees the object
-_stencil_holds = [None]         # the seen_pixels array the stencil image holds now
-
-
-def set_stencil(context, obj, seen):
-    """Texture Paint's Stencil Mask = `seen` (None: off) on uv_normal - the brush only
-    paints where the camera sees the mesh, no face selection needed."""
-    ip = context.tool_settings.image_paint
-    if seen is None:
-        ip.use_stencil_layer = False
-        return
-    img = bpy.data.images.get(STENCIL)
-    if img is None or tuple(img.size) != (SIZE, SIZE):
-        if img is not None:
-            bpy.data.images.remove(img)
-        img = bpy.data.images.new(STENCIL, SIZE, SIZE, alpha=False)
-        img.colorspace_settings.name = 'Non-Color'
-        _stencil_holds[0] = None
-    if _stencil_holds[0] is not seen:       # the same (cached) mask again: no 1K write
-        v = seen.astype(np.float32)
-        img.pixels.foreach_set(np.c_[v, v, v, np.ones_like(v)].ravel())
-        img.update()
-        _stencil_holds[0] = seen
-    me = obj.data
-    me.uv_layer_stencil = me.uv_layers[UV_NORMAL]
-    ip.stencil_image = img
-    ip.invert_stencil = False
-    ip.use_stencil_layer = True
-
-
-def camera_mask_on(scene, obj):
-    """The brush keeps to what the camera sees: the panel's Camera Mask, Project through off."""
-    from . import core
-    props = getattr(scene, "multicamproject_props", None)
-    return bool(getattr(props, "camera_mask", True)) and not core.data(obj).project_through
-
-
 def on_airbrush(context):
     """Airbrush toggled while a camera brush paints: switch it now, same color and blend."""
     from . import core, paint_session
@@ -549,18 +412,18 @@ def on_airbrush(context):
                              force=True)
 
 
-def on_camera_mask(context):
-    """Camera Mask toggled while a camera brush paints: its stencil on / off right away."""
-    from . import paint_session
-    obj = context.active_object
-    using = paint_session.current(obj)
-    if using is None or obj.mode != 'TEXTURE_PAINT':
-        return
-    cam = bpy.data.objects.get(using[0])
-    if using[1] == 'PAINT' and cam is not None and camera_mask_on(context.scene, obj):
-        set_stencil(context, obj, seen_pixels(obj, cam, context.scene))
-    else:
-        set_stencil(context, obj, None)
+STENCIL = "MCP_Camera Sees"     # the removed Camera Mask's stencil image (old files: removed)
+
+
+def drop_stencil(context=None):
+    """The removed Camera Mask: Texture Paint's Stencil Mask off and its image gone."""
+    ctx = context or bpy.context
+    ts = getattr(ctx, "tool_settings", None) or getattr(ctx.scene, "tool_settings", None)
+    if ts is not None and ts.image_paint.use_stencil_layer:
+        ts.image_paint.use_stencil_layer = False
+    img = bpy.data.images.get(STENCIL)
+    if img is not None:
+        bpy.data.images.remove(img)
 
 
 def grow(px, cov, steps=DILATE, size=SIZE):
@@ -650,19 +513,13 @@ def weights_fn(fresh):
 # ---------------------------------------------------------------- material toggle
 
 def set_toggle(obj, scene=None):
-    """MCP_'s Paint Textures Value = the scene toggle (no rebuild)."""
+    """MCP_'s Paint Textures Value at 1 (no rebuild) - old files had a toggle."""
     d = getattr(obj, "multicamproject_cam", None)
     mat = d.material if d is not None else None
     n = mat.node_tree.nodes.get(TOGGLE) if mat is not None and mat.node_tree else None
-    v = 1.0 if enabled(scene) else 0.0
+    v = 1.0
     if n is not None and abs(n.outputs[0].default_value - v) > 1e-6:
         n.outputs[0].default_value = v
-
-
-def on_toggle(props, context):
-    for obj in bpy.data.objects:
-        if obj.type == 'MESH' and getattr(obj, "multicamproject_cam", None) is not None:
-            set_toggle(obj, context.scene)
 
 
 # ---------------------------------------------------------------- brush / saving
@@ -702,10 +559,9 @@ def set_brush(context, color, blend='MIX', force=False):
         ip.unified_paint_settings.color = color
 
 
-def start_painting(context, obj, img, seen=None):
+def start_painting(context, obj, img):
     """Texture Paint on `img` through uv_normal (Object Mode -> Texture Paint). The brush
-    always stops at the first surface under it (Occlude); `seen` (per pixel, None: all)
-    is where the camera sees the mesh - the stencil keeps the paint there."""
+    always stops at the first surface under it (Occlude)."""
     me = obj.data
     me.uv_layers.active = me.uv_layers[UV_NORMAL]
     if obj.mode != 'TEXTURE_PAINT':
@@ -715,7 +571,8 @@ def start_painting(context, obj, img, seen=None):
     ip.canvas = img
     ip.use_occlude = True
     ip.use_backface_culling = True
-    set_stencil(context, obj, seen)
+    if ip.use_stencil_layer:
+        ip.use_stencil_layer = False
 
 
 def save_dirty():
@@ -743,6 +600,10 @@ def _on_save_pre(*_):
 def _migrate_later():
     try:
         migrate_all()
+        drop_stencil()
+        for obj in bpy.data.objects:        # a file saved with Paint Textures off
+            if obj.type == 'MESH' and not obj.library:
+                set_toggle(obj)
     except Exception as e:      # never break loading
         print(f"[MultiCamProject] paint texture conversion skipped: {e}")
     return None
