@@ -70,12 +70,12 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "MAT_ are not touched")
 
     airbrush: BoolProperty(
-        name="Airbrush", default=False,
+        name="Airbrush", default=True,
         update=lambda self, context: _on_airbrush(self, context),
         description="The camera Paint and Erase buttons use Blender's Airbrush (soft, builds "
                     "up while held) - blends into the surroundings. Off: Paint Hard")
     solo_isolate: BoolProperty(
-        name="Isolate", default=True,
+        name="Isolate", default=False,
         update=lambda self, context: _on_solo_isolate(self, context),
         description="Solo shows only the active object (and the camera). Off: the other "
                     "visible objects stay around it, to check how it meets them")
