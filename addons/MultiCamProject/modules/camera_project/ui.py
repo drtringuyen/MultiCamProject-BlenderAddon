@@ -148,13 +148,16 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         row = self._labeled(context, col, "Folder")
         row.prop(d, "image_folder", text="")
         row.operator("multicamproject.reload_all", text="", icon='FILE_REFRESH')
-        # clipping of every camera + the projection mode
+        # clipping of every camera + where the paint goes (Vertex Sharp / Smooth, Texture
+        # Mask): picking another converts the paint as it shows
         row = self._labeled(context, col, "Clip")
         split = row.split(factor=self.MODE_SPLIT, align=True)
         clip = split.row(align=True)
         clip.prop(d, "clip_start")
         clip.prop(d, "clip_end")
-        split.prop(core.input_socket(mod, "Mode"), "value", text="")
+        pick = next(i for i in paint_tex.CHOICES if i[0] == paint_tex.choice(obj))
+        split.operator_menu_enum("multicamproject.paint_mode_set", "mode", text=pick[1],
+                                 icon=pick[3])
 
         # blend controls
         row = self._labeled(context, col, "Blend")
@@ -163,14 +166,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         split.prop(d, "project_through", text="Project through", toggle=True,
                    icon='XRAY')
-        # where the camera paint buttons paint: switching converts the paint as it shows
-        row = self._labeled(context, col, "Paint")
-        mode = paint_tex.mode(obj)
-        for key, text, icon in (('TEXTURE', "Texture (CMX1_ / CMX2_)", 'TEXTURE'),
-                                ('VERTEX', "Vertex (VCMix)", 'VPAINT_HLT')):
-            row.operator("multicamproject.paint_mode_set", text=text, icon=icon,
-                         depress=mode == key).mode = key
-        why = paint_tex.problem(obj, context.scene) if mode == 'TEXTURE' else ""
+        why = paint_tex.problem(obj, context.scene) if paint_tex.mode(obj) == 'TEXTURE' else ""
         if why:
             col.label(text=why + " - painting the vertices (VCMix) meanwhile", icon='INFO')
 

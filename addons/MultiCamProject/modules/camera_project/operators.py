@@ -967,16 +967,7 @@ class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
     bl_label = "Paint: Texture / Vertex"
     bl_options = {'REGISTER', 'UNDO'}
 
-    mode: bpy.props.EnumProperty(items=(('TEXTURE', "Texture", ""), ('VERTEX', "Vertex", "")),
-                                 options={'SKIP_SAVE'})
-
-    @classmethod
-    def description(cls, context, props):
-        if props.mode == 'TEXTURE':
-            return ("Paint into CMX1_ / CMX2_ (1K on uv_normal): precise, not tied to the "
-                    "vertices. The vertex paint is converted into them")
-        return ("Paint into the mesh's VCMix / VCMix2 vertex colors: works before uv_normal, "
-                "detail limited to the vertices. The textures are converted into them")
+    mode: bpy.props.EnumProperty(name="Paint", items=paint_tex.CHOICES, options={'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
@@ -984,9 +975,15 @@ class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
-        if paint_tex.mode(obj) == self.mode:
-            return {'CANCELLED'}
-        if self.mode == 'TEXTURE':
+        want = 'TEXTURE' if self.mode == 'TEXTURE' else 'VERTEX'
+        gn_mode = paint_tex.GN_MODE.get(self.mode)
+        mod = core.get_modifier(obj)
+        if gn_mode and mod is not None and core.get_input(mod, "Mode") != gn_mode:
+            core.set_input(mod, "Mode", gn_mode)    # Sharp / Combined: how VCMix shows
+            core.keep_mode(obj)
+        if paint_tex.mode(obj) == want:
+            return {'FINISHED'}
+        if want == 'TEXTURE':
             why = paint_tex.problem(obj, context.scene)
             if why:
                 self.report({'ERROR'}, why)
@@ -998,7 +995,7 @@ class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
             bpy.ops.object.mode_set(mode='OBJECT')
         paint_sync.end_session(obj)         # VCMix2's real alpha back from its stash
         try:
-            if self.mode == 'TEXTURE':
+            if want == 'TEXTURE':
                 done = paint_tex.to_textures(obj, context.scene)
             else:
                 done = paint_tex.to_vertices(obj)
@@ -1006,7 +1003,8 @@ class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         what = ", ".join(done) if done else "nothing painted yet"
-        self.report({'INFO'}, f"Paint: {self.mode.title()} ({what})")
+        label = next(i[1] for i in paint_tex.CHOICES if i[0] == self.mode)
+        self.report({'INFO'}, f"Paint: {label} ({what})")
         return {'FINISHED'}
 
 

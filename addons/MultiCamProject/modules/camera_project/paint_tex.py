@@ -49,6 +49,31 @@ def mode(obj):
     return getattr(d, "paint_mode", 'TEXTURE') if d is not None else 'TEXTURE'
 
 
+CHOICES = (('VERTEX_SHARP', "Vertex Sharp", "Paint the mesh's VCMix / VCMix2 vertex colors; "
+                                            "each face shows its best camera (Mode Sharp)",
+             'VPAINT_HLT', 0),
+            ('VERTEX_SMOOTH', "Vertex Smooth", "Paint the mesh's VCMix / VCMix2 vertex colors; "
+                                              "cameras blend across the vertices (Mode "
+                                              "Combined)", 'SMOOTHCURVE', 1),
+            ('TEXTURE', "Texture Mask", "Paint CMX1_ / CMX2_, 1K on uv_normal: precise, not "
+                                       "tied to the vertices", 'TEXTURE', 2))
+GN_MODE = {'VERTEX_SHARP': "Sharp", 'VERTEX_SMOOTH': "Combined"}
+
+
+def choice(obj):
+    """The 04 dropdown's item for obj: the Paint switch + the projection Mode. An old
+    Mode Smooth reads as Vertex Smooth."""
+    if mode(obj) == 'TEXTURE':
+        return 'TEXTURE'
+    from . import core
+    mod = core.get_modifier(obj)
+    try:
+        cur = core.get_input(mod, "Mode") if mod is not None else "Sharp"
+    except (KeyError, AttributeError, TypeError):
+        cur = "Sharp"
+    return 'VERTEX_SHARP' if cur == "Sharp" else 'VERTEX_SMOOTH'
+
+
 def can_paint(obj, scene=None):
     """obj paints into CMX1_ / CMX2_: Paint on Texture and possible (else: into VCMix /
     VCMix2)."""
