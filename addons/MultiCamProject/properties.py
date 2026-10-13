@@ -49,9 +49,13 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
 
     new_object_name: StringProperty(
         name="New Object Name", default="",
+        update=lambda self, context: check_new_name(context),
         description="The window buttons of 2B / 2C: the new object becomes ENV_<prefix>."
                     "<next ##>_<this name>, its work window saved as <this name>.blend in the "
-                    "Bake Folder")
+                    "Bake Folder. Red: another object already has this name")
+    # check_new_name's result: the name checked and the object already using it ('' = free)
+    new_name_checked: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    new_name_taken_by: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
     quality: EnumProperty(
         name="Quality", default='FINAL',
         items=QUALITY_ITEMS,
@@ -95,6 +99,46 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="Folder holding all camera photos. Reload relinks every camera's "
                     "background photo from it; every object with Camera Projection uses it "
                     "(new setups too) and gets a Reload All")
+
+
+def check_new_name(context):
+    """Is the New Object Name used by another object (its part after ENV_<prefix>.<##>_)?
+    Run when the name is typed and when the Estimation list picks an object - never per
+    redraw or on a timer (it walks every object). The panel reads the stored result."""
+    props = context.scene.multicamproject_props
+    typed = props.new_object_name.strip()
+    by = ""
+    if typed:
+        try:
+            from .modules.baking import naming
+        except ImportError:
+            naming = None
+        if naming is not None:
+            want = naming.clean_name(typed).lower()
+            act = context.view_layer.objects.active
+            for o in bpy.data.objects:
+                if o is act or o.type != 'MESH':
+                    continue
+                p = naming.parse(o.name)
+                if p and naming.clean_name(p[1]).lower() == want:
+                    by = o.name
+                    break
+    if props.new_name_checked != typed:
+        props.new_name_checked = typed
+    if props.new_name_taken_by != by:
+        props.new_name_taken_by = by
+
+
+def new_name_taken(context):
+    """The object using the New Object Name ('' = free) as last checked - for the active
+    object only (another one picked outside the list: not checked, so not shown)."""
+    props = context.scene.multicamproject_props
+    by = props.new_name_taken_by
+    act = context.view_layer.objects.active
+    if (not by or props.new_name_checked != props.new_object_name.strip()
+            or (act is not None and act.name == by)):
+        return ""
+    return by
 
 
 def _on_airbrush(props, context):

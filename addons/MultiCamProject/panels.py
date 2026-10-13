@@ -87,7 +87,8 @@ def _step_row(col, context, named, field=True):
     props = context.scene.multicamproject_props
     cell = split.row(align=True)
     if field:
-        cell.alert = not props.new_object_name.strip()
+        from .properties import new_name_taken
+        cell.alert = not props.new_object_name.strip() or bool(new_name_taken(context))
         cell.prop(props, "new_object_name", text="", placeholder="Object name")
     else:               # 2D keeps the object (and its name): the place stays empty
         cell.label(text="")
@@ -170,7 +171,11 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
         if mm.is_loaded("remesh"):
             from .modules.remesh import workflow as wf
             low = wf.is_low_poly(obj)
+            from .properties import new_name_taken
+            taken = new_name_taken(context) if named else ""
             row = _chosen(_step_row(col, context, named), chosen, 'REMESH')
+            if taken:
+                row.enabled = False     # the new object would take another object's name
             row.operator("multicamproject.remesh", text="2B. Remesh",
                          icon='CHECKMARK' if chosen == 'REMESH' else 'MOD_REMESH')
             unlink = bool(mm.is_loaded("baking")
@@ -185,6 +190,8 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
             icons.operator("multicamproject.reset_object", text="", icon='LOOP_BACK')
 
             row = _chosen(_step_row(col, context, named), chosen, 'RETOPO')
+            if taken:
+                row.enabled = False
             row.operator("multicamproject.retopo_empty", text="2C. Retopo",
                          icon='CHECKMARK' if chosen == 'RETOPO' else 'MESH_PLANE')
             icons = _icons(row, 2 + named)
@@ -194,6 +201,11 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
             # from the selected mesh (ROOM_Template parts) or empty
             icons.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
             icons.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
+            if taken:
+                warn = col.row()
+                warn.alert = True
+                warn.label(text=f"Name used by {taken} - type another for 2B / 2C",
+                           icon='ERROR')
 
         if mm.is_loaded("camera_project"):
             setup = obj.multicamproject_cam.is_setup
