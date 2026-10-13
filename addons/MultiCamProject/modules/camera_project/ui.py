@@ -184,18 +184,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         top, rest = core.display_order(obj)
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
-        # left: the title, then Baked Source + BAo_'s Inpaint (03's BAo_ shows where the
-        # mask leaves the projection out) - apart from the camera tools on the right
-        left = header.row(align=True)
-        left.alignment = 'LEFT'
-        left.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
-        try:
-            from ..baking import ui as bake_ui
-        except ImportError:
-            bake_ui = None
-        if bake_ui is not None:
-            left.separator(factor=1.0)
-            bake_ui.draw_bao_buttons(left, obj)
+        header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
         # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
         # material's Cam textures against the slots) at the end, like Other Cameras
         sub = header.row(align=True)
@@ -216,6 +205,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         cnt.prop(d, "slot_count", text="")
         sub.operator("multicamproject.check_slots", text="", icon='FILE_REFRESH')
         if body:
+            self._draw_source_block(context, body, obj, debug)
             for item in top:
                 self._draw_block(context, body, obj, item, debug, solo_cam, shift=True, flood=flood)
             _draw_bake_row(context, body, obj)
@@ -281,6 +271,23 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         name_f = min(0.6, (5.5 if debug else 4.5) * unit / left_w)
         image_x = (unit + name_f * left_w) / avail               # where the image field starts
         return slots_f, name_f, image_x
+
+    def _draw_source_block(self, context, layout, obj, debug):
+        """Above the cameras, as their boxes: "Baked Source" (greyed) and BAo_'s Inpaint +
+        its image where a camera row has its photo - 03's BAo_ shows where the mask
+        leaves the projection out."""
+        try:
+            from ..baking import ui as bake_ui
+        except ImportError:
+            return
+        col = layout.box().column()
+        col.scale_y = 1.25
+        image_x = self._metrics(context, debug, core.slot_count(core.data(obj)))[2]
+        split = col.split(factor=image_x, align=True)
+        name = split.row(align=True)
+        name.active = False
+        name.label(text="Baked Source", icon='IMAGE_RGB')
+        bake_ui.draw_bao_buttons(split.row(align=True), obj)
 
     def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift, flood):
         """One camera = one box. While a camera is soloed every other box is dimmed, so
