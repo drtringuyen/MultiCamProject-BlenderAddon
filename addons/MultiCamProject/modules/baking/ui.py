@@ -54,12 +54,11 @@ def draw_fit_cage(layout, obj):
     row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
 
 
-def draw_bake_box(context, layout, obj, route_rows=False, bao=False):
+def draw_bake_box(context, layout, obj, route_rows=False):
     """One box, the same in 05 and 06: Processing | Final, Fit Cage (when needed), then the
     bake row ([Auto Resolution v] [Bake ...] [mixture] [gear]). `route_rows` (05): 06's
     route prompt under Processing | Final too, and a warning while From Original hides
-    the projection - painting would show nothing. `bao` (04): 03's Rebake BAo_ and Inpaint
-    BAo_ as icons in front of 05 - BAo_ shows where the mask leaves the projection out."""
+    the projection - painting would show nothing."""
     box = layout.box().column()
     draw_final_toggle(box, obj, "multicamproject_view")
     d = common.data(obj)
@@ -70,7 +69,7 @@ def draw_bake_box(context, layout, obj, route_rows=False, bao=False):
             route.draw_prompt(box, obj, "Bake Route From Original: the projection and its "
                                         "paint do not show")
     draw_fit_cage(box, obj)
-    MULTICAMPROJECT_PT_Baking._draw_bake_button(box, common.settings(context.scene), obj, bao)
+    MULTICAMPROJECT_PT_Baking._draw_bake_button(box, common.settings(context.scene), obj)
 
 
 LABEL_UNITS = 5.2      # the label column of the Baking panel's settings rows
@@ -286,17 +285,13 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             layout.label(text=why, icon='ERROR')
 
     @staticmethod
-    def _draw_bake_button(layout, s, obj, bao=False):
+    def _draw_bake_button(layout, s, obj):
         """[A v] (the active object's own size), the green "05. Bake Albedo" (ALB_ only:
-        NOR_ is 07's), the bake settings' gear at its end. `bao`: [Rebake BAo_] [Inpaint
-        BAo_] icons in front of 05 (04's box: 03 -> 04 -> 05 in one row)."""
+        NOR_ is 07's), the bake settings' gear at its end."""
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
         row.separator(factor=0.5)
-        if bao:
-            _draw_bao_icons(row, obj)
-            row.separator(factor=0.5)
         draw_green(row)
         row.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
                      icon='RENDER_STILL')
@@ -315,11 +310,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')
 
 
-def _draw_bao_icons(row, obj):
-    """03's Bake from Scan BAo_ (small: 05 is the row's main button) and BAo_'s Inpaint."""
-    sub = row.row(align=True)
-    sub.ui_units_x = 4.5
-    sub.operator("multicamproject.bake_from_source", text="03. Rebake", icon='FILE_REFRESH')
+def draw_bao_buttons(row, obj):
+    """03's Bake from Scan BAo_ again and BAo_'s Inpaint (04's "03. Source" row): BAo_
+    shows where the mask leaves the projection out."""
+    row.operator("multicamproject.bake_from_source", text="Rebake BAo_", icon='FILE_REFRESH')
     from ... import module_manager
     if common.data(obj).ba_image is not None and module_manager.is_loaded("image_editor"):
         from ..image_editor import sources
