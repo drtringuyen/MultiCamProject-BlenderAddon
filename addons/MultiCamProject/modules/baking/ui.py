@@ -315,7 +315,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
 def _draw_bao_icons(row, obj):
     """03's Bake from Scan BAo_ and BAo_'s Inpaint, icons only."""
-    row.operator("multicamproject.bake_from_source", text="", icon='FILE_REFRESH')
+    row.operator("multicamproject.bake_from_source", text="03. Rebake BAo_", icon='FILE_REFRESH')
     from ... import module_manager
     if common.data(obj).ba_image is not None and module_manager.is_loaded("image_editor"):
         from ..image_editor import sources
