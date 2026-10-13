@@ -72,8 +72,11 @@ def step_box(layout, context, step):
 
 
 def draw_start(layout, context):
-    """01 Setup: [Name Prefix] [Setup File IO] (+ a hint while the add-on is locked)."""
+    """01 Setup: [Name Prefix] [Setup File IO] (+ a hint while the add-on is locked). Not in
+    a work window: its main file sets it up."""
     scene = context.scene
+    if _work_window(scene):
+        return
     es = getattr(scene, "multicamproject_export", None)
     row = layout.row(align=True)
     row.scale_y = 1.3
