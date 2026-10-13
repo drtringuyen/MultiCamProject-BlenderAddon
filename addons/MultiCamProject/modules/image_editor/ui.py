@@ -244,6 +244,11 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         col.prop(st, "grow")
         col.prop(st, "grain", slider=True)
         layout.prop(st, "auto_fill")
+        row = layout.row(align=True)        # the UV overlay while Inpaint runs (off by default)
+        row.prop(st, "show_uv", toggle=True, icon='UV')
+        sub = row.row(align=True)
+        sub.active = st.show_uv
+        sub.prop(st, "uv_opacity", text="Opacity", slider=True)
 
 
 class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):

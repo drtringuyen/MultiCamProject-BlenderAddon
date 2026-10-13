@@ -50,6 +50,11 @@ class MULTICAMPROJECT_LassoSettings(bpy.types.PropertyGroup):
         description="Colour that fills the hole of a cut (the eyedropper picks it from the photo)")
 
 
+def _uv_changed(_self, _context):
+    from . import inpaint
+    inpaint.apply_uv()
+
+
 class MULTICAMPROJECT_InpaintSettings(bpy.types.PropertyGroup):
     mode: EnumProperty(
         name="Tool", default='BRUSH',
@@ -72,6 +77,14 @@ class MULTICAMPROJECT_InpaintSettings(bpy.types.PropertyGroup):
         name="Fill on Release", default=True,
         description="Fill as soon as a brush stroke or a lasso ends. Off: build the "
                     "selection first, F fills it")
+    show_uv: BoolProperty(
+        name="UV", default=False, update=_uv_changed,
+        description="Show the UV overlay over the image while Inpaint runs (off: the "
+                    "wireframe does not hide the spots). The editor's own setting comes "
+                    "back when Inpaint ends")
+    uv_opacity: FloatProperty(
+        name="UV Opacity", default=0.5, min=0.0, max=1.0, subtype='FACTOR',
+        update=_uv_changed, description="Opacity of the UV overlay while Inpaint runs")
 
 
 def settings(context):

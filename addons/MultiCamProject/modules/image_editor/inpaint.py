@@ -97,6 +97,7 @@ class Session:
         self.overlay_dirty = False
         self.tex = {}                           # id(undo record) -> GPU texture of its after
         self.pins = {}                          # editor area pointer -> its pin at Start
+        self.uv = {}                            # editor area pointer -> (show_uv, opacity) at Start
         act = bpy.context.view_layer.objects.active
         self.active_name = act.name if act is not None else ""     # the selection at Start
 
@@ -358,6 +359,34 @@ def _image_editors():
                 yield area
 
 
+def apply_uv(s=None):
+    """Editors on the copy show the UV overlay as the Inpaint panel says (off by default:
+    the wireframe hides the spots); each editor's own setting is kept for _restore_uv."""
+    s = s or active()
+    if s is None:
+        return
+    st = props.inpaint_settings()
+    for area in _image_editors():
+        sp = area.spaces.active
+        if sp.image is None or sp.image.name != s.temp_name:
+            continue
+        uv = sp.uv_editor
+        s.uv.setdefault(area.as_pointer(), (uv.show_uv, uv.uv_opacity))
+        uv.show_uv = st.show_uv
+        uv.uv_opacity = st.uv_opacity
+        area.tag_redraw()
+
+
+def _restore_uv(s):
+    for area in _image_editors():
+        saved = s.uv.get(area.as_pointer())
+        if saved is not None:
+            uv = area.spaces.active.uv_editor
+            uv.show_uv, uv.uv_opacity = saved
+            area.tag_redraw()
+    s.uv.clear()
+
+
 def _show(img_from, img_to, pins=None):
     """Editors on img_from show img_to. Setting the image from Python pins the editor: with
     `pins` ({area pointer: pin at Start}) the pin goes back to what it was, and an unpinned
@@ -422,6 +451,7 @@ def _end(show):
     s.tex.clear()
     _remove_handler()
     temp = s.temp
+    _restore_uv(s)
     if temp is not None:
         _show(temp, show, s.pins)
         bpy.data.images.remove(temp)
@@ -608,6 +638,7 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         sp = context.space_data
         s.pins.setdefault(context.area.as_pointer(), sp.use_image_pin)
         sp.image = s.temp                   # pins the editor: _end puts the pin back
+        apply_uv(s)                         # UV overlay off (panel toggle); _end restores it
         self._s = s
         self._area = context.area
         self._region = region

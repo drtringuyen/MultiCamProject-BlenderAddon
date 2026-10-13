@@ -293,6 +293,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         nsplit = left.split(factor=name_f, align=True)
         nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
         mid = nsplit.row(align=True)
+        if solo:        # Liquify / Lasso work in the solo view: only the soloed camera has them
+            _draw_liquify(mid, cam)
         if inpaint and core.image_ok(core.cam_image(cam)):
             _draw_inpaint(mid, 'BG', cam)       # 06: inpaint this photo (all its objects)
 
@@ -340,7 +342,6 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             sub.enabled = mode != 'FLOOD' or flood
             op = sub.operator("multicamproject.cam_paint", text="", **_icon(icon))
             op.camera, op.mode = cam.name, mode
-        _draw_liquify(tools, cam)
         # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
         tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
         row = line.row(align=True)
