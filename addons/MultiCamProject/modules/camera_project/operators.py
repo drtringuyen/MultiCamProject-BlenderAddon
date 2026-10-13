@@ -588,6 +588,34 @@ def leave_paint(obj):
         paint_sync.sync_texture(obj)
 
 
+def finish_painting(context, obj):
+    """End the camera brush: the last stroke synced, stencil off, Object Mode, overlays
+    back."""
+    leave_paint(obj)
+    if obj.mode == 'TEXTURE_PAINT':
+        paint_tex.set_stencil(context, obj, None)
+    if obj.mode != 'OBJECT':
+        bpy.ops.object.mode_set(mode='OBJECT')
+    paint_session.end()
+
+
+class MULTICAMPROJECT_OT_CamPaintFinish(bpy.types.Operator):
+    """Finish painting the camera projection (Enter / Esc, or the pressed button again):
+    back to Object Mode, the overlays come back"""
+    bl_idname = "multicamproject.cam_paint_finish"
+    bl_label = "Finish Camera Painting"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and paint_session.current(obj) is not None
+
+    def execute(self, context):
+        finish_painting(context, context.active_object)
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
     """Paint this camera's color: cameras 1-3 into CMX1_ (Paint Textures) or VCMix, 4-6
     into CMX2_ or VCMix2"""
@@ -620,7 +648,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
                  "Project through is off: the mesh blocks it - only what this camera "
                  "really sees takes paint (a stencil, per pixel)")
         reach += ".\nThe brush stops at the first surface under it. Overlays are off while "
-        reach += "this brush is in use"
+        reach += "this brush is in use - click it again, Enter or Esc finishes"
         return {
             'PAINT': f"Paint Camera Projection: paint where this camera's photo shows "
                      f"({layer}).\n{reach}.\nShift+drag while painting: smooth"
@@ -632,7 +660,8 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
                                              "this camera really sees - the mesh blocks the rest"),
             'ERASE': "Paint Original Mesh: erase the projection so the original mesh's bake "
                      "(BAo_) shows. Where nothing was baked from a real mesh it shows black."
-                     "\nShift+click: bring the projection back",
+                     "\nShift+click: bring the projection back. Click it again, Enter or Esc "
+                     "finishes (overlays back)",
         }[props.mode]
 
     def invoke(self, context, event):
@@ -649,6 +678,9 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if self.mode == 'FLOOD' and not flood_ready(context, obj):
             self.report({'ERROR'}, "Select faces in Edit Mode first")
             return {'CANCELLED'}
+        if self.mode != 'FLOOD' and paint_session.current(obj) == (cam.name, self.mode):
+            finish_painting(context, obj)       # the pressed button again: done
+            return {'FINISHED'}
         if paint_tex.enabled(context.scene):
             return self._texture(context, obj, cam, slot)
 
@@ -1126,6 +1158,7 @@ _classes = (
     MULTICAMPROJECT_OT_LoadCamImage,
     MULTICAMPROJECT_OT_LoadShift,
     MULTICAMPROJECT_OT_CamPaint,
+    MULTICAMPROJECT_OT_CamPaintFinish,
     MULTICAMPROJECT_OT_BakeViewMix,
 )
 
@@ -1164,6 +1197,15 @@ def register():
             for key in keys:
                 kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloAssign.bl_idname, key, 'PRESS')
                 kmi.properties.slot = slot
+                _keymaps.append((km, kmi))
+        # Enter / Esc finish the camera brush (its poll: only while one is in use)
+        for name in ("Image Paint", "Vertex Paint"):
+            km = kc.keymaps.new(name=name, space_type='EMPTY')
+            for kmi in [k for k in km.keymap_items
+                        if k.idname == MULTICAMPROJECT_OT_CamPaintFinish.bl_idname]:
+                km.keymap_items.remove(kmi)
+            for key in ('RET', 'NUMPAD_ENTER', 'ESC'):
+                kmi = km.keymap_items.new(MULTICAMPROJECT_OT_CamPaintFinish.bl_idname, key, 'PRESS')
                 _keymaps.append((km, kmi))
 
 
