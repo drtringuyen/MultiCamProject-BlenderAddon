@@ -311,9 +311,9 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
 
 def draw_bao_buttons(row, obj):
-    """03's Bake from Scan BAo_ again and BAo_'s Inpaint (04's "03. Source" row): BAo_
-    shows where the mask leaves the projection out."""
-    row.operator("multicamproject.bake_from_source", text="Rebake BAo_", icon='FILE_REFRESH')
+    """03's Bake from Scan BAo_ again and BAo_'s Inpaint (04's Selected Cameras header):
+    BAo_ shows where the mask leaves the projection out."""
+    row.operator("multicamproject.bake_from_source", text="Rebake", icon='FILE_REFRESH')
     from ... import module_manager
     if common.data(obj).ba_image is not None and module_manager.is_loaded("image_editor"):
         from ..image_editor import sources

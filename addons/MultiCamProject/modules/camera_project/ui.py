@@ -126,7 +126,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         else:
             row.label(text="Projection only (grey where erased)", icon='NODE_MATERIAL')
 
-    LABEL_UNITS = 3.6      # width of the Folder / Clip / Blend / 03. Source label column
+    LABEL_UNITS = 2.6      # width of the Folder / Clip / Blend label column
     MODE_SPLIT = 0.66      # Clip | Mode and Blend | Occlusion share this split
 
     @classmethod
@@ -171,13 +171,6 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         why = paint_tex.problem(obj, context.scene) if paint_tex.mode(obj) == 'TEXTURE' else ""
         if why:
             col.label(text=why + " - painting the vertices (VCMix) meanwhile", icon='INFO')
-        # 03's BAo_ (what shows where the mask leaves the projection out): rebake / inpaint
-        try:
-            from ..baking import ui as bake_ui
-        except ImportError:
-            bake_ui = None
-        if bake_ui is not None:
-            bake_ui.draw_bao_buttons(self._labeled(context, col, "03. Source"), obj)
 
         box.separator(type='LINE')
         if not d.cameras:
@@ -197,6 +190,15 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         sub = header.row(align=True)
         # Isolate (solo shows only this object) · Airbrush (camera Paint / Erase)
         props = context.scene.multicamproject_props
+        # 03's BAo_ (shows where the mask leaves the projection out): rebake / inpaint it
+        try:
+            from ..baking import ui as bake_ui
+        except ImportError:
+            bake_ui = None
+        if bake_ui is not None:
+            bao = sub.row(align=True)
+            bake_ui.draw_bao_buttons(bao, obj)
+            sub.separator(factor=0.5)
         sub.prop(props, "solo_isolate", text="", toggle=True,
                  icon='SOLO_ON' if props.solo_isolate else 'SOLO_OFF')
         sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
