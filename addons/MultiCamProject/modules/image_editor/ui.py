@@ -174,7 +174,7 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
     bl_category = "MultiCamProject"
 
     def draw_header(self, context):
-        self.layout.label(icon='BRUSHES_ALL')
+        self.layout.label(icon='ANCHOR_CENTER')
 
     def draw(self, context):
         gate.lock(self.layout, context)     # greyed out until Setup File IO
@@ -194,7 +194,7 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
             # [Inpaint] [Reload] [Remove]: the last two only once there is an _inpaint
             row = layout.row(align=True)
             row.scale_y = 1.4
-            row.operator("multicamproject.inpaint", icon='BRUSHES_ALL', text="Inpaint")
+            row.operator("multicamproject.inpaint", icon='ANCHOR_CENTER', text="Inpaint")
             if src is not None and sources.inpaint_image(src) is not None:
                 for op_id, icon in (("multicamproject.inpaint_reload", 'FILE_REFRESH'),
                                     ("multicamproject.inpaint_remove", 'TRASH')):
@@ -224,7 +224,7 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         sub = row.row(align=True)
         sub.enabled = bool(s.redo)
         sub.operator("multicamproject.inpaint_step", text="", icon='LOOP_FORWARDS').redo = True
-        row.operator("multicamproject.inpaint_fill", icon='BRUSHES_ALL')
+        row.operator("multicamproject.inpaint_fill", icon='ANCHOR_CENTER')
 
         row = layout.row(align=True)
         row.scale_y = 1.4
@@ -270,7 +270,7 @@ class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
         return obj is not None and obj.type == 'MESH' and hasattr(obj, "multicamproject_bake")
 
     def draw_header(self, context):
-        self.layout.label(icon='BRUSHES_ALL')
+        self.layout.label(icon='ANCHOR_CENTER')
 
     def draw(self, context):
         layout, _open = gate.step_box(self.layout, context, 6)

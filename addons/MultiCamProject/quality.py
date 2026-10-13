@@ -22,9 +22,9 @@ LIMITS = {'PREVIEW': 'CLAMP_2048', 'FINAL': 'CLAMP_8192'}
 TAGS = ("multicamproject_material", "multicamproject_baked")
 ITEMS = (('PREVIEW', "Preview", "Fast: the add-on's materials as flat color (Emission), no "
                                 "lighting or normal maps, textures capped at 2K",
-          'SHADING_TEXTURE', 0),
+          'LIGHTPROBE_SPHERE', 0),
          ('FINAL', "Final", "Quality: Principled BSDF with normal maps, textures up to 8K",
-          'SHADING_RENDERED', 1))
+          'LIGHT_SPOT', 1))
 
 
 def mode(scene=None):

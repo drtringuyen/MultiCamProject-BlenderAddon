@@ -269,7 +269,7 @@ def draw_button(layout, kind, owner):
     Image Editor and starts Inpaint there."""
     if owner is None:
         return
-    op = layout.operator("multicamproject.inpaint_load", text="", icon='BRUSHES_ALL',
+    op = layout.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER',
                          depress=has_inpaint(Source(kind, owner)))
     op.kind, op.owner = kind, owner.name
 
