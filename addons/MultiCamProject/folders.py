@@ -18,7 +18,7 @@ import time
 import bpy
 from bpy.app.handlers import persistent
 
-from . import roles, template_mesh
+from . import quality, roles, template_mesh
 
 IMAGE_EXTS = (".png", ".jpg", ".jpeg", ".tif", ".tiff", ".exr", ".tga", ".webp", ".bmp")
 # the defaults these folders had before; a file that never set them keeps them (_pin_old)
@@ -182,7 +182,7 @@ def _tree_images(tree, out, seen):
     seen.add(tree)
     for node in tree.nodes:
         if node.type in {'TEX_IMAGE', 'TEX_ENVIRONMENT'} and node.image is not None:
-            out.add(node.image)
+            out.add(quality.full(node.image))   # never a Light Preview copy
         elif node.type == 'GROUP':
             _tree_images(node.node_tree, out, seen)
 

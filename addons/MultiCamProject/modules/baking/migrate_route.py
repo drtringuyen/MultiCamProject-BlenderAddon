@@ -13,6 +13,7 @@ import shutil
 
 import bpy
 
+from ... import quality
 from ..camera_project import core as cp
 from . import cache, common, fingerprint, owned, route
 
@@ -28,7 +29,8 @@ def _legacy_images(mat):
         if n.name in _NEW_NODES:
             continue
         if n.type == 'TEX_IMAGE' and n.image:
-            out.append((n.name, n.image.name, n.image.filepath))
+            img = quality.full(n.image)
+            out.append((n.name, img.name, img.filepath))
         elif n.type == 'VALUE':
             out.append((n.name, round(n.outputs[0].default_value, 4)))
     return sorted(out, key=repr)

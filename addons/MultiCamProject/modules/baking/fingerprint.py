@@ -12,6 +12,7 @@ import time
 import bpy
 import numpy as np
 
+from ... import quality
 from ..camera_project import core as cp
 from ..camera_project import gn_builder
 from . import cache, common
@@ -152,7 +153,8 @@ def _material_images(mat):
         if n.name in _NOT_INPUTS:
             continue
         if n.type == 'TEX_IMAGE' and n.image:
-            out.append((n.name, n.image.name, _path(n.image)))
+            img = quality.full(n.image)     # a Light Preview copy counts as its image
+            out.append((n.name, img.name, _path(img)))
         elif n.type == 'VALUE':
             out.append((n.name, round(n.outputs[0].default_value, 4)))
     return sorted(out, key=repr)

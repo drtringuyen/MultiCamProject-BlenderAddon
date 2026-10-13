@@ -15,6 +15,9 @@ from contextlib import contextmanager
 import bpy
 from bpy.app.handlers import persistent
 
+from . import preview_copies
+from .preview_copies import full      # noqa: F401 - readers: quality.full(node.image)
+
 PREVIEW_OUT = "MCP Preview Output"
 PREVIEW_EMIT = "MCP Preview Emission"
 LIMITS = {'PREVIEW': 'CLAMP_2048', 'FINAL': 'CLAMP_8192'}
@@ -104,8 +107,26 @@ def set_material(mat, preview):
 
 
 def sync_material(mat):
-    """A builder made / rebuilt mat: it follows the file's mode."""
-    set_material(mat, mode() == 'PREVIEW')
+    """A builder made / rebuilt mat: it follows the file's mode (Light Preview: its 2K
+    copies)."""
+    preview = mode() == 'PREVIEW'
+    set_material(mat, preview)
+    if preview and light() and not preview_copies.held():
+        preview_copies.use([mat], _normal_images([mat]))
+
+
+def light(scene=None):
+    """Light Preview (the test switch): Preview on 2K copies, the cap stays Final's."""
+    return preview_copies.enabled(scene or bpy.context.scene)
+
+
+def limit(scene=None):
+    """The texture cap for the file's mode. Light Preview keeps Final's in Preview too:
+    a cap change makes Blender rebuild every GPU texture (~15 s). Not while the copies are
+    still being made: the 8K images would go to the GPU uncapped meanwhile."""
+    if light(scene) and not (mode(scene) == 'PREVIEW' and preview_copies.busy()):
+        return LIMITS['FINAL']
+    return LIMITS[mode(scene)]
 
 
 def _normal_images(mats):
@@ -131,7 +152,12 @@ def apply(scene):
     mats = materials()
     for m in mats:
         set_material(m, preview)
-    set_limit(LIMITS[mode(scene)])
+    if preview and light(scene):
+        preview_copies.use(mats, _normal_images(mats))
+        preview_copies.start()
+    else:
+        preview_copies.restore(mats)
+    set_limit(limit(scene))
     if preview:                 # out of the shader now: their RAM goes too
         for img in _normal_images(mats):
             if img.has_data and not img.is_dirty:
@@ -143,23 +169,37 @@ def final(mats=None):
     """Final for a bake / export: `mats` (default: all) on their BSDF and no texture cap,
     as before afterwards."""
     system = bpy.context.preferences.system
-    limit = system.gl_texture_limit
+    cap = system.gl_texture_limit
     preview = mode() == 'PREVIEW'
     mats = [m for m in (materials() if mats is None else mats) if m is not None]
     try:
         set_limit('CLAMP_OFF')
+        preview_copies.hold(True)
+        preview_copies.restore(mats)        # bakes / export: the full images
         if preview:
             for m in mats:
                 set_material(m, False)
         yield
     finally:
-        set_limit(limit)
+        set_limit(cap)
+        preview_copies.hold(False)
         if preview:
             for m in mats:
                 try:
                     set_material(m, True)
                 except ReferenceError:
                     pass
+            if light() and not preview_copies.held():
+                mats = [m for m in mats if _alive(m)]
+                preview_copies.use(mats, _normal_images(mats))
+
+
+def _alive(idb):
+    try:
+        idb.name
+        return True
+    except ReferenceError:
+        return False
 
 
 def object_materials(obj):
@@ -212,7 +252,9 @@ def draw_toggle(layout, context):
 def _on_load(_):
     """The cap follows the opened file's mode (a preference: the last file set it)."""
     try:
-        set_limit(LIMITS[mode()])
+        set_limit(limit())
+        if light() and mode() == 'PREVIEW':
+            preview_copies.start()
     except Exception:
         pass
 
@@ -226,4 +268,5 @@ def register():
 def unregister():
     if _on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load)
+    preview_copies.unregister()
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleQuality)

@@ -658,9 +658,24 @@ def finish_painting(context, obj):
     leave_paint(obj)
     if obj.mode == 'TEXTURE_PAINT':
         paint_tex.set_stencil(context, obj, None)
-    if obj.mode != 'OBJECT':
+    stay = (obj.mode == 'TEXTURE_PAINT'
+            and getattr(context.scene.multicamproject_props, "stay_in_paint", False))
+    if obj.mode != 'OBJECT' and not stay:   # leaving Texture Paint: ~6 s of GPU textures
         bpy.ops.object.mode_set(mode='OBJECT')
     paint_session.end()
+
+
+def processing_preview(context, obj):
+    """A camera tool paints the projection: the object back on Processing (MCP_, not its
+    baked result) and the file on Preview."""
+    from ... import module_manager
+    if module_manager.is_loaded("baking"):
+        from ..baking import gn_final
+        if gn_final.is_final(obj):
+            gn_final.set_final(obj, context.scene, False)
+    props = context.scene.multicamproject_props
+    if props.quality != 'PREVIEW':
+        props.quality = 'PREVIEW'
 
 
 class MULTICAMPROJECT_OT_CamPaintFinish(bpy.types.Operator):
@@ -745,6 +760,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if self.mode != 'FLOOD' and paint_session.current(obj) == (cam.name, self.mode):
             finish_painting(context, obj)       # the pressed button again: done
             return {'FINISHED'}
+        processing_preview(context, obj)
         if paint_tex.enabled(context.scene):
             return self._texture(context, obj, cam, slot)
 
@@ -891,6 +907,7 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
     def execute(self, context):
         import numpy as np
         obj = context.active_object
+        processing_preview(context, obj)
         if paint_tex.enabled(context.scene):
             return self._texture(context, obj)
         mode = obj.mode

@@ -19,6 +19,7 @@ import os
 import bpy
 from bpy.app.handlers import persistent
 
+from ... import quality
 from ..camera_project import core as cp
 from . import common, fingerprint, gn_final, handmade, material, source_mats
 
@@ -272,9 +273,9 @@ def remove_orphans(everything=False):
     if not mats:
         return []
     queue = {m for m in mats if m.name not in _baseline}
-    images = {(n.image, m in queue) for m in mats if m.node_tree
+    images = {(quality.full(n.image), m in queue) for m in mats if m.node_tree
               for n in m.node_tree.nodes if n.type == 'TEX_IMAGE' and n.image
-              and n.image.name.startswith(OWN_FILES if m.get(cp.BAKED_TAG) else OWN_WORK)}
+              and quality.full(n.image).name.startswith(OWN_FILES if m.get(cp.BAKED_TAG) else OWN_WORK)}
     # wrappers of deleted objects' modifiers hold MCP_ / MAT_ as node defaults
     spare = [ng for ng in bpy.data.node_groups
              if ng.users == 0 and wrapper.WRAP_KEY in ng and not ng.library]

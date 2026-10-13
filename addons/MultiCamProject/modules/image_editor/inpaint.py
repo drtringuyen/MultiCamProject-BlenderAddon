@@ -418,7 +418,8 @@ def _auto_image(obj):
     nt = mat.node_tree if mat is not None else None
     node = nt.nodes.active if nt is not None else None
     if node is not None and node.type == 'TEX_IMAGE':
-        return node.image
+        from ... import quality
+        return quality.full(node.image)
     return None
 
 
@@ -1170,6 +1171,10 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
         if running() or active() is not None:
             self.report({'WARNING'}, "An Inpaint is open - Save or Discard it first")
             return {'CANCELLED'}
+        if src.kind == 'BG' and context.active_object is not None:
+            # a camera photo: painted through the projection - Processing, Preview
+            from ..camera_project.operators import processing_preview
+            processing_preview(context, context.active_object)
         img = sources.current(src)
         win, area = _editor_area(context)
         if area is None:

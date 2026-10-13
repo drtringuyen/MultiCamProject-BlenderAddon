@@ -7,6 +7,7 @@ from contextlib import contextmanager
 import bpy
 import numpy as np
 
+from ... import quality
 from . import gn_builder, imgsize, wrapper
 from .gn_builder import B
 
@@ -693,7 +694,7 @@ def fill_cam_images(obj, mat=None):
         if tex is None or cam is None:
             continue
         img = cam_image(cam)
-        if tex.image != img:
+        if quality.full(tex.image) != img:
             tex.image = img
         tex.label = f"Cam {i}: {cam.name}"
         if img is None or not image_ok(img):
@@ -707,16 +708,17 @@ def _baked_ok(nodes, obj):
     from . import paint_tex
     for kind in paint_tex.KINDS:        # a paint texture node exactly for each paint texture
         pn = nodes.get(paint_tex.node_name(kind))
-        if (pn.image if pn is not None else None) != paint_tex.get(obj, kind):
+        if (quality.full(pn.image) if pn is not None else None) != paint_tex.get(obj, kind):
             return False
     ba, bn = baked_images(obj)
     if ba is None:
         return nodes.get(NO_BAKE) is not None
     tex, ntex = nodes.get(BAKED_ALBEDO), nodes.get(BAKED_NORMAL)
     gtex = nodes.get(GENERATED_NORMAL)
-    return (tex is not None and tex.image == ba
-            and (ntex.image if ntex is not None else None) == bn
-            and (gtex.image if gtex is not None else None) == generated_normal(obj))
+    full = quality.full                 # a Light Preview copy counts as its image
+    return (tex is not None and full(tex.image) == ba
+            and (full(ntex.image) if ntex is not None else None) == bn
+            and (full(gtex.image) if gtex is not None else None) == generated_normal(obj))
 
 
 def _material_ok(mat, n, obj=None):
@@ -1648,7 +1650,8 @@ def apply_slots(obj, scene):
         it = shift_holder(obj, cam, create=True) if cam else None
         set_input(mod, f"UV Shift Cam{i}", tuple(it.shift) if it else (0.0, 0.0))
         tex = mat.node_tree.nodes[f"CamTex_{i}"]
-        tex.image = img
+        if quality.full(tex.image) != img:
+            tex.image = img
         tex.label = f"Cam {i}: {cam.name}" if cam else f"Cam {i}"
     obj.update_tag()
 
@@ -1745,7 +1748,7 @@ def check_slots(obj, scene):
             fixes.append(f"GN Camera {i}: {gn_cam.name if gn_cam else 'empty'} -> "
                          f"{cam.name if cam else 'empty'}")
         tex = nodes.get(f"CamTex_{i}")
-        if tex is not None and tex.image != img:
+        if tex is not None and quality.full(tex.image) != img:
             fixes.append(f"Cam {i}: {tex.image.name if tex.image else 'empty'} -> "
                          f"{img.name if img else 'empty'}")
     apply_slots(obj, scene)

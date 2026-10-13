@@ -9,6 +9,7 @@ import os
 
 import bpy
 
+from ... import quality
 from ..camera_project.core import BAKED_TAG
 from . import common, engine
 
@@ -50,20 +51,21 @@ def _images(mat):
             if tex is None:
                 continue
             if is_nor:
-                nor = tex.image
+                nor = quality.full(tex.image)
             else:
-                alb = tex.image
+                alb = quality.full(tex.image)
             uvn = next((n for n in _upstream(tex) if n.type == 'UVMAP' and n.uv_map), None)
             uv = uv or (uvn.uv_map if uvn else "")
     if alb is None or nor is None:      # not wired to a Principled: go by the names
         for n in nodes:
             if n.type != 'TEX_IMAGE' or n.image is None:
                 continue
-            name = n.image.name.lower()
+            img = quality.full(n.image)
+            name = img.name.lower()
             if nor is None and ("_n" in name or "normal" in name or "nor_" in name):
-                nor = n.image
-            elif alb is None and n.image != nor:
-                alb = n.image
+                nor = img
+            elif alb is None and img != nor:
+                alb = img
     return alb, nor, uv
 
 
@@ -258,7 +260,7 @@ def show_ours(obj):
     for _kind, shown, ours in _shown_pairs(obj):
         if _same_file(shown, ours) or _same_content(shown, ours):
             for n in nt.nodes:
-                if n.type == 'TEX_IMAGE' and n.image == shown:
+                if n.type == 'TEX_IMAGE' and quality.full(n.image) == shown:
                     n.image = ours
 
 

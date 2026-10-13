@@ -58,6 +58,18 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         update=lambda self, context: _on_quality(self, context),
         description="Preview: the add-on's materials as flat color, no lighting or normal "
                     "maps, textures capped at 2K. Final: full quality, up to 8K")
+    # speed tests (2026-10-13) - to be decided after trying them
+    light_preview: BoolProperty(
+        name="Light Preview", default=False,
+        update=lambda self, context: _on_quality(self, context),
+        description="Test: Preview shows 2K copies of the big images (_preview folder next "
+                    "to each, made in the background the first time) and the texture cap "
+                    "stays Final's - switching Preview / Final and entering / leaving "
+                    "Texture Paint no longer rebuild every 8K texture")
+    stay_in_paint: BoolProperty(
+        name="Stay in Paint", default=False,
+        description="Test: finishing the camera brush (Enter / Esc / the pressed button) "
+                    "keeps Texture Paint - the overlays come back, no ~6 s mode switch")
     file_io_done: BoolProperty(
         name="File IO Set Up", default=False,
         description="Setup File IO ran in this file (gate.py: the add-on unlocks)")
