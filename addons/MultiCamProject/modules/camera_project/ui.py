@@ -196,10 +196,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         except ImportError:
             bake_ui = None
         if bake_ui is not None:
-            # in a box and greyed out (still clickable): there, not asking for attention
-            bao = sub.box().row(align=True)
+            bao = sub.row(align=True)
             bao.alignment = 'RIGHT'             # the label right next to its Inpaint icon
-            bao.active = False
             bake_ui.draw_bao_buttons(bao, obj)
             sub.separator(factor=0.5)
         sub.prop(props, "solo_isolate", text="", toggle=True,

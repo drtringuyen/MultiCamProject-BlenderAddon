@@ -313,7 +313,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 def draw_bao_buttons(row, obj):
     """"Baked Source" and BAo_'s Inpaint (04's Selected Cameras header): BAo_ shows where
     the mask leaves the projection out."""
-    row.label(text="Baked Source")
+    label = row.row(align=True)
+    label.alignment = 'RIGHT'           # right next to its Inpaint icon
+    label.active = False                # greyed: there, not asking for attention
+    label.label(text="Baked Source")
     from ... import module_manager
     if common.data(obj).ba_image is not None and module_manager.is_loaded("image_editor"):
         from ..image_editor import sources
