@@ -997,6 +997,8 @@ class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
         try:
             if want == 'TEXTURE':
                 done = paint_tex.to_textures(obj, context.scene)
+                if core.data(obj).project_through:  # hidden in Texture Mask: the mesh blocks
+                    core.data(obj).project_through = False
             else:
                 done = paint_tex.to_vertices(obj)
         except (RuntimeError, OSError) as e:
@@ -1050,8 +1052,10 @@ class MULTICAMPROJECT_OT_BakeViewMix(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
+        # Texture Mask: CMX1_ / CMX2_ hold the paint, a vertex mixture has no use
         return (obj is not None and obj.type == 'MESH' and context.mode in BAKE_MODES
-                and core.data(obj).is_setup and core.get_modifier(obj) is not None)
+                and core.data(obj).is_setup and core.get_modifier(obj) is not None
+                and paint_tex.mode(obj) != 'TEXTURE')
 
     def invoke(self, context, event):
         return context.window_manager.invoke_confirm(

@@ -34,8 +34,9 @@ def _draw_bake_row(context, layout, obj):
     try:
         from ..baking import ui as bake_ui
     except ImportError:
-        layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
-                        icon='RENDER_STILL')
+        if paint_tex.mode(obj) != 'TEXTURE':
+            layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
+                            icon='RENDER_STILL')
         return
     bake_ui.draw_bake_box(context, layout, obj, route_rows=True, bao=True)
 
@@ -159,13 +160,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         split.operator_menu_enum("multicamproject.paint_mode_set", "mode", text=pick[1],
                                  icon=pick[3])
 
-        # blend controls
-        row = self._labeled(context, col, "Blend")
-        split = row.split(factor=self.MODE_SPLIT, align=True)     # Occlusion under Mode
-        blend = split.row(align=True)
-        blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
-        split.prop(d, "project_through", text="Project through", toggle=True,
-                   icon='XRAY')
+        # blend controls - vertex paint only (Texture Mask: CMX1_ / CMX2_ replace them)
+        if paint_tex.mode(obj) != 'TEXTURE':
+            row = self._labeled(context, col, "Blend")
+            split = row.split(factor=self.MODE_SPLIT, align=True)     # Occlusion under Mode
+            blend = split.row(align=True)
+            blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
+            split.prop(d, "project_through", text="Project through", toggle=True,
+                       icon='XRAY')
         why = paint_tex.problem(obj, context.scene) if paint_tex.mode(obj) == 'TEXTURE' else ""
         if why:
             col.label(text=why + " - painting the vertices (VCMix) meanwhile", icon='INFO')

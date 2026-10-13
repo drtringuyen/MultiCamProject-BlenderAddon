@@ -308,7 +308,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                 sources.draw_button(row, 'ALB', obj)   # 06: inpaint ALB_
         if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
                 and getattr(obj, "multicamproject_cam", None) is not None
-                and obj.multicamproject_cam.is_setup):
+                and obj.multicamproject_cam.is_setup
+                and obj.multicamproject_cam.paint_mode != 'TEXTURE'):     # vertex paint only
             row.operator("multicamproject.bake_view_mix", text="", icon='GROUP_VCOL')
         row.popover(panel="MULTICAMPROJECT_PT_bake_settings", text="", icon='PREFERENCES')
 
