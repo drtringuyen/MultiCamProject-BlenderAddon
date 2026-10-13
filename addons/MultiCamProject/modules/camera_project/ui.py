@@ -273,8 +273,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         return slots_f, name_f, image_x
 
     def _draw_source_block(self, context, layout, obj, debug):
-        """Above the cameras, as their boxes: "Baked Source" (greyed) and BAo_'s Inpaint +
-        its image where a camera row has its photo - 03's BAo_ shows where the mask
+        """Above the cameras, as their boxes: "Baked Source" (greyed), then 03's Bake from
+        Scan BAo_ + Inpaint where a camera row has its photo - BAo_ shows where the mask
         leaves the projection out."""
         try:
             from ..baking import ui as bake_ui
