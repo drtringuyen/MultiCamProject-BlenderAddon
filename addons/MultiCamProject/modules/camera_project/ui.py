@@ -184,22 +184,24 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         top, rest = core.display_order(obj)
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
-        header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
-        # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
-        # material's Cam textures against the slots) at the end, like Other Cameras
-        sub = header.row(align=True)
-        # Isolate (solo shows only this object) · Airbrush (camera Paint / Erase)
-        props = context.scene.multicamproject_props
-        # 03's BAo_ (shows where the mask leaves the projection out): rebake / inpaint it
+        # left: the title, then Baked Source + BAo_'s Inpaint (03's BAo_ shows where the
+        # mask leaves the projection out) - apart from the camera tools on the right
+        left = header.row(align=True)
+        left.alignment = 'LEFT'
+        left.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
         try:
             from ..baking import ui as bake_ui
         except ImportError:
             bake_ui = None
         if bake_ui is not None:
-            bao = sub.row(align=True)
-            bao.alignment = 'RIGHT'             # the label right next to its Inpaint icon
-            bake_ui.draw_bao_buttons(bao, obj)
-            sub.separator(factor=0.5)
+            left.separator(factor=1.0)
+            bake_ui.draw_bao_buttons(left, obj)
+        # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
+        # material's Cam textures against the slots) at the end, like Other Cameras
+        sub = header.row(align=True)
+        sub.alignment = 'RIGHT'
+        # Isolate (solo shows only this object) · Airbrush (camera Paint / Erase)
+        props = context.scene.multicamproject_props
         sub.prop(props, "solo_isolate", text="", toggle=True,
                  icon='SOLO_ON' if props.solo_isolate else 'SOLO_OFF')
         sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
