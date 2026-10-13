@@ -43,9 +43,16 @@ def node_name(kind):
     return f"{kind} Paint"
 
 
+def mode(obj):
+    """'TEXTURE' (CMX1_ / CMX2_) or 'VERTEX' (VCMix / VCMix2): the object's Paint switch."""
+    d = getattr(obj, "multicamproject_cam", None)
+    return getattr(d, "paint_mode", 'TEXTURE') if d is not None else 'TEXTURE'
+
+
 def can_paint(obj, scene=None):
-    """obj paints into CMX1_ / CMX2_ (else: into VCMix / VCMix2, until it can)."""
-    return not problem(obj, scene or bpy.context.scene)
+    """obj paints into CMX1_ / CMX2_: Paint on Texture and possible (else: into VCMix /
+    VCMix2)."""
+    return mode(obj) == 'TEXTURE' and not problem(obj, scene or bpy.context.scene)
 
 
 def kind_of_slot(slot):
@@ -78,7 +85,7 @@ def problem(obj, scene):
     return ""
 
 
-def ensure(obj, kind, scene):
+def ensure(obj, kind, scene, px=None):
     """obj's CMX1_ / CMX2_: its own (brought to the current format), or a new 1K PNG in the
     bake folder holding what VCMix / VCMix2 show now. Object Mode. Returns (image, created)."""
     import os
@@ -88,7 +95,8 @@ def ensure(obj, kind, scene):
         if img.get(VERSION_KEY, 1) < VERSION:
             migrate(obj)
         return img, False
-    px = layer_pixels(obj, kind)
+    if px is None:
+        px = shown_pixels(obj)[kind]
     name = image_name(obj, kind)
     path = common.texture_path(scene, name)
     engine._check_length(path)
@@ -114,10 +122,11 @@ def ensure(obj, kind, scene):
     return img, True
 
 
-def layer_pixels(obj, kind, previous=None):
+def layer_pixels(obj, kind, previous=None, keep_alpha=False):
     """(SIZE*SIZE, 4) pixels of VCMix (CMX1) / VCMix2 (CMX2) as MCP_ shows them now
     (`previous` 0: the cameras' own weights, Reset Camera Mix), rasterized on uv_normal and
-    grown into the free UV space. CMX2's alpha is 0 (the stroke marker)."""
+    grown into the free UV space. CMX2's alpha is 0 (the stroke marker) unless
+    `keep_alpha`."""
     from . import core
     if obj.mode == 'EDIT':
         obj.update_from_editmode()
@@ -144,9 +153,166 @@ def layer_pixels(obj, kind, previous=None):
     tris = mesh_triangles(me)
     px, cov = raster_colors(tris, col[loops].reshape(t, 3, 4))
     px = grow(px, cov)
-    if kind == "CMX2":
+    if kind == "CMX2" and not keep_alpha:
         px[:, 3] = 0.0
     return px
+
+
+def shown_pixels(obj):
+    """{'CMX1', 'CMX2' (4+ slots)}: what VCMix / VCMix2 show now, as the textures hold it -
+    CMX1_ alpha = the blend mask = VCMix alpha x VCMix2 alpha."""
+    from . import core
+    out = {"CMX1": layer_pixels(obj, "CMX1")}
+    if core.slot_count(core.data(obj)) > 3:
+        px2 = layer_pixels(obj, "CMX2", keep_alpha=True)
+        out["CMX1"][:, 3] *= px2[:, 3]
+        px2[:, 3] = 0.0                 # CMX2_ alpha: the stroke marker
+        out["CMX2"] = px2
+    return out
+
+
+# ---------------------------------------------------------------- Paint switch: convert
+
+CONV = "_mcp_conv_"     # + VCMix / VCMix2: the layer as Paint -> Vertex wrote it
+
+
+def _changed_faces(obj):
+    """Faces whose VCMix / VCMix2 changed since Paint -> Vertex wrote them (bool per face),
+    or None: no snapshot (every face counts as changed). The snapshots go."""
+    from . import gn_builder
+    me = obj.data
+    out, had = np.zeros(len(me.polygons), bool), False
+    vi = np.empty(len(me.loops), np.int32)
+    me.loops.foreach_get("vertex_index", vi)
+    starts = np.empty(len(me.polygons), np.int32)
+    me.polygons.foreach_get("loop_start", starts)
+    for name in gn_builder.LAYERS:
+        snap = me.attributes.get(CONV + name)
+        a = me.color_attributes.get(name)
+        if snap is None:
+            continue
+        had = True
+        if a is None or a.domain != snap.domain or len(a.data) != len(snap.data):
+            out[:] = True
+        else:
+            cur = np.empty(len(a.data) * 4, np.float32)
+            old = np.empty(len(a.data) * 4, np.float32)
+            a.data.foreach_get("color", cur)
+            snap.data.foreach_get("color", old)
+            diff = np.abs(cur - old).reshape(-1, 4).max(axis=1) > 1e-4
+            per_loop = diff[vi] if a.domain == 'POINT' else diff
+            if len(per_loop) == len(me.loops) and len(starts):
+                out |= np.maximum.reduceat(per_loop.astype(np.int8), starts) > 0
+        me.attributes.remove(me.attributes[CONV + name])
+    return out if had else None
+
+
+def to_textures(obj, scene):
+    """Paint -> Vertex -> Texture: CMX1_ / CMX2_ take what VCMix / VCMix2 show now on the
+    faces painted meanwhile; everywhere else the textures keep their own (finer) pixels.
+    Never converted before: the textures become all of it (made, or written as an undo step
+    after the running operator). Object Mode. Returns the names."""
+    changed = _changed_faces(obj)
+    if changed is not None and not changed.any():
+        px, keep = {}, None                 # nothing painted as vertices: textures as they were
+    else:
+        px = shown_pixels(obj)
+        keep = None
+        if changed is not None:             # only the repainted faces (and their margin)
+            me = obj.data
+            all_tris = mesh_triangles(me)
+            keep = ~dilate(raster(mesh_triangles(me, changed)), ~raster(all_tris), px=DILATE)
+    done, made = [], False
+    for kind in ("CMX1", "CMX2"):
+        img = get(obj, kind)
+        arr = px.get(kind)
+        if arr is None:
+            if img is not None:
+                done.append(img.name)
+            continue
+        if img is None:
+            img, new = ensure(obj, kind, scene, arr)
+            made |= new
+        elif keep is None:
+            queue(obj, kind, lambda _cur, arr=arr: arr)
+        else:
+            queue(obj, kind, lambda cur, arr=arr: np.where(keep[:, None], cur, arr))
+        done.append(img.name)
+    obj.multicamproject_cam.paint_mode = 'TEXTURE'
+    if made:
+        from . import core
+        core.ensure_material(obj)       # MCP_ gets the textures' nodes
+    set_toggle(obj)
+    return done
+
+
+def _sample(img, uv):
+    """img's pixels (bilinear, clamped) at uv ((n, 2) in 0..1) -> (n, 4)."""
+    w, h = img.size
+    px = read(img).reshape(h, w, 4)
+    x = np.clip(uv[:, 0] * w - 0.5, 0.0, w - 1.0)
+    y = np.clip(uv[:, 1] * h - 0.5, 0.0, h - 1.0)
+    x0, y0 = np.floor(x).astype(np.int32), np.floor(y).astype(np.int32)
+    x1, y1 = np.minimum(x0 + 1, w - 1), np.minimum(y0 + 1, h - 1)
+    fx, fy = (x - x0)[:, None], (y - y0)[:, None]
+    top = px[y0, x0] * (1 - fx) + px[y0, x1] * fx
+    bot = px[y1, x0] * (1 - fx) + px[y1, x1] * fx
+    return top * (1 - fy) + bot * fy
+
+
+def to_vertices(obj):
+    """Paint -> Vertex: VCMix / VCMix2 on the mesh become what CMX1_ / CMX2_ hold (sampled
+    at uv_normal; the blend mask split as VCMix a x VCMix2 a), Previous Bake 1 so they show
+    1:1. Without textures nothing is written. Object Mode. Returns the layers written."""
+    from . import core, gn_builder
+    me = obj.data
+    imgs = images(obj)
+    uvl = me.uv_layers.get(UV_NORMAL)
+    done = []
+    if imgs.get("CMX1") is not None and uvl is not None:
+        uv = np.empty(len(me.loops) * 2, np.float32)
+        uvl.data.foreach_get("uv", uv)
+        uv = uv.reshape(-1, 2)
+        two = core.slot_count(core.data(obj)) > 3
+        c1 = _sample(imgs["CMX1"], uv)
+        cols = {gn_builder.LAYERS[0]: c1}
+        if two:
+            mask = c1[:, 3].copy()
+            c2 = _sample(imgs["CMX2"], uv) if imgs.get("CMX2") is not None else np.zeros_like(c1)
+            c1[:, 3] = c2[:, 3] = np.sqrt(np.clip(mask, 0.0, 1.0))
+            cols[gn_builder.LAYERS[1]] = c2
+        vi = np.empty(len(me.loops), np.int32)
+        me.loops.foreach_get("vertex_index", vi)
+        for name, col in cols.items():
+            a = me.color_attributes.get(name)
+            if a is None:
+                a = me.color_attributes.new(name, 'FLOAT_COLOR', 'CORNER')
+            if a.domain == 'POINT':         # the corners' mean per vertex
+                acc = np.zeros((len(me.vertices), 4), np.float32)
+                cnt = np.zeros(len(me.vertices), np.float32)
+                np.add.at(acc, vi, col)
+                np.add.at(cnt, vi, 1.0)
+                col = acc / np.maximum(cnt, 1.0)[:, None]
+            flat = np.ascontiguousarray(col, np.float32).ravel()
+            a.data.foreach_set("color", flat)
+            snap = me.attributes.get(CONV + name)      # what Texture compares with later
+            if snap is not None:
+                me.attributes.remove(snap)
+            snap = me.color_attributes.new(CONV + name, 'FLOAT_COLOR', a.domain)
+            snap.data.foreach_set("color", flat)
+            done.append(name)
+        me.color_attributes.active_color = me.color_attributes[gn_builder.LAYERS[0]]
+        stash = me.attributes.get(gn_builder.MASK2_STASH)
+        if stash is not None:
+            me.attributes.remove(stash)
+        mod = core.get_modifier(obj)
+        if mod is not None and core.get_input(mod, "Previous Bake") < 1.0:
+            core.set_input(mod, "Previous Bake", 1.0)
+        me.update()
+    obj.multicamproject_cam.paint_mode = 'VERTEX'
+    set_toggle(obj)
+    obj.update_tag()
+    return done
 
 
 def migrate(obj):
@@ -517,7 +683,7 @@ def set_toggle(obj, scene=None):
     d = getattr(obj, "multicamproject_cam", None)
     mat = d.material if d is not None else None
     n = mat.node_tree.nodes.get(TOGGLE) if mat is not None and mat.node_tree else None
-    v = 1.0
+    v = 1.0 if mode(obj) == 'TEXTURE' else 0.0
     if n is not None and abs(n.outputs[0].default_value - v) > 1e-6:
         n.outputs[0].default_value = v
 
@@ -597,13 +763,25 @@ def _on_save_pre(*_):
         print(f"[MultiCamProject] paint textures not saved: {e}")
 
 
+def _sides_default(obj):
+    """A Project from Sides object from before the Paint switch, never painted into
+    textures: Vertex, as a new one gets."""
+    from . import core
+    d = getattr(obj, "multicamproject_cam", None)
+    if d is None or not d.is_setup or d.is_property_set("paint_mode") or images(obj):
+        return
+    if any(c is not None and core.cam_data(c).side for c in core.get_slots(d)):
+        d.paint_mode = 'VERTEX'
+
+
 def _migrate_later():
     try:
         migrate_all()
         drop_stencil()
-        for obj in bpy.data.objects:        # a file saved with Paint Textures off
+        for obj in bpy.data.objects:
             if obj.type == 'MESH' and not obj.library:
-                set_toggle(obj)
+                _sides_default(obj)
+                set_toggle(obj)             # MCP_'s Value follows the object's Paint switch
     except Exception as e:      # never break loading
         print(f"[MultiCamProject] paint texture conversion skipped: {e}")
     return None

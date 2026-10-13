@@ -163,8 +163,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         blend.prop(core.input_socket(mod, "Previous Bake"), "value", text="Previous Bake")
         split.prop(d, "project_through", text="Project through", toggle=True,
                    icon='XRAY')
-        # the camera paint buttons paint CMX1_ / CMX2_ - the vertices only until they can
-        why = paint_tex.problem(obj, context.scene)
+        # where the camera paint buttons paint: switching converts the paint as it shows
+        row = self._labeled(context, col, "Paint")
+        mode = paint_tex.mode(obj)
+        for key, text, icon in (('TEXTURE', "Texture (CMX1_ / CMX2_)", 'TEXTURE'),
+                                ('VERTEX', "Vertex (VCMix)", 'VPAINT_HLT')):
+            row.operator("multicamproject.paint_mode_set", text=text, icon=icon,
+                         depress=mode == key).mode = key
+        why = paint_tex.problem(obj, context.scene) if mode == 'TEXTURE' else ""
         if why:
             col.label(text=why + " - painting the vertices (VCMix) meanwhile", icon='INFO')
 

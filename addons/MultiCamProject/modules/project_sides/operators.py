@@ -59,6 +59,9 @@ class MULTICAMPROJECT_OT_ProjectSides(bpy.types.Operator):
         if not was_setup:
             from ..camera_project.operators import _route_after
             _route_after(obj)
+            from ..camera_project import paint_tex
+            obj.multicamproject_cam.paint_mode = 'VERTEX'   # Sides paint before uv_normal
+            paint_tex.set_toggle(obj)
         for w in warnings:
             self.report({'WARNING'}, w)
         return {'FINISHED'}

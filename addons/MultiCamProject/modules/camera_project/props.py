@@ -147,6 +147,15 @@ class MULTICAMPROJECT_ObjectData(bpy.types.PropertyGroup):
         description="On: Paint and Fill reach every face, also the ones the object's own mesh "
                     "hides from the camera. Off: the mesh blocks the projection - Paint and "
                     "Fill only reach the faces the camera really sees")
+    # set only through multicamproject.paint_mode_set: switching converts the paint
+    paint_mode: EnumProperty(
+        name="Paint", default='TEXTURE',
+        items=(('TEXTURE', "Texture", "The camera paint goes into CMX1_ / CMX2_ (1K on "
+                                      "uv_normal) - precise, not tied to the vertices",
+                'TEXTURE', 0),
+               ('VERTEX', "Vertex", "The camera paint goes into the mesh's VCMix / VCMix2 "
+                                    "vertex colors - works before uv_normal (Project from "
+                                    "Sides' default)", 'VPAINT_HLT', 1)))
 
 
 def _on_project_through(self):

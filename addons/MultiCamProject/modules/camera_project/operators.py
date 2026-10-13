@@ -960,6 +960,56 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
+    """Where the camera paint goes - the paint as it shows now is converted, nothing
+    changes on screen"""
+    bl_idname = "multicamproject.paint_mode_set"
+    bl_label = "Paint: Texture / Vertex"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    mode: bpy.props.EnumProperty(items=(('TEXTURE', "Texture", ""), ('VERTEX', "Vertex", "")),
+                                 options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        if props.mode == 'TEXTURE':
+            return ("Paint into CMX1_ / CMX2_ (1K on uv_normal): precise, not tied to the "
+                    "vertices. The vertex paint is converted into them")
+        return ("Paint into the mesh's VCMix / VCMix2 vertex colors: works before uv_normal, "
+                "detail limited to the vertices. The textures are converted into them")
+
+    @classmethod
+    def poll(cls, context):
+        return _setup_poll(context)
+
+    def execute(self, context):
+        obj = context.active_object
+        if paint_tex.mode(obj) == self.mode:
+            return {'CANCELLED'}
+        if self.mode == 'TEXTURE':
+            why = paint_tex.problem(obj, context.scene)
+            if why:
+                self.report({'ERROR'}, why)
+                return {'CANCELLED'}
+        if paint_session.current(obj) is not None:
+            finish_painting(context, obj)
+        leave_paint(obj)
+        if obj.mode != 'OBJECT':            # edit-mode data and the last stroke into the mesh
+            bpy.ops.object.mode_set(mode='OBJECT')
+        paint_sync.end_session(obj)         # VCMix2's real alpha back from its stash
+        try:
+            if self.mode == 'TEXTURE':
+                done = paint_tex.to_textures(obj, context.scene)
+            else:
+                done = paint_tex.to_vertices(obj)
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        what = ", ".join(done) if done else "nothing painted yet"
+        self.report({'INFO'}, f"Paint: {self.mode.title()} ({what})")
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_ResetCameraMix(bpy.types.Operator):
     """Reset Camera Mix: which camera shows where (VCMix / VCMix2 R, G, B) from the cameras
     again - the blend mask (projected / baked, the alphas) stays. For a mix that shows all
@@ -1229,6 +1279,7 @@ _classes = (
     MULTICAMPROJECT_OT_Setup,
     MULTICAMPROJECT_OT_MaskFill,
     MULTICAMPROJECT_OT_ResetCameraMix,
+    MULTICAMPROJECT_OT_PaintModeSet,
     MULTICAMPROJECT_OT_AutoPick,
     MULTICAMPROJECT_OT_ConfirmCameras,
     MULTICAMPROJECT_OT_CheckSlots,

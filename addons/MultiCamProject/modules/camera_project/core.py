@@ -546,7 +546,7 @@ def _build_projection(b, n, obj=None):
     f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
     tog = _named(b.n("ShaderNodeValue", (-300, -1700), f), paint_tex.TOGGLE)
     tog.label = "Paint Textures"
-    tog.outputs[0].default_value = 1.0
+    tog.outputs[0].default_value = 1.0 if obj is None or paint_tex.mode(obj) == 'TEXTURE' else 0.0
     toggle = tog.outputs[0]
     texs = []
     for i in range(1, n + 1):
