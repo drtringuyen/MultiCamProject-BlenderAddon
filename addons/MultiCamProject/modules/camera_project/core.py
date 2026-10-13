@@ -1264,6 +1264,20 @@ def sync_occlusion(obj):
         pass
 
 
+def cam_uvd(cam, scene, co):
+    """Per world point: (u, v) in `cam`'s photo (0-1 inside the frame) and its depth in
+    front of the camera (<= 0: behind it). The projection's own mapping."""
+    cd = cam.data
+    cmi = np.array(world_matrix(cam).inverted_safe(), dtype=np.float32)
+    p = co @ cmi[:3, :3].T + cmi[:3, 3]
+    depth = -p[:, 2]
+    front = depth > 1e-6
+    width = (cd.ortho_scale if cd.type == 'ORTHO'
+             else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens)
+    aspect = image_aspect(cam_image(cam), scene, load=False)
+    return p[:, 0] / width + 0.5, p[:, 1] / width * aspect + 0.5, depth
+
+
 def _cam_sees(obj, cam, scene, co, nr, bvh=None):
     """Per point (world co, unit normal nr): in `cam`'s frame, facing it and not hidden by
     the object's own mesh (a ray to the camera)."""
@@ -1271,16 +1285,9 @@ def _cam_sees(obj, cam, scene, co, nr, bvh=None):
     from mathutils import Vector
     n = len(co)
     cm = world_matrix(cam)
-    cd = cam.data
-    ortho = cd.type == 'ORTHO'
-    cmi = np.array(cm.inverted_safe(), dtype=np.float32)
-    p = co @ cmi[:3, :3].T + cmi[:3, 3]
-    depth = -p[:, 2]
+    ortho = cam.data.type == 'ORTHO'
+    u, v, depth = cam_uvd(cam, scene, co)
     front = depth > 1e-6
-    width = cd.ortho_scale if ortho else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens
-    aspect = image_aspect(cam_image(cam), scene, load=False)
-    u = p[:, 0] / width + 0.5
-    v = p[:, 1] / width * aspect + 0.5
     eye = np.array(cm.translation, dtype=np.float32)
     if ortho:
         back = np.array(cm.to_3x3().col[2], dtype=np.float32)

@@ -357,16 +357,18 @@ def raster(tris, size=SIZE):
     return np.asarray(buf, dtype=np.uint8).reshape(-1, 4)[:, 0] > 127
 
 
-def raster_colors(tris, colors, size=SIZE):
+def raster_colors(tris, colors, size=SIZE, depth=None, clip=True):
     """(pixels (size*size, 4) float, coverage bool) of uv triangles with per-corner colors
-    (n, 3, 4), interpolated over each triangle."""
+    (n, 3, 4), interpolated over each triangle. `depth` (n, 3): per-corner z (-1..1), the
+    nearest triangle wins. clip=False keeps values outside 0-1."""
     import gpu
     from gpu_extras.batch import batch_for_shader
     from mathutils import Matrix
     if not len(tris):
         return np.zeros((size * size, 4), np.float32), np.zeros(size * size, bool)
     pos = tris.reshape(-1, 2) * 2.0 - 1.0
-    pos = np.c_[pos, np.zeros(len(pos))].astype(np.float32)
+    z = np.zeros(len(pos)) if depth is None else depth.reshape(-1)
+    pos = np.c_[pos, z].astype(np.float32)
     shader = gpu.shader.from_builtin('SMOOTH_COLOR')
     batch = batch_for_shader(shader, 'TRIS', {"pos": pos,
                                               "color": colors.reshape(-1, 4).astype(np.float32)})
@@ -374,12 +376,18 @@ def raster_colors(tris, colors, size=SIZE):
     try:
         with off.bind():
             fb = gpu.state.active_framebuffer_get()
-            fb.clear(color=(0.0, 0.0, 0.0, -1.0))       # alpha -1: no face here
+            fb.clear(color=(0.0, 0.0, 0.0, -1.0), depth=1.0)     # alpha -1: no face here
             with gpu.matrix.push_pop():
                 gpu.matrix.load_matrix(Matrix.Identity(4))
                 gpu.matrix.load_projection_matrix(Matrix.Identity(4))
                 gpu.state.blend_set('NONE')
+                if depth is not None:
+                    gpu.state.depth_test_set('LESS')
+                    gpu.state.depth_mask_set(True)
                 batch.draw(shader)
+                if depth is not None:
+                    gpu.state.depth_test_set('NONE')
+                    gpu.state.depth_mask_set(False)
             buf = fb.read_color(0, 0, size, size, 4, 0, 'FLOAT')
     finally:
         off.free()
@@ -387,7 +395,99 @@ def raster_colors(tris, colors, size=SIZE):
     px = np.asarray(buf, dtype=np.float32).reshape(-1, 4).copy()
     cov = px[:, 3] > -0.5
     px[~cov] = 0.0
-    return np.clip(px, 0.0, 1.0), cov
+    return (np.clip(px, 0.0, 1.0) if clip else px), cov
+
+
+DEPTH_SIZE = 2048       # the camera's depth map for seen_pixels
+SEEN_REL = 0.02         # a pixel this much (of its distance) behind the nearest surface is still seen
+SEEN_ABS = 0.01         # + this many metres
+
+
+def seen_pixels(obj, cam, scene, size=SIZE):
+    """Per pixel of uv_normal: `cam` really sees it - in its frame, facing it and not
+    behind another part of the mesh (a chair in front of the table). Two GPU passes: the
+    mesh's depth from the camera, then every pixel's own depth compared with it."""
+    me = obj.data
+    me.calc_loop_triangles()
+    n = len(me.loop_triangles)
+    uv = mesh_triangles(me)
+    if not n or len(uv) != n:
+        return np.zeros(size * size, bool)
+    tv = np.empty(n * 3, np.int32)
+    me.loop_triangles.foreach_get("vertices", tv)
+    poly = np.empty(n, np.int32)
+    me.loop_triangles.foreach_get("polygon_index", poly)
+    vco = np.empty(len(me.vertices) * 3, np.float32)
+    me.vertices.foreach_get("co", vco)
+    from . import core
+    om = core.world_matrix(obj)
+    mw = np.array(om, dtype=np.float32)
+    co = vco.reshape(-1, 3)[tv] @ mw[:3, :3].T + mw[:3, 3]        # (n*3, 3) world corners
+    fn = np.empty(len(me.polygons) * 3, np.float32)
+    me.polygons.foreach_get("normal", fn)
+    nmat = np.array(om.to_3x3().inverted_safe().transposed(), dtype=np.float32)
+    nr = np.repeat(fn.reshape(-1, 3)[poly] @ nmat.T, 3, axis=0)
+    u, v, d = core.cam_uvd(cam, scene, co)
+    cm = core.world_matrix(cam)
+    if cam.data.type == 'ORTHO':
+        to_cam = np.array(cm.to_3x3().col[2], dtype=np.float32)[None, :]
+        far = max(float(d.max(initial=1.0)), 1e-3) * 1.01
+        z = d / far * 2.0 - 1.0                     # ortho: depth is linear on screen
+    else:
+        to_cam = np.array(cm.translation, dtype=np.float32) - co
+        near = max(cam.data.clip_start, 1e-3)
+        z = 1.0 - 2.0 * near / np.maximum(d, near)  # perspective: 1/depth is linear on screen
+    facing = ((nr * to_cam).sum(axis=1) > 0.0).astype(np.float32)
+    front = (d > 1e-6).reshape(n, 3).all(axis=1)    # a triangle through the camera plane: left out
+
+    # pass 1: the camera's depth map (nearest surface per photo pixel)
+    tri_uv = np.c_[u, v].astype(np.float32).reshape(n, 3, 2)[front]
+    tri_z = z.reshape(n, 3)[front]
+    zc = np.c_[np.repeat(tri_z.reshape(-1, 1), 3, axis=1), np.ones(tri_z.size)].reshape(-1, 3, 4)
+    zmap, zcov = raster_colors(tri_uv, zc, DEPTH_SIZE, depth=tri_z, clip=False)
+    zmap = np.where(zcov, zmap[:, 0], 2.0).reshape(DEPTH_SIZE, DEPTH_SIZE)
+
+    # pass 2: every uv_normal pixel's photo position, depth and facing
+    attrs = np.c_[u, v, z, facing * front.repeat(3)].astype(np.float32).reshape(n, 3, 4)
+    px, cov = raster_colors(uv, attrs, size, clip=False)
+    pu, pv, pz = px[:, 0], px[:, 1], px[:, 2]
+    seen = cov & (px[:, 3] > 0.5) & (pu > 0.0) & (pu < 1.0) & (pv > 0.0) & (pv < 1.0)
+    iu = np.clip((pu * DEPTH_SIZE).astype(np.int32), 0, DEPTH_SIZE - 1)
+    iv = np.clip((pv * DEPTH_SIZE).astype(np.int32), 0, DEPTH_SIZE - 1)
+    ref = zmap[iv, iu]
+    if cam.data.type == 'ORTHO':
+        tol = (SEEN_REL * (pz + 1.0) + SEEN_ABS * 2.0 / far)
+    else:
+        inv = np.clip((1.0 - pz) * 0.5, 1e-6, 1.0)  # near / depth
+        tol = 2.0 * inv * (SEEN_REL + SEEN_ABS * inv / near)
+    seen &= pz <= ref + tol
+    return dilate(seen, ~cov)
+
+
+STENCIL = "MCP_Camera Sees"     # the stencil image: white where the camera sees the object
+
+
+def set_stencil(context, obj, seen):
+    """Texture Paint's Stencil Mask = `seen` (None: off) on uv_normal - the brush only
+    paints where the camera sees the mesh, no face selection needed."""
+    ip = context.tool_settings.image_paint
+    if seen is None:
+        ip.use_stencil_layer = False
+        return
+    img = bpy.data.images.get(STENCIL)
+    if img is None or tuple(img.size) != (SIZE, SIZE):
+        if img is not None:
+            bpy.data.images.remove(img)
+        img = bpy.data.images.new(STENCIL, SIZE, SIZE, alpha=False)
+        img.colorspace_settings.name = 'Non-Color'
+    v = seen.astype(np.float32)
+    img.pixels.foreach_set(np.c_[v, v, v, np.ones_like(v)].ravel())
+    img.update()
+    me = obj.data
+    me.uv_layer_stencil = me.uv_layers[UV_NORMAL]
+    ip.stencil_image = img
+    ip.invert_stencil = False
+    ip.use_stencil_layer = True
 
 
 def grow(px, cov, steps=DILATE, size=SIZE):
@@ -507,8 +607,10 @@ def set_brush(context, color, blend='MIX'):
         ip.unified_paint_settings.color = color
 
 
-def start_painting(context, obj, img, through):
-    """Texture Paint on `img` through uv_normal (Object Mode -> Texture Paint)."""
+def start_painting(context, obj, img, seen=None):
+    """Texture Paint on `img` through uv_normal (Object Mode -> Texture Paint). The brush
+    always stops at the first surface under it (Occlude); `seen` (per pixel, None: all)
+    is where the camera sees the mesh - the stencil keeps the paint there."""
     me = obj.data
     me.uv_layers.active = me.uv_layers[UV_NORMAL]
     if obj.mode != 'TEXTURE_PAINT':
@@ -516,8 +618,9 @@ def start_painting(context, obj, img, through):
     ip = context.tool_settings.image_paint
     ip.mode = 'IMAGE'
     ip.canvas = img
-    ip.use_occlude = not through
-    ip.use_backface_culling = not through
+    ip.use_occlude = True
+    ip.use_backface_culling = True
+    set_stencil(context, obj, seen)
 
 
 def save_dirty():

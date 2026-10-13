@@ -33,7 +33,7 @@ import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
-from . import core, gn_builder, paint_tex
+from . import core, gn_builder, paint_session, paint_tex
 
 L1, L2 = gn_builder.LAYERS
 STASH = gn_builder.MASK2_STASH
@@ -382,6 +382,7 @@ def _stroke_running():
 
 def _tick():
     try:
+        paint_session.tick()        # the camera brush changed away: its overlays back
         obj = _active_object()
         if not _qualifies(obj):
             # strokes made meanwhile (fewer than 4 cameras, other mode) are never claimed later

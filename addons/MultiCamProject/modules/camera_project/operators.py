@@ -4,7 +4,7 @@ import bpy
 import numpy as np
 from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import core, gn_builder, paint_sync, paint_tex, wrapper
+from . import core, gn_builder, paint_session, paint_sync, paint_tex, wrapper
 
 
 def _mesh_poll(context):
@@ -617,8 +617,10 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         through = obj is not None and core.data(obj).project_through
         reach = ("Project through is on: the brush also reaches faces the mesh hides from "
                  "this camera" if through else
-                 "Project through is off: the mesh blocks it - only the faces this camera "
-                 "really sees take paint (they become the paint mask)")
+                 "Project through is off: the mesh blocks it - only what this camera "
+                 "really sees takes paint (a stencil, per pixel)")
+        reach += ".\nThe brush stops at the first surface under it. Overlays are off while "
+        reach += "this brush is in use"
         return {
             'PAINT': f"Paint Camera Projection: paint where this camera's photo shows "
                      f"({layer}).\n{reach}.\nShift+drag while painting: smooth"
@@ -702,6 +704,8 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
                     self.report({'INFO'}, f"{n} selected face(s) hidden from '{cam.name}' "
                                           "left out (Project through fills them)")
             paint_sync.sync(obj)
+        paint_session.begin(context, obj, cam, 'ERASE' if self.mode == 'ERASE' else 'PAINT',
+                            False, layer, color)
         return {'FINISHED'}
 
     def _texture(self, context, obj, cam, slot):
@@ -727,40 +731,37 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if new:
             core.ensure_material(obj)       # MCP_ gets the texture's nodes
         through = core.data(obj).project_through and self.mode != 'ERASE'
-        blocked = None
+        # per pixel: what the camera really sees (a chair hides the table behind it); the
+        # brush is kept there by Texture Paint's stencil - no face selection on screen
+        seen = None
         if self.mode != 'ERASE' and not through:
-            blocked = core.visible_parts(obj, cam, scene)   # per pixel paint: partly seen is enough
+            seen = paint_tex.seen_pixels(obj, cam, scene)
+        if obj.get(MASK_KEY):           # the face selection mask of older versions: off
+            obj.data.use_paint_mask = False
+            del obj[MASK_KEY]
         polys = obj.data.polygons
         color = core.SLOT_COLORS[slot]
         if self.mode == 'FLOOD':
             picked = np.zeros(len(polys), dtype=bool)
             polys.foreach_get("select", picked)
-            faces = picked & blocked if blocked is not None else picked
-            cov = paint_tex.coverage(obj, paint_tex.mesh_triangles(obj.data, faces))
+            cov = paint_tex.coverage(obj, paint_tex.mesh_triangles(obj.data, picked))
+            if seen is not None:
+                hidden = int((cov & ~seen).sum())
+                cov = cov & seen
+                if hidden:
+                    self.report({'INFO'}, f"Parts of the selection hidden from '{cam.name}' "
+                                          "left out (Project through fills them)")
             paint_tex.queue(obj, kind, paint_tex.fill_fn(cov, color))
             if kind == "CMX2":              # cameras 4-6 show: cameras 1-3 off there
                 paint_tex.queue(obj, "CMX1", paint_tex.claim_fn(cov))
-            n = int(picked.sum() - faces.sum())
-            if n:
-                self.report({'INFO'}, f"{n} selected face(s) hidden from '{cam.name}' "
-                                      "left out (Project through fills them)")
-        elif self.mode == 'PAINT':
-            if blocked is not None:     # the brush only reaches what the camera sees
-                polys.foreach_set("select", blocked.tolist())
-                obj.data.use_paint_mask = True
-                obj[MASK_KEY] = cam.name
-            elif obj.get(MASK_KEY):
-                obj.data.use_paint_mask = False
-                del obj[MASK_KEY]
-        elif obj.get(MASK_KEY):         # Erase reaches the whole mesh
-            obj.data.use_paint_mask = False
-            del obj[MASK_KEY]
-        paint_tex.start_painting(context, obj, img, through)
+        paint_tex.start_painting(context, obj, img, seen)
         if self.mode == 'ERASE':
             paint_tex.set_brush(context, None, 'ADD_ALPHA' if self.shift else 'ERASE_ALPHA')
         else:
             paint_tex.set_brush(context, color)
         paint_sync.reset_texture(obj)
+        paint_session.begin(context, obj, cam, 'ERASE' if self.mode == 'ERASE' else 'PAINT',
+                            True, img.name, color)
         return {'FINISHED'}
 
 

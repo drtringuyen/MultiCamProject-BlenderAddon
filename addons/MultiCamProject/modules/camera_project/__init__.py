@@ -1,7 +1,7 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import props, operators, ui, paint_sync, paint_tex
+from . import props, operators, ui, paint_sync, paint_tex, paint_session
 
 
 @persistent
@@ -37,6 +37,7 @@ def register():
     ui.register()
     paint_sync.register()
     paint_tex.register()
+    paint_session.register()
     bpy.app.handlers.load_post.append(_on_load)
     bpy.app.handlers.save_pre.append(_on_save_pre)
     bpy.app.timers.register(_migrate_now, first_interval=0.1)
@@ -47,6 +48,7 @@ def unregister():
         bpy.app.handlers.load_post.remove(_on_load)
     if _on_save_pre in bpy.app.handlers.save_pre:
         bpy.app.handlers.save_pre.remove(_on_save_pre)
+    paint_session.unregister()
     paint_tex.unregister()
     paint_sync.unregister()
     ui.unregister()

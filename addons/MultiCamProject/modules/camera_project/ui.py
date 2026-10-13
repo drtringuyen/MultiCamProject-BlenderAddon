@@ -2,7 +2,7 @@ import bpy
 from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
 from ... import gate
-from . import core, paint_tex
+from . import core, paint_session, paint_tex
 from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
 
 
@@ -337,10 +337,12 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         tools = line.row(align=True)            # vertex paint VCMix with this camera's color
         tools.scale_y = TOOL_SCALE
         tools.scale_x = TOOL_WIDTH
+        using = paint_session.current(obj)     # (camera, tool) the viewport paints with
         for mode, _name, icon in CAM_BRUSHES:
             sub = tools.row(align=True)
             sub.enabled = mode != 'FLOOD' or flood
-            op = sub.operator("multicamproject.cam_paint", text="", **_icon(icon))
+            op = sub.operator("multicamproject.cam_paint", text="", depress=using == (cam.name, mode),
+                              **_icon(icon))
             op.camera, op.mode = cam.name, mode
         # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
         tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
