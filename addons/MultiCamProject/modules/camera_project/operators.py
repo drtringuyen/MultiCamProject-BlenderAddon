@@ -762,14 +762,12 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             return {'CANCELLED'}
         if new:
             core.ensure_material(obj)       # MCP_ gets the texture's nodes
-        through = core.data(obj).project_through and self.mode != 'ERASE'
         # per pixel: what the camera really sees (a chair hides the table behind it); the
         # brush is kept there by Texture Paint's stencil - no face selection on screen
         seen = None
-        if self.mode != 'ERASE' and not through:
+        if self.mode != 'ERASE' and paint_tex.camera_mask_on(scene, obj):
             seen = paint_tex.seen_pixels(obj, cam, scene)
-        if obj.get(MASK_KEY):           # the face selection mask of older versions: off
-            obj.data.use_paint_mask = False
+        if MASK_KEY in obj:
             del obj[MASK_KEY]
         polys = obj.data.polygons
         color = core.SLOT_COLORS[slot]
@@ -786,6 +784,9 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             paint_tex.queue(obj, kind, paint_tex.fill_fn(cov, color))
             if kind == "CMX2":              # cameras 4-6 show: cameras 1-3 off there
                 paint_tex.queue(obj, "CMX1", paint_tex.claim_fn(cov))
+        # the face selection mask never stays on while the camera brush paints: it hides
+        # the colors (Fill needed it for its selection - read above, so off after it too)
+        obj.data.use_paint_mask = False
         paint_tex.start_painting(context, obj, img, seen)
         if self.mode == 'ERASE':
             paint_tex.set_brush(context, None, 'ADD_ALPHA' if self.shift else 'ERASE_ALPHA')

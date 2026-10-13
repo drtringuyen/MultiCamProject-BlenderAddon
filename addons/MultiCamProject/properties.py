@@ -76,6 +76,13 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "mask, CMX1_ / CMX2_ cameras) - precise, not tied to the vertices. Off: they "
                     "paint VCMix / VCMix2 as before, and MCP_ ignores the textures (kept, "
                     "toggle back any time)")
+    camera_mask: BoolProperty(
+        name="Camera Mask", default=True,
+        update=lambda self, context: _on_camera_mask(self, context),
+        description="Paint Textures: the brush only paints what the camera really sees "
+                    "(Texture Paint's Stencil Mask, per pixel; a part hidden behind the mesh "
+                    "stays as it is). Off: the brush paints every surface under it. Project "
+                    "through also turns it off")
 
     # role folders (folders.py; the bake and export folders live in their modules)
     scan_textures_folder: StringProperty(
@@ -100,6 +107,14 @@ def _on_paint_textures(props, context):
     except ImportError:
         return
     paint_tex.on_toggle(props, context)
+
+
+def _on_camera_mask(props, context):
+    try:
+        from .modules.camera_project import paint_tex
+    except ImportError:
+        return
+    paint_tex.on_camera_mask(context)
 
 
 def _on_original_normal(props, context):

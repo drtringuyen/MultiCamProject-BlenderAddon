@@ -167,8 +167,13 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         props = context.scene.multicamproject_props
         row = self._labeled(context, col, "Paint")
         on = props.paint_textures
-        row.prop(props, "paint_textures", toggle=True, icon='TEXTURE' if on else 'VPAINT_HLT',
-                 text="Textures 1K (CMX1_ / CMX2_)" if on else "Vertices (VCMix)")
+        split = row.split(factor=self.MODE_SPLIT, align=True)     # Camera Mask under Project through
+        split.prop(props, "paint_textures", toggle=True, icon='TEXTURE' if on else 'VPAINT_HLT',
+                   text="Textures 1K (CMX1_ / CMX2_)" if on else "Vertices (VCMix)")
+        sub = split.row(align=True)
+        sub.enabled = on                        # a stencil exists in Texture Paint only
+        sub.active = not d.project_through      # Project through paints everything anyway
+        sub.prop(props, "camera_mask", toggle=True, icon='MOD_MASK')
         why = paint_tex.problem(obj, context.scene) if on else ""
         if why:
             r = col.row()

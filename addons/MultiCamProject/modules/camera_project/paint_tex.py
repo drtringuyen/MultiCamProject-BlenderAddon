@@ -398,12 +398,45 @@ def raster_colors(tris, colors, size=SIZE, depth=None, clip=True):
     return (np.clip(px, 0.0, 1.0) if clip else px), cov
 
 
-DEPTH_SIZE = 2048       # the camera's depth map for seen_pixels
+DEPTH_SIZE = 1024       # the camera's depth map for seen_pixels (the GPU read back is the cost)
 SEEN_REL = 0.02         # a pixel this much (of its distance) behind the nearest surface is still seen
 SEEN_ABS = 0.01         # + this many metres
 
 
+_seen = {}          # (object, camera, their state) -> seen_pixels, the last few
+SEEN_KEEP = 6
+
+
+def _seen_key(obj, cam, scene):
+    from . import core
+    me = obj.data
+    co = np.empty(len(me.vertices) * 3, np.float32)
+    me.vertices.foreach_get("co", co)
+    cd = cam.data
+    return (obj.name, cam.name, len(me.polygons), float(co.sum()), float(np.abs(co).sum()),
+            tuple(round(x, 6) for row in core.world_matrix(obj) for x in row),
+            tuple(round(x, 6) for row in core.world_matrix(cam) for x in row),
+            cd.type, round(cd.lens, 5), round(cd.sensor_width, 5), round(cd.ortho_scale, 5),
+            round(cd.clip_start, 6), round(core.image_aspect(core.cam_image(cam), scene, load=False), 6))
+
+
 def seen_pixels(obj, cam, scene, size=SIZE):
+    """seen_pixels_now, remembered: clicking the same camera again (or back) is instant
+    until the mesh, the object or the camera moves."""
+    key = _seen_key(obj, cam, scene)
+    got = _seen.get(key)
+    if got is None:
+        got = _seen[key] = seen_pixels_now(obj, cam, scene, size)
+        for k in list(_seen)[:-SEEN_KEEP]:
+            del _seen[k]
+    return got
+
+
+def clear_seen():
+    _seen.clear()
+
+
+def seen_pixels_now(obj, cam, scene, size=SIZE):
     """Per pixel of uv_normal: `cam` really sees it - in its frame, facing it and not
     behind another part of the mesh (a chair in front of the table). Two GPU passes: the
     mesh's depth from the camera, then every pixel's own depth compared with it."""
@@ -465,6 +498,7 @@ def seen_pixels(obj, cam, scene, size=SIZE):
 
 
 STENCIL = "MCP_Camera Sees"     # the stencil image: white where the camera sees the object
+_stencil_holds = [None]         # the seen_pixels array the stencil image holds now
 
 
 def set_stencil(context, obj, seen):
@@ -480,14 +514,38 @@ def set_stencil(context, obj, seen):
             bpy.data.images.remove(img)
         img = bpy.data.images.new(STENCIL, SIZE, SIZE, alpha=False)
         img.colorspace_settings.name = 'Non-Color'
-    v = seen.astype(np.float32)
-    img.pixels.foreach_set(np.c_[v, v, v, np.ones_like(v)].ravel())
-    img.update()
+        _stencil_holds[0] = None
+    if _stencil_holds[0] is not seen:       # the same (cached) mask again: no 1K write
+        v = seen.astype(np.float32)
+        img.pixels.foreach_set(np.c_[v, v, v, np.ones_like(v)].ravel())
+        img.update()
+        _stencil_holds[0] = seen
     me = obj.data
     me.uv_layer_stencil = me.uv_layers[UV_NORMAL]
     ip.stencil_image = img
     ip.invert_stencil = False
     ip.use_stencil_layer = True
+
+
+def camera_mask_on(scene, obj):
+    """The brush keeps to what the camera sees: the panel's Camera Mask, Project through off."""
+    from . import core
+    props = getattr(scene, "multicamproject_props", None)
+    return bool(getattr(props, "camera_mask", True)) and not core.data(obj).project_through
+
+
+def on_camera_mask(context):
+    """Camera Mask toggled while a camera brush paints: its stencil on / off right away."""
+    from . import paint_session
+    obj = context.active_object
+    using = paint_session.current(obj)
+    if using is None or obj.mode != 'TEXTURE_PAINT':
+        return
+    cam = bpy.data.objects.get(using[0])
+    if using[1] == 'PAINT' and cam is not None and camera_mask_on(context.scene, obj):
+        set_stencil(context, obj, seen_pixels(obj, cam, context.scene))
+    else:
+        set_stencil(context, obj, None)
 
 
 def grow(px, cov, steps=DILATE, size=SIZE):
