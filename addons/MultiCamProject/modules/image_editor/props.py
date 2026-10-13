@@ -76,7 +76,7 @@ class MULTICAMPROJECT_InpaintSettings(bpy.types.PropertyGroup):
     auto_fill: BoolProperty(
         name="Fill on Release", default=True,
         description="Fill as soon as a brush stroke or a lasso ends. Off: build the "
-                    "selection first, F fills it")
+                    "selection first, Enter fills it")
     show_uv: BoolProperty(
         name="UV", default=False, update=_uv_changed,
         description="Show the UV overlay over the image while Inpaint runs (off: the "

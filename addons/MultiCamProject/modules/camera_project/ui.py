@@ -198,9 +198,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         sub = header.row(align=True)
         # Isolate (solo shows only this object) · Airbrush (camera Paint / Erase)
         props = context.scene.multicamproject_props
-        sub.prop(props, "solo_isolate", text="Isolate")
-        sub.separator()
-        sub.prop(props, "airbrush", text="", toggle=True, icon='BRUSH_DATA')
+        opt = sub.row(align=True)
+        opt.alignment = 'RIGHT'                 # right next to the Airbrush button
+        opt.prop(props, "solo_isolate", text="Isolate")
+        sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
         # yellow: keep the cameras as picked - Resort no longer red
         sub.operator("multicamproject.confirm_cameras", text="", icon='CHECKMARK',
                      depress=d.resorted)

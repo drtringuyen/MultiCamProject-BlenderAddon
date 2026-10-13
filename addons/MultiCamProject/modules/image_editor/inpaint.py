@@ -8,17 +8,18 @@ image, never saved) and the editor shows it. Every edit goes into that copy only
   B  Brush   paint the selection (Alt / Ctrl: erase it)
   L  Lasso   drag a free lasso, or click points (click point 1 / double-click / Enter
              closes); Alt / Ctrl subtracts
-  F  Fill    fill the selection (done on release when "Fill on Release" is on)
+  F  Radius  drag the brush size (click / Enter keeps it, Esc / right-click puts it back)
+  Enter      fill the selection (done on release when "Fill on Release" is on)
 Each fill is one step of the session's own undo (Ctrl+Z / Ctrl+Shift+Z, also in the panel):
 pixel writes are outside Blender's undo. Fills are not written into the 8K copy (0.3 s each:
 foreach_set + the GPU upload); each is drawn as a texture over the editor (the copy is a byte
 sRGB image shown without view transform, so its pixels draw as they are). The copy gets the
 pixels at Save, or when the undo limit drops a fill.
 
-Enter / Save: the copy is written as the source's _inpaint file (the original stays as it was)
+Shift+Enter / Save: the copy is written as the source's _inpaint file (the original stays as it was)
 and everything that shows the source takes it - what was made from it is outdated (a BG or
 BAo_: 05 Bake Albedo again, an ALB_: 07 Generate Normal again). Esc, another selection or
-another image in the editor end the modal like Esc and ask: Save / Discard / Keep (the copy
+another image in the editor end the modal (Esc first drops a lasso being drawn) and ask: Save / Discard / Keep (the copy
 waits; the panel resumes or ends it).
 
 The fill itself is inpaint_fill.py (pure numpy). Each UV island of uv_normal (plus its bake
@@ -578,10 +579,10 @@ def _draw_status(op, s, region):
     if blf is None:
         return
     st = props.inpaint_settings()
-    tool_txt = ("Brush: paint · Alt/Ctrl erase · [ ] size" if st.mode == 'BRUSH' else
+    tool_txt = ("Brush: paint · Alt/Ctrl erase · F / [ ] size" if st.mode == 'BRUSH' else
                 "Lasso: drag, or click points · Alt/Ctrl subtract")
-    text = (f"Inpaint {s.alb_name} — {tool_txt} · B/L tool · F fill · Alt+A deselect · "
-            f"Ctrl+Z / Ctrl+Shift+Z · Enter save · Esc ask   ({len(s.undo)} fill(s))")
+    text = (f"Inpaint {s.alb_name} — {tool_txt} · B/L tool · Enter fill · Alt+A deselect · "
+            f"Ctrl+Z / Ctrl+Shift+Z · Shift+Enter save · Esc cancel   ({len(s.undo)} fill(s))")
     y = region.height - 24
     sh = gpu.shader.from_builtin('UNIFORM_COLOR')
     batch = batch_for_shader(sh, 'TRI_FAN', {"pos": [(0, y), (region.width, y),
@@ -609,8 +610,8 @@ def _selection_key(context):
 
 class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
     """Remove spots (markers) from the shown ALB_, BAo_ or camera photo on a copy: Brush or
-    Lasso a selection, it fills from the pixels around it. Enter saves the copy as the
-    _inpaint file (the original stays), Esc asks. Another selection or another image in this
+    Lasso a selection, Enter fills it from the pixels around it. Shift+Enter saves the copy
+    as the _inpaint file (the original stays), Esc cancels (asks when there are fills). Another selection or another image in this
     editor asks too"""
     bl_idname = "multicamproject.inpaint"
     bl_label = "Inpaint"
@@ -654,6 +655,7 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         self._hover_px = None
         self._hover_region = None
         self._last_click = (0.0, None)
+        self._resize = None         # F: (centre region xy, size before, region px per image px)
         _op = self
         context.window_manager.modal_handler_add(self)
         redraw()
@@ -742,6 +744,9 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
             return {'PASS_THROUGH'}
         st = props.inpaint_settings(context)
 
+        if self._resize is not None:            # F: the brush size follows the mouse
+            return self._resizing(event, st)
+
         if et in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
             inside = self._in_region(event)
             self._hover_region = self._region_xy(event) if inside else None
@@ -769,10 +774,14 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
                 return {'RUNNING_MODAL'}
             return self._ask(context, None)
         if et in {'RET', 'NUMPAD_ENTER'}:
+            if event.shift:
+                return self._save(context)
             if len(self._points) >= 3:
-                self._close_lasso(st)
-                return {'RUNNING_MODAL'}
-            return self._save(context)
+                self._close_lasso(st, fill=True)
+            else:
+                self._fill(st)
+            redraw()
+            return {'RUNNING_MODAL'}
         if et == 'Z' and event.ctrl:
             if self._points and not event.shift:
                 self._points.pop()
@@ -784,8 +793,8 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
             self._points = []
         elif et == 'L':
             st.mode = 'LASSO'
-        elif et == 'F':
-            self._fill(st)
+        elif et == 'F' and self._in_region(event):
+            self._start_resize(event, st)
         elif et == 'A' and event.alt:
             self._points = []
             s.clear_selection()
@@ -865,7 +874,34 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
             self._free = False
         return {'RUNNING_MODAL'}
 
-    def _close_lasso(self, st):
+    def _start_resize(self, event, st):
+        """F, like Blender's brush radius: the circle stays put, the cursor on its rim."""
+        st.mode = 'BRUSH'
+        self._points = []
+        scale = self._px_scale()
+        rx, ry = self._region_xy(event)
+        self._resize = ((rx - st.size * 0.5 * scale, ry), st.size, scale)
+        self._hover_region = self._resize[0]
+        redraw()
+
+    def _resizing(self, event, st):
+        (cx, cy), before, scale = self._resize
+        et, ev = event.type, event.value
+        if et in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
+            rx, ry = self._region_xy(event)
+            st.size = max(2, min(2048, round(2.0 * math.hypot(rx - cx, ry - cy) / scale)))
+        elif ev == 'PRESS' and et in {'LEFTMOUSE', 'RET', 'NUMPAD_ENTER', 'SPACE', 'F'}:
+            self._resize = None
+        elif ev == 'PRESS' and et in {'ESC', 'RIGHTMOUSE'}:
+            st.size = before
+            self._resize = None
+        else:
+            return {'RUNNING_MODAL'}
+        self._hover_region = self._resize[0] if self._resize else self._region_xy(event)
+        redraw()
+        return {'RUNNING_MODAL'}
+
+    def _close_lasso(self, st, fill=False):
         s, pts = self._s, self._points
         self._points = []
         if len(pts) < 3:
@@ -883,7 +919,7 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         else:
             s.sel[y0:y1, x0:x1] |= m
         s.touch((x0, y0, x1, y1))
-        if st.auto_fill and not self._subtract:
+        if (st.auto_fill or fill) and not self._subtract:
             self._fill(st)
         redraw()
 
