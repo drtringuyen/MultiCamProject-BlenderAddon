@@ -197,6 +197,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             bake_ui = None
         if bake_ui is not None:
             bao = sub.row(align=True)
+            bao.alignment = 'RIGHT'             # the label right next to its Inpaint icon
             bake_ui.draw_bao_buttons(bao, obj)
             sub.separator(factor=0.5)
         sub.prop(props, "solo_isolate", text="", toggle=True,
