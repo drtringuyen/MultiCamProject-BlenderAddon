@@ -240,14 +240,34 @@ class Line:
         return self.budget - self.now
 
 
+def _stage_rank(scene, ln):
+    import bpy
+    from ... import steps
+    obj = bpy.data.objects.get(ln.name)
+    return list(steps.STAGES).index(steps.stage(obj, scene)) if obj is not None else -1
+
+
+# the list's sort columns: key(scene, Line); ascending = the natural order (A-Z, small first,
+# green -> orange -> black, Raw -> Locked)
+SORT_KEYS = {
+    'STATE': lambda sc, ln: ORDER[ln.state],
+    'NAME': lambda sc, ln: ln.label.lower(),
+    'AREA': lambda sc, ln: ln.area,
+    'BUDGET': lambda sc, ln: ln.budget,
+    'NOW': lambda sc, ln: ln.now,
+    'TOGO': lambda sc, ln: ln.delta if not ln.room else 0,
+    'STAGE': _stage_rank,
+}
+
+
 def delta_text(d):
     """'+23K' / '-5.3K'."""
     return f"+{short(d)}" if d >= 0 else f"-{short(-d)}"
 
 
 def table(context):
-    """The list as the panel shows it: [Line], green -> orange ->
-    black, biggest area first in each. Fills STATE (the rows' colour blocks)."""
+    """The list as the panel shows it: [Line], sorted by the header's sort column (default:
+    name), ROOM last. Fills STATE (the rows' colour blocks)."""
     from ... import roles
     s = getattr(context.scene, "multicamproject_estimation", None)
     if s is None or not s.rows:
@@ -266,7 +286,12 @@ def table(context):
     for r in rows:
         state, now = row_state(context, r, export)
         out.append(Line(r.name, labels[r.name], r.area, r.budget, now, state, r.room))
-    out.sort(key=lambda ln: (ln.room, ORDER[ln.state], -ln.area))
+    # by the header's sort column (name, then area, breaks ties); ROOM always after the
+    # budget's objects, sorted the same way
+    key = SORT_KEYS[s.sort_by]
+    out.sort(key=lambda ln: (ln.label.lower(), -ln.area))
+    out.sort(key=lambda ln: key(context.scene, ln), reverse=s.sort_reverse)
+    out.sort(key=lambda ln: ln.room)
     STATE.clear()
     STATE.update({ln.name: ln.state for ln in out})
     return out

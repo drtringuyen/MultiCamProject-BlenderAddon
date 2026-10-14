@@ -1,8 +1,8 @@
 """Estimation settings and the last Calculate's rows - on the Scene, so they belong to the
 file. The rows are a snapshot: Calculate again after the meshes change."""
 import bpy
-from bpy.props import (BoolProperty, CollectionProperty, FloatProperty, FloatVectorProperty,
-                       IntProperty, PointerProperty, StringProperty)
+from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatProperty,
+                       FloatVectorProperty, IntProperty, PointerProperty, StringProperty)
 
 
 def _row_color(self):
@@ -60,6 +60,11 @@ class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):
     active_index: IntProperty(default=-1, update=_on_row)
     collection_name: StringProperty()   # the OBJECTS collection of the last Calculate
     calculated_budget: IntProperty()    # the Budget the rows were split with
+    sort_by: EnumProperty(              # the list's sort column (a header click)
+        items=[('STATE', "State", ""), ('NAME', "Name", ""), ('AREA', "Area", ""),
+               ('BUDGET', "Budget", ""), ('NOW', "Now", ""), ('TOGO', "To Go", ""),
+               ('STAGE', "Stage", "")], default='NAME')
+    sort_reverse: BoolProperty()
     color: FloatVectorProperty(
         size=3, subtype='COLOR_GAMMA', get=_total_color,
         description="Green: all the objects together are within the Budget · Orange: over it")

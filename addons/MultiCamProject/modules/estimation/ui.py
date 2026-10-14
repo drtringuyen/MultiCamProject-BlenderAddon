@@ -77,13 +77,30 @@ def _draw_tail(cells, context, obj, st):
         link_ui.draw_row_button(cells[LINKS], obj)
 
 
+def _sort_button(layout, s, column, text):
+    """A header cell that sorts the list by its column (again: reversed). The sorted column
+    shows its arrow; the colour column has the arrow only."""
+    sub = layout.row(align=True)
+    if column == 'NAME':
+        sub.alignment = 'LEFT'      # over the names
+    on = s.sort_by == column
+    icon = ('SORT_DESC' if s.sort_reverse else 'SORT_ASC') if on else 'NONE'
+    if not text and not on:
+        icon = 'SORTSIZE'
+    sub.operator("multicamproject.estimation_sort", text=text, icon=icon,
+                 emboss=False, depress=on).column = column
+
+
 def _draw_row(col, context, s, index, ln, st):
     item = s.rows[index]
     cells = _line(col)
     _blocks(cells, item)
     active = index == s.active_index
-    # the name focuses the object (selected, active, framed) - the active row pressed in
-    op = cells[NAME].operator("multicamproject.estimation_select", text=ln.label,
+    # the name focuses the object (selected, active, framed) - the active row pressed in;
+    # left-aligned, so the names start in one line
+    left = cells[NAME].row(align=True)
+    left.alignment = 'LEFT'
+    op = left.operator("multicamproject.estimation_select", text=ln.label,
                               emboss=active, depress=active,
                               icon='HOME' if ln.room else core.ICONS[ln.state])
     op.object_name = ln.name
@@ -141,10 +158,12 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         box = layout.box()
         col = box.column(align=True)
         cells = _line(col)
-        _blocks(cells, None)
-        for i, text in ((NAME, "Object"), (AREA, "Area"), (BUDGET, "Budget"), (NOW, "Now"),
-                        (TOGO, "To Go"), (STAGE, "Stage")):
-            _cell(cells[i], text)       # centred, as the names (buttons) are
+        cells[R].label(text="")
+        for i, column, text in ((L, 'STATE', ""), (NAME, 'NAME', "Object"),
+                                (AREA, 'AREA', "Area"), (BUDGET, 'BUDGET', "Budget"),
+                                (NOW, 'NOW', "Now"), (TOGO, 'TOGO', "To Go"),
+                                (STAGE, 'STAGE', "Stage")):
+            _sort_button(cells[i], s, column, text)
         _cell(cells[FIX], "", 'FILE_REFRESH')
         cells[LINKS].label(text="")
         col = box.column(align=True)

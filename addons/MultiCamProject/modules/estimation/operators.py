@@ -43,7 +43,27 @@ class MULTICAMPROJECT_OT_EstimationSelect(bpy.types.Operator):
         return {'FINISHED'}
 
 
-CLASSES = (MULTICAMPROJECT_OT_EstimationCalculate, MULTICAMPROJECT_OT_EstimationSelect)
+class MULTICAMPROJECT_OT_EstimationSort(bpy.types.Operator):
+    """Sort the list by this column - click again to reverse it"""
+    bl_idname = "multicamproject.estimation_sort"
+    bl_label = "Sort"
+    bl_options = {'INTERNAL'}
+
+    column: StringProperty()
+
+    def execute(self, context):
+        s = context.scene.multicamproject_estimation
+        if s.sort_by == self.column:
+            s.sort_reverse = not s.sort_reverse
+        else:
+            s.sort_by, s.sort_reverse = self.column, False
+        from ... import steps
+        steps.forget()              # the memoized table
+        return {'FINISHED'}
+
+
+CLASSES = (MULTICAMPROJECT_OT_EstimationCalculate, MULTICAMPROJECT_OT_EstimationSelect,
+           MULTICAMPROJECT_OT_EstimationSort)
 
 
 def register():
