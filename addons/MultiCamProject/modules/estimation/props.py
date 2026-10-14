@@ -11,6 +11,12 @@ def _row_color(self):
     return core.COLORS[core.STATE.get(self.name, core.NEW)]
 
 
+def _total_color(self):
+    """The total line's colour block: the budget's state as the panel last drew it."""
+    from . import core
+    return core.COLORS[core.TOTAL_STATE[0]]
+
+
 def _on_row(self, context):
     """A click on a row of the list focuses its object."""
     from . import core
@@ -54,6 +60,9 @@ class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):
     active_index: IntProperty(default=-1, update=_on_row)
     collection_name: StringProperty()   # the OBJECTS collection of the last Calculate
     calculated_budget: IntProperty()    # the Budget the rows were split with
+    color: FloatVectorProperty(
+        size=3, subtype='COLOR_GAMMA', get=_total_color,
+        description="Green: all the objects together are within the Budget · Orange: over it")
 
 
 CLASSES = (MULTICAMPROJECT_EstimationRow, MULTICAMPROJECT_EstimationSettings)

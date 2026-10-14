@@ -169,6 +169,7 @@ DONE, OVER, NEW = 'DONE', 'OVER', 'NEW'
 COLORS = {DONE: (0.20, 0.75, 0.25), OVER: (1.0, 0.50, 0.05), NEW: (0.0, 0.0, 0.0)}
 ICONS = {DONE: 'STRIP_COLOR_04', OVER: 'STRIP_COLOR_02', NEW: 'RADIOBUT_OFF'}
 STATE = {}      # row name -> state, filled by the panel's draw (read by the row's colour)
+TOTAL_STATE = [DONE]    # the total line's colour: all the budget's objects together
 
 
 def follow_copy(scene, obj):

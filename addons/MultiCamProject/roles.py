@@ -94,6 +94,18 @@ def set_shown(scene, view_layer, role, show):
     return colls
 
 
+def draw_toggles(layout, scene, view_layer):
+    """The hide / show buttons of the HEADER roles found in the view layer (the EXPORT
+    header, the Estimation list)."""
+    if not hasattr(bpy.types, "MULTICAMPROJECT_OT_toggle_collection"):     # Export module off
+        return
+    for role in HEADER:
+        if collections(scene, view_layer, role):
+            layout.operator("multicamproject.toggle_collection", text="",
+                            depress=shown(scene, view_layer, role),
+                            icon=ROLES[role][2]).role = role
+
+
 CREATABLE = ('ORIGINALS', 'EXPORT')     # the add-on makes these itself (Remesh, 07 Add)
 
 

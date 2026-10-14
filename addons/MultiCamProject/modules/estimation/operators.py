@@ -31,6 +31,11 @@ class MULTICAMPROJECT_OT_EstimationSelect(bpy.types.Operator):
     object_name: StringProperty()
 
     def execute(self, context):
+        s = context.scene.multicamproject_estimation
+        i = s.rows.find(self.object_name)
+        if i >= 0 and i != s.active_index:
+            s.active_index = i          # the row pressed in; its update focuses the object
+            return {'FINISHED'}
         why = core.focus(context, self.object_name)
         if why:
             self.report({'WARNING'}, why)

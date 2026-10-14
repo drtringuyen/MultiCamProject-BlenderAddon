@@ -2,25 +2,31 @@ import bpy
 
 from . import core
 
-
-def _block(row, item):
-    """A colour block cell: `item`'s state colour, or a gap (header / total rows)."""
-    cell = row.row(align=True)
-    cell.ui_units_x = 0.7
-    if item is not None:
-        cell.prop(item, "color", text="")
-    else:
-        cell.label(text="")
+# the columns, as fractions of the list's width: colour block, name, Area, Budget, Now,
+# To Go, colour block, Stage, the EXPORT fix, the Linking buttons (original Load / Offload +
+# Send Out / Receive). Splits, never ui units: header, rows and the total line up exactly
+WIDTHS = (0.02, 0.2, 0.095, 0.075, 0.075, 0.12, 0.02, 0.15, 0.045, 0.2)
+L, NAME, AREA, BUDGET, NOW, TOGO, R, STAGE, FIX, LINKS = range(len(WIDTHS))
 
 
-def _line(col, item=None):
-    """(name cell, number cells) between two colour blocks: the name gets a third of the
-    width, the 4 numbers share the rest equally."""
-    row = col.row(align=True)
-    _block(row, item)
-    split = row.row(align=True).split(factor=0.34, align=True)
-    _block(row, item)
-    return split.row(align=True), split.row(align=True)
+def _line(col, widths=WIDTHS):
+    """One line of the table: its cells, in WIDTHS' order."""
+    cells, rest, left = [], col.row(align=True), 1.0
+    for w in widths[:-1]:
+        split = rest.split(factor=w / left, align=True)
+        cells.append(split.row(align=True))
+        rest, left = split.row(align=True), left - w
+    cells.append(rest)
+    return cells
+
+
+def _blocks(cells, item):
+    """Both colour blocks: `item`'s colour (None: the header's gaps)."""
+    for i in (L, R):
+        if item is not None:
+            cells[i].prop(item, "color", text="")
+        else:
+            cells[i].label(text="")
 
 
 def _cell(layout, text, icon='NONE'):
@@ -30,14 +36,11 @@ def _cell(layout, text, icon='NONE'):
     cell.label(text=text, icon=icon)
 
 
-def _delta(nums, d):
+def _delta(layout, d):
     """The To Go cell: '+23K' (green square) or '-5.3K' in red."""
-    cell = nums.row(align=True)
+    cell = layout.row(align=True)
     cell.alert = d < 0
     _cell(cell, core.delta_text(d), 'STRIP_COLOR_04' if d >= 0 else 'STRIP_COLOR_01')
-
-
-_LINES = {}     # row name -> core.Line of this draw (filter_items -> draw_item)
 
 
 def _table(context):
@@ -46,55 +49,52 @@ def _table(context):
     return steps.memo(("estimation_table", context.scene.name), lambda: core.table(context))
 
 
-def _draw_links(layout, name):
-    """Prototype: the original's Load / Offload, then Send Out / Receive, at the row's end."""
+def _export_status(context):
+    """{name: export Status} of the EXPORT meshes (the fix column), {} without Export."""
     from ... import module_manager
-    obj = bpy.data.objects.get(name)
-    if obj is None or not module_manager.is_loaded("linking"):
+    if not module_manager.is_loaded("export"):
+        return {}
+    from ..export import status
+    try:
+        return status.scene_status(context.scene, cached=True)[1]
+    except Exception:
+        return {}
+
+
+def _draw_tail(cells, context, obj, st):
+    """Stage, the EXPORT fix, the Linking buttons."""
+    from ... import module_manager, steps
+    if obj is None:
         return
-    from ..linking import originals, ui as link_ui
-    right = layout.row(align=True)
-    originals.draw_toggle(right, obj)
-    link_ui.draw_row_button(right, obj)
+    if obj.type == 'MESH':
+        steps.draw_stage(cells[STAGE], context, obj, units=3.4)
+    if module_manager.is_loaded("export"):
+        from ..export import ui as export_ui
+        export_ui.draw_fix(cells[FIX], obj.name, st)
+    if module_manager.is_loaded("linking"):
+        from ..linking import originals, ui as link_ui
+        originals.draw_toggle(cells[LINKS], obj)
+        link_ui.draw_row_button(cells[LINKS], obj)
 
 
-class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
-    """The objects, green -> orange -> black: a click on a row focuses its object."""
-
-    def filter_items(self, context, data, propname):
-        items = getattr(data, propname)
-        lines = _table(context)
-        _LINES.clear()
-        _LINES.update({ln.name: ln for ln in lines})
-        place = {ln.name: i for i, ln in enumerate(lines)}
-        order = [place.get(it.name, len(lines) + i) for i, it in enumerate(items)]
-        # rows no longer in OBJECTS / ROOM (core.table left them out) are hidden
-        flags = [self.bitflag_filter_item if it.name in place else 0 for it in items]
-        return flags, order
-
-    def draw_item(self, context, layout, data, item, icon, active_data, active_propname,
-                  index=0):
-        ln = _LINES.get(item.name)
-        if ln is None:
-            layout.label(text=item.name)
-            return
-        name, nums = _line(layout.column(align=True), item)
-        name.label(text=ln.label, icon='HOME' if ln.room else core.ICONS[ln.state])
-        if ln.room:         # ROOM: no budget, no To Go
-            for text in (f"{ln.area:.2f} m²", "-", core.short(ln.now), ""):
-                _cell(nums, text)
-        else:
-            for text in (f"{ln.area:.2f} m²", core.short(ln.budget), core.short(ln.now)):
-                _cell(nums, text)
-            _delta(nums, ln.delta)
-        obj = bpy.data.objects.get(item.name)
-        if obj is not None and obj.type == 'MESH':
-            from ... import steps
-            steps.draw_stage(layout.row(align=True), context, obj, units=3.4)
-        _draw_links(layout, item.name)
-
-    def draw_filter(self, context, layout):
-        pass            # always sorted by state, then area
+def _draw_row(col, context, s, index, ln, st):
+    item = s.rows[index]
+    cells = _line(col)
+    _blocks(cells, item)
+    active = index == s.active_index
+    # the name focuses the object (selected, active, framed) - the active row pressed in
+    op = cells[NAME].operator("multicamproject.estimation_select", text=ln.label,
+                              emboss=active, depress=active,
+                              icon='HOME' if ln.room else core.ICONS[ln.state])
+    op.object_name = ln.name
+    if ln.room:         # ROOM: no budget, no To Go
+        texts = (f"{ln.area:.2f} m²", "-", core.short(ln.now), "")
+    else:
+        texts = (f"{ln.area:.2f} m²", core.short(ln.budget), core.short(ln.now))
+        _delta(cells[TOGO], ln.delta)
+    for i, text in zip((AREA, BUDGET, NOW, TOGO), texts):
+        _cell(cells[i], text)
+    _draw_tail(cells, context, bpy.data.objects.get(ln.name), st)
 
 
 class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
@@ -128,36 +128,46 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         sub.operator("multicamproject.estimation_calculate",
                      text=f"Calculate {coll.name}" if coll else "No OBJECTS collection",
                      icon='FILE_REFRESH')
+        from ... import roles       # hide / show OBJECTS, ROOM, EXPORT... (as in 09 Export)
+        roles.draw_toggles(row.row(align=True), context.scene, context.view_layer)
         if not s.rows:
             return
         if s.calculated_budget != s.budget:
             layout.label(text="Budget changed: Calculate again", icon='ERROR')
 
+        table = _table(context)
+        per = _export_status(context)
+        index = {r.name: i for i, r in enumerate(s.rows)}
         box = layout.box()
         col = box.column(align=True)
-        name, nums = _line(col)
-        name.label(text="Object")
-        for text in ("Area", "Budget", "Now", "To Go"):
-            _cell(nums, text)
-        shown = max(len(_table(context)), 1)
-        box.template_list("MULTICAMPROJECT_UL_Estimation", "", s, "rows", s, "active_index",
-                          rows=shown, maxrows=shown)
-        lines = [ln for ln in _table(context) if not ln.room]     # the budget's objects
+        cells = _line(col)
+        _blocks(cells, None)
+        for i, text in ((NAME, "Object"), (AREA, "Area"), (BUDGET, "Budget"), (NOW, "Now"),
+                        (TOGO, "To Go"), (STAGE, "Stage")):
+            _cell(cells[i], text)       # centred, as the names (buttons) are
+        _cell(cells[FIX], "", 'FILE_REFRESH')
+        cells[LINKS].label(text="")
         col = box.column(align=True)
+        for ln in table:
+            _draw_row(col, context, s, index[ln.name], ln, per.get(ln.name))
+
+        # the total, one line: its colour block = the budget's state, the counts at the end
+        lines = [ln for ln in table if not ln.room]     # the budget's objects
         tris = sum(ln.now for ln in lines)
         budget = sum(ln.budget for ln in lines)
-        name, nums = _line(col)
-        name.label(text=f"{len(lines)} objects")
-        for text in (f"{sum(ln.area for ln in lines):.2f} m²", core.short(budget),
-                     core.short(tris)):
-            _cell(nums, text)
-        _delta(nums, budget - tris)
+        core.TOTAL_STATE[0] = core.DONE if tris <= budget else core.OVER
+        cells = _line(box.column(align=True), WIDTHS[:STAGE] + (sum(WIDTHS[STAGE:]),))
+        _blocks(cells, s)
+        for i, text in ((NAME, f"{len(lines)} objects"),
+                        (AREA, f"{sum(ln.area for ln in lines):.2f} m²"),
+                        (BUDGET, core.short(budget)), (NOW, core.short(tris))):
+            _cell(cells[i], text)
+        _delta(cells[TOGO], budget - tris)
         count = [ln.state for ln in lines]
-        legend = box.row(align=True)
-        legend.active = False
-        legend.label(text=f"{count.count(core.DONE)} on budget", icon=core.ICONS[core.DONE])
-        legend.label(text=f"{count.count(core.OVER)} over", icon=core.ICONS[core.OVER])
-        legend.label(text=f"{count.count(core.NEW)} not worked on", icon=core.ICONS[core.NEW])
+        legend = cells[STAGE].row(align=True)       # Stage to the end: the counts
+        legend.alignment = 'CENTER'
+        for state in (core.DONE, core.OVER, core.NEW):     # on budget, over, not worked on
+            legend.label(text=str(count.count(state)), icon=core.ICONS[state])
         from ... import module_manager
         if module_manager.is_loaded("linking"):
             from ..linking import originals
@@ -195,7 +205,7 @@ def _draw_window(layout, context):
                icon='INFO')
 
 
-CLASSES = (MULTICAMPROJECT_UL_Estimation, MULTICAMPROJECT_PT_Estimation)
+CLASSES = (MULTICAMPROJECT_PT_Estimation,)
 
 
 def register():

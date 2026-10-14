@@ -52,6 +52,27 @@ def stage_text(obj, st):
     return label
 
 
+FIX_UNITS = 1.1
+
+
+def draw_fix(layout, name, st):
+    """The fix column (EXPORT list, Estimation list): a tick when ready, else one button
+    that fixes the object (st None = not in EXPORT: an empty place)."""
+    fix = layout.row(align=True)
+    fix.ui_units_x = FIX_UNITS
+    if st is None:
+        fix.label(text="", icon='BLANK1')
+    elif st.stage == 'READY':
+        fix.label(text="", icon='CHECKMARK')
+    elif st.stage == 'WARN':       # nothing to fix automatically: orange, no button
+        fix.label(text="", icon='ERROR')
+    else:
+        sub = fix.row(align=True)
+        sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
+        op = sub.operator("multicamproject.export_fix_object", text="", icon='FILE_REFRESH')
+        op.object_name = name
+
+
 class MULTICAMPROJECT_UL_export(bpy.types.UIList):
     """EXPORT meshes in ## order. Clicking a row selects and frames the object.
     [solo] [status] ENV_<prefix>. [##] <name> [hand] tris [size] [fix]"""
@@ -110,18 +131,7 @@ class MULTICAMPROJECT_UL_export(bpy.types.UIList):
         size.prop_menu_enum(bake, "tex_size",
                             text={'AUTO': "A", '1024': "1K", '2048': "2K", '4096': "4K",
                                   '8192': "8K"}.get(bake.tex_size, bake.tex_size))
-        # the fix column: one button per object that is not ready
-        fix = right.row(align=True)
-        fix.ui_units_x = 1.1
-        if st.stage == 'READY':
-            fix.label(text="", icon='CHECKMARK')
-        elif st.stage == 'WARN':       # nothing to fix automatically: orange, no button
-            fix.label(text="", icon='ERROR')
-        else:
-            sub = fix.row(align=True)
-            sub.alert = st.stage in {'OUTDATED', 'ISSUES', 'PROJECTION'}
-            op = sub.operator("multicamproject.export_fix_object", text="", icon='FILE_REFRESH')
-            op.object_name = item.name
+        draw_fix(right, item.name, st)
 
     def filter_items(self, context, data, propname):
         items = getattr(data, propname)
@@ -273,12 +283,8 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
                     icon='COLLECTION_COLOR_03')
         right = split.row(align=True)
         right.alignment = 'RIGHT'
-        vl = bpy.context.view_layer
-        for role in roles.HEADER:           # Objects, Original Mesh, Export, Cameras, Room, Template
-            if roles.collections(scene, vl, role):
-                right.operator("multicamproject.toggle_collection", text="",
-                               depress=roles.shown(scene, vl, role),
-                               icon=roles.ROLES[role][2]).role = role
+        # Objects, Original Mesh, Export, Cameras, Room, Template
+        roles.draw_toggles(right, scene, bpy.context.view_layer)
         _scene_label(right, scene, es)
 
     def _draw_info(self, layout, scene, es, scene_row=True):
