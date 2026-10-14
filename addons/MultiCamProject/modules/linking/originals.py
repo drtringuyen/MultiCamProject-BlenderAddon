@@ -281,6 +281,8 @@ class MULTICAMPROJECT_OT_OriginalsAll(bpy.types.Operator):
                 failed.append(f"{o.name}: {e}")
         for f in failed:
             self.report({'WARNING'}, f)
+        from ... import steps
+        steps.forget()          # the status line
         self.report({'INFO'}, f"{'Loaded' if self.load else 'Offloaded'} {len(done)} original(s)"
                               + (f", {len(failed)} failed" if failed else ""))
         return {'FINISHED'}
@@ -300,16 +302,67 @@ def draw_toggle(layout, obj):
                   depress=not off).object_name = obj.name
 
 
+# what a loaded scan adds to every save: measured on the offload files of
+# ENV_04_KR_BrotherBR (2026-10-14: Floor, 1.26M vertices = 109 MB)
+BYTES_PER_VERTEX = 86
+
+
+def status(scene):
+    """(originals, offloaded, MB the loaded ones add to each save) - memoized."""
+    from ... import steps
+
+    def count():
+        objs = candidates(scene)
+        off = [o for o in objs if is_offloaded(o)]
+        verts = sum(len(o.data.vertices) for o in objs if not is_offloaded(o))
+        return len(objs), len(off), verts * BYTES_PER_VERTEX / 1e6
+    return steps.memo(("originals_status", scene.name), count)
+
+
+class MULTICAMPROJECT_MT_Originals(bpy.types.Menu):
+    """Where the originals' meshes live"""
+    bl_idname = "MULTICAMPROJECT_MT_originals"
+    bl_label = "Originals"
+
+    def draw(self, context):
+        col = self.layout.column()
+        col.operator(MULTICAMPROJECT_OT_OriginalsAll.bl_idname,
+                     text="Offloaded - linked from 02.OBJECTS (fast, small saves)",
+                     icon='LINKED').load = False
+        col.operator(MULTICAMPROJECT_OT_OriginalsAll.bl_idname,
+                     text="Loaded - inside this file", icon='MESH_ICOSPHERE').load = True
+
+
 def draw_all(layout, context):
-    row = layout.row(align=True)
-    row.operator(MULTICAMPROJECT_OT_OriginalsAll.bl_idname, text="Offload All Originals",
-                 icon='LINKED').load = False
-    row.operator(MULTICAMPROJECT_OT_OriginalsAll.bl_idname, text="Load All",
-                 icon='MESH_ICOSPHERE').load = True
+    """[Originals: Offloaded / Loaded v] + the caller's buttons, and a status line under
+    them. Returns the row."""
+    n, off, mb = status(context.scene)
+    col = layout.column(align=True)
+    row = col.row(align=True)
+    if not n:
+        mode, icon = "none", 'MESH_ICOSPHERE'
+    elif off == n:
+        mode, icon = "Offloaded", 'LINKED'
+    elif off == 0:
+        mode, icon = "Loaded", 'MESH_ICOSPHERE'
+    else:
+        mode, icon = "Mixed", 'LINKED'
+    row.menu(MULTICAMPROJECT_MT_Originals.bl_idname, text=f"Originals: {mode}", icon=icon)
+    line = col.row()
+    line.active = False
+    if not n:
+        line.label(text="No originals", icon='INFO')
+    elif off == n:
+        line.label(text=f"All {n} originals offloaded - saves leave their meshes out",
+                   icon='CHECKMARK')
+    else:
+        line.label(text=f"{n - off} of {n} originals inside this file - each save writes "
+                        f"~{mb:,.0f} MB more (Offloaded avoids it)", icon='INFO')
     return row
 
 
-_classes = (MULTICAMPROJECT_OT_OriginalToggle, MULTICAMPROJECT_OT_OriginalsAll)
+_classes = (MULTICAMPROJECT_OT_OriginalToggle, MULTICAMPROJECT_OT_OriginalsAll,
+            MULTICAMPROJECT_MT_Originals)
 
 
 def register():

@@ -633,7 +633,8 @@ def draw_button(layout, context):
     sub = layout.row(align=True)
     sub.enabled = bool(n) and not jobs.busy()
     sub.operator(MULTICAMPROJECT_OT_EstimationAutomate.bl_idname,
-                 text=f"Automate ({n})" if n else "Automate", icon='PLAY')
+                 text=f"Automate Plan & Split Files ({n})" if n
+                 else "Automate Plan & Split Files", icon='PLAY')
 
 
 CLASSES = (MULTICAMPROJECT_OT_EstimationAutoPick, MULTICAMPROJECT_OT_EstimationFromActive,
