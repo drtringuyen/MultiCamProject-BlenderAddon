@@ -13,6 +13,11 @@ def _on_quality(self, context):
 class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
     """Global properties shared across all modules"""
 
+    work_show_02: BoolProperty(
+        name="2A - 2D", default=False,
+        description="A work window: the workflow was picked in the main file - its buttons "
+                    "stay folded unless opened here")
+
     debug_mode: BoolProperty(
         name="Debug Mode",
         description="Show extra-info-label and debug information",

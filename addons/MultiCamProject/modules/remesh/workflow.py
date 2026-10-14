@@ -603,6 +603,63 @@ def retopo_content(context, obj):
 RETOPO_CONTENT_TEXT = ("Select the mesh to start from too (the scan active), or turn off "
                        "\"Start from the Selected Mesh\" for an empty retopo")
 
+MATCH_SAMPLES = 3000        # scan vertices tested against each template part
+MATCH_DISTANCE = 0.10       # m: a sample this close to a part's faces lies on it
+
+
+def retopo_candidates(scene):
+    """The meshes a 2C retopo can start from: the ROOM_Template parts (the room box itself,
+    the parent of the parts, has every wall in one mesh: never a start)."""
+    from ... import roles, template_mesh
+    coll = roles.find(scene, 'TEMPLATE')
+    if coll is None:
+        return []
+    return [o for o in coll.all_objects if o.type == 'MESH' and not o.library
+            and o.name != template_mesh.NAME and not o.children]
+
+
+MATCH_AREA = 0.3           # and the scan is at least this much of the part's area
+
+
+def world_area(obj):
+    """obj's mesh area in m² (its scale taken as uniform)."""
+    me = obj.data
+    a = np.empty(len(me.polygons), dtype=np.float64)
+    me.polygons.foreach_get("area", a)
+    s = obj.matrix_world.to_scale()
+    return float(a.sum()) * abs(s.x * s.y * s.z) ** (2 / 3)
+
+
+def best_retopo_start(scan, candidates):
+    """(the candidate the scan lies on, its share 0-1) - the share of up to MATCH_SAMPLES
+    scan vertices within MATCH_DISTANCE of the candidate's faces (~7 ms a scan), among the
+    candidates the scan covers MATCH_AREA of (an object lying on the floor is no floor).
+    (None, 0) without candidates or vertices."""
+    import random
+    from mathutils.bvhtree import BVHTree
+    me = scan.data
+    n = len(me.vertices)
+    if not candidates or not n:
+        return None, 0.0
+    co = np.empty(n * 3, dtype=np.float64)
+    me.vertices.foreach_get("co", co)
+    co = co.reshape(-1, 3)
+    idx = random.Random(1).sample(range(n), min(MATCH_SAMPLES, n))
+    m = np.array(scan.matrix_world, dtype=np.float64)
+    pts = co[idx] @ m[:3, :3].T + m[:3, 3]
+    best, share = None, 0.0
+    area = world_area(scan)
+    for c in candidates:
+        if area < MATCH_AREA * world_area(c):
+            continue
+        mw = c.matrix_world
+        tree = BVHTree.FromPolygons([mw @ v.co for v in c.data.vertices],
+                                    [list(p.vertices) for p in c.data.polygons])
+        hits = sum(1 for p in pts if tree.find_nearest(p, MATCH_DISTANCE)[0] is not None)
+        if hits / len(pts) > share:
+            best, share = c, hits / len(pts)
+    return best, share
+
 
 def retopo_mesh(obj, name, content=()):
     """0D's start: the meshes of `content` (copies, in obj's local space, their first UV map
@@ -676,12 +733,13 @@ def is_retopo(obj):
     return bool(d is not None and d.retopo)
 
 
-def make_copy(context, obj, retopo=False, decimate=True):
+def make_copy(context, obj, retopo=False, decimate=True, content=None):
     """The Remesh button (0C), or with `retopo` 0D Retopo: the same, but the copy gets the
     other selected meshes - or nothing, per the 0D option (retopo_mesh) - instead of the
     scan's mesh, and no Decimate. Returns (copy,
     warnings). Object Mode only. `decimate` False (0C's window button): no Decimate here -
-    the work window adds it and applies it, so the main file never evaluates it."""
+    the work window adds it and applies it, so the main file never evaluates it.
+    `content` (Automate): the retopo's start meshes, instead of the selection ([] = empty)."""
     if is_handmade(obj):
         raise RuntimeError(HANDMADE_TEXT)
     if module_manager.is_loaded("linking"):     # an offloaded scan: its mesh back first
@@ -696,12 +754,15 @@ def make_copy(context, obj, retopo=False, decimate=True):
     # goes only where the object was otherwise
     collections = [c for c in obj.users_collection if c != orig_coll]
 
-    content = []
-    if retopo and getattr(scene, "multicamproject_retopo_plane", True):
+    if content is not None:
+        content = list(content) if retopo else []
+    elif retopo and getattr(scene, "multicamproject_retopo_plane", True):
         content = retopo_content(context, obj)
         if not content:
             raise RuntimeError(RETOPO_CONTENT_TEXT)
-    copy = obj.copy()                   # a full copy: a cut must never touch the original
+    else:
+        content = []
+    copy = obj.copy()                  # a full copy: a cut must never touch the original
     copy.data = retopo_mesh(obj, mesh_name, content) if retopo else obj.data.copy()
     # plain renames (not export's rename_object): MCP_/MAT_/ALB_/NOR_ keep their names and
     # belong to the copy, which takes the original name

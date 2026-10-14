@@ -3,6 +3,8 @@ main file - with its cameras, original, materials and GN - goes into an empty sc
 transforms applied and the parents dropped. The file stays untitled: nothing saves it.
 
 blender --python build.py -- <settings.json>
+blender --background --python build.py -- <settings.json>    (settings "headless": Automate)
+    the same build without a window, saved at settings["save_as"], then Blender quits.
 """
 import importlib
 import json
@@ -251,10 +253,17 @@ def _build():
                 gn_final.set_final(obj, scene, False)
         except Exception as e:  # never stop the window over the view
             print(f"[MultiCamProject] work window: Processing view skipped: {e}")
-    try:
-        _layout()
+    if settings.get("headless"):    # no window: nothing to lay out, view or open a tool in
+        _mute_pending(obj)
+        return None
+    try:                        # two editors: UV left, 3D View right (layout.py)
+        importlib.import_module(f"{settings['addon']}.modules.linking.layout").apply(scene)
     except Exception as e:      # never stop the window over its layout
-        print(f"[MultiCamProject] work window: layout skipped: {e}")
+        print(f"[MultiCamProject] work window: two-editor layout skipped: {e}")
+        try:
+            _layout()
+        except Exception as e2:
+            print(f"[MultiCamProject] work window: layout skipped: {e2}")
     _mute_pending(obj)          # (set_final may have switched GN on again)
     if obj is not None:         # last: its evaluation is the one the first draw uses too
         for win in bpy.context.window_manager.windows:
@@ -292,4 +301,24 @@ def _start(start):
             return
 
 
-bpy.app.timers.register(_build, first_interval=0.2)
+def _headless():
+    """Automate: build, save at save_as (the add-on's save handlers move the bakes and write
+    window.json for the main file), quit. Background mode runs no timers: called directly."""
+    try:
+        _build()
+        path = settings["save_as"]
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        bpy.ops.wm.save_as_mainfile(filepath=path, check_existing=False)
+        print(f"[MultiCamProject] work file saved: {path}")
+    except Exception:
+        import traceback
+        traceback.print_exc()
+        print("[MultiCamProject] Error: work file not built")
+        sys.stdout.flush()
+        os._exit(1)
+
+
+if settings.get("headless"):
+    _headless()
+else:
+    bpy.app.timers.register(_build, first_interval=0.2)

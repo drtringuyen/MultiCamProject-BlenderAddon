@@ -329,26 +329,31 @@ def focus(context, name):
     return ""
 
 
-def fill_new_name(context, name):
-    """The list's clicked object names 02's New Object Name (2B / 2C): 'ENV_..07_Window' ->
-    'Window', a scan 'BRBroom_Crumpled_Paper' -> 'Crumpled_Paper' (as the list shows it);
-    then checked against the other objects."""
-    from ... import properties
-    props = context.scene.multicamproject_props
+def suggest_name(name):
+    """The short name a new object of `name` gets: 'ENV_..07_Window' -> 'Window', a scan
+    'BRBroom_Crumpled_Paper' -> 'Crumpled_Paper' (its first word dropped when other scans
+    share it)."""
     try:
         from ..baking import naming
     except ImportError:
         naming = None
     p = naming.parse(name) if naming is not None else None
     if p:
-        short = p[1]
-    else:
-        # a scan: its first word dropped when other scans share it ('BRBroom_')
-        import bpy
-        head, _sep, rest = name.partition("_")
-        shared = sum(1 for o in bpy.data.objects if o.name.startswith(head + "_"))
-        short = rest if rest and shared > 2 else name
-        short = naming.clean_name(short) if naming is not None else short
+        return p[1]
+    import bpy
+    head, _sep, rest = name.partition("_")
+    shared = sum(1 for o in bpy.data.objects if o.name.startswith(head + "_"))
+    short = rest if rest and shared > 2 else name
+    return naming.clean_name(short) if naming is not None else short
+
+
+def fill_new_name(context, name):
+    """The list's clicked object names 02's New Object Name (2B / 2C): 'ENV_..07_Window' ->
+    'Window', a scan 'BRBroom_Crumpled_Paper' -> 'Crumpled_Paper' (as the list shows it);
+    then checked against the other objects."""
+    from ... import properties
+    props = context.scene.multicamproject_props
+    short = suggest_name(name)
     if props.new_object_name != short:
         props.new_object_name = short       # its update checks it
     else:

@@ -51,8 +51,11 @@ def step_box(layout, context, step):
     """A step panel's top: the reason it is locked (a greyed line), and the layout to draw
     into - greyed while locked. Returns (layout, open)."""
     from . import steps
-    why = "" if _work_window(context.scene) else steps.why_locked(context.active_object, step,
-                                                                  context.scene)
+    if _work_window(context.scene):     # its main file holds the steps' order - except the
+        why = ("Apply the Decimate in 03 first" if step != 3     # Decimate, decided first
+               and decimate_pending(context.active_object) else "")
+    else:
+        why = steps.why_locked(context.active_object, step, context.scene)
     if not why:
         return layout, True
     row = layout.row(align=True)

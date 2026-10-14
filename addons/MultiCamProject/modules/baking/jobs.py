@@ -84,8 +84,9 @@ class Item:
 class Run:
     """The running job: shown by draw() and the status bar."""
 
-    def __init__(self, title, names, light=()):
+    def __init__(self, title, names, light=(), block=False):
         self.title = title
+        self.block = block          # input is swallowed while it runs (overlay in the views)
         self.items = [Item(n) for n in names]
         for it in self.items:
             it.light = it.name in light
@@ -265,6 +266,65 @@ def _restore_views(saved):
             pass
 
 
+# ---------------------------------------------------------------- blocking jobs: the overlay
+
+# what a blocking job lets through: the timers, the mouse moving, the window itself
+_PASS = {'TIMER', 'TIMER_REPORT', 'TIMERREGION', 'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE',
+         'WINDOW_DEACTIVATE', 'NONE'}
+_overlay = []
+
+
+def _draw_overlay():
+    """A blocking job's banner at the bottom of every 3D View: what runs, the time, Esc."""
+    import blf
+    import gpu
+    from gpu_extras.batch import batch_for_shader
+    r = RUN
+    region = bpy.context.region
+    if r is None or region is None:
+        return
+    scale = bpy.context.preferences.system.ui_scale
+    finished, total = r.counts()
+    cur = r.current()
+    eta = r.eta()
+    lines = [f"{r.title}  {min(finished + (1 if cur else 0), total)} / {total}"
+             + (f"  ·  {cur.name}" if cur else ""),
+             f"{r.step}  ·  {duration(time.perf_counter() - r.t0)}"
+             + (f"  ·  ~{duration(eta)} left" if eta is not None else "  ·  estimating..."),
+             "Stopping after this object..." if r.stop else
+             "Working - don't touch Blender (Esc: stop after this object)"]
+    size = int(15 * scale)
+    pad, gap = 12 * scale, 6 * scale
+    h = len(lines) * (size + gap) + 2 * pad
+    y0 = 40 * scale
+    shader = gpu.shader.from_builtin('UNIFORM_COLOR')
+    w = region.width
+    batch = batch_for_shader(shader, 'TRIS', {"pos": [(0, y0), (w, y0), (w, y0 + h),
+                                                      (0, y0 + h)]}, indices=[(0, 1, 2), (0, 2, 3)])
+    gpu.state.blend_set('ALPHA')
+    shader.bind()
+    shader.uniform_float("color", (0.0, 0.0, 0.0, 0.7))
+    batch.draw(shader)
+    gpu.state.blend_set('NONE')
+    blf.size(0, size)
+    for i, text in enumerate(lines):
+        blf.color(0, *((1.0, 0.8, 0.2, 1.0) if i == len(lines) - 1 else (1.0, 1.0, 1.0, 1.0)))
+        tw = blf.dimensions(0, text)[0]
+        blf.position(0, (w - tw) / 2, y0 + h - pad - (i + 1) * (size + gap) + gap, 0)
+        blf.draw(0, text)
+
+
+def _overlay_on():
+    if not _overlay:
+        _overlay.append(bpy.types.SpaceView3D.draw_handler_add(_draw_overlay, (), 'WINDOW',
+                                                               'POST_PIXEL'))
+
+
+def _overlay_off():
+    while _overlay:
+        bpy.types.SpaceView3D.draw_handler_remove(_overlay.pop(), 'WINDOW')
+
+
 # ---------------------------------------------------------------- the runner
 
 _pending = None     # (title, names, gen, finish) for the runner's invoke
@@ -287,10 +347,11 @@ def _back_to_mode():
 PREVIEW_WAIT = 30.0     # seconds at most to wait for material previews after a bake
 
 
-def start(op, context, title, names, gen, finish, light=()):
+def start(op, context, title, names, gen, finish, light=(), block=False):
     """Run `gen` as a job: `names` are the items (objects) of the progress list,
     `finish(result, error)` returns [(severity, text)] to report at the end; `light` items
-    are quick ones left out of the time estimate. Blocking
+    are quick ones left out of the time estimate. `block`: every click and key is swallowed
+    while it runs (Esc stops), a banner in the 3D Views says so. Blocking
     (reported by `op`) in background mode or without a window. Returns the result for `op`."""
     global _pending
     if bpy.app.background or context.window is None:
@@ -307,7 +368,7 @@ def start(op, context, title, names, gen, finish, light=()):
     if busy():
         op.report({'WARNING'}, "A bake / export is already running")
         return {'CANCELLED'}
-    _pending = (title, names, gen, finish, light)
+    _pending = (title, names, gen, finish, light, block)
     bpy.ops.multicamproject.job('INVOKE_DEFAULT')
     return {'FINISHED'}
 
@@ -322,9 +383,11 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
         global _pending, RUN
         if _pending is None or RUN is not None:
             return {'CANCELLED'}
-        title, names, self._gen, self._finish, light = _pending
+        title, names, self._gen, self._finish, light, block = _pending
         _pending = None
-        RUN = Run(title, names, light)
+        RUN = Run(title, names, light, block)
+        if block:
+            _overlay_on()
         self._views = _solid_views()
         self._job = None
         self._preview_wait = None
@@ -354,6 +417,8 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
                 self.report({'WARNING'}, "Undo is off while the add-on bakes / exports")
             return {'RUNNING_MODAL'}
         if event.type != 'TIMER':       # (any timer: Python cannot tell whose it is)
+            if RUN.block and event.type not in _PASS:
+                return {'RUNNING_MODAL'}    # a blocking job: hands off
             return {'PASS_THROUGH'}
         if self._job is not None:
             if bpy.app.is_job_running('OBJECT_BAKE'):
@@ -425,6 +490,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
         if context.workspace is not None:
             context.workspace.status_text_set(None)
         _restore_views(self._views)
+        _overlay_off()
         RUN = None
         try:
             lines = self._finish(result, error)
@@ -450,6 +516,7 @@ class MULTICAMPROJECT_OT_Job(bpy.types.Operator):
         except Exception:
             pass
         _restore_views(self._views)
+        _overlay_off()
         RUN = None
 
 
@@ -499,5 +566,6 @@ def register():
 
 
 def unregister():
+    _overlay_off()
     for c in reversed(_classes):
         bpy.utils.unregister_class(c)

@@ -155,6 +155,14 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
             layout.label(text="Select a mesh", icon='INFO')
             return
         chosen = steps.workflow(obj)
+        work = gate._work_window(context.scene)
+        if work:            # picked in the main file: folded (the Decimate is decided in 03)
+            head, body = layout.panel_prop(context.scene.multicamproject_props, "work_show_02")
+            head.label(text={'REMESH': "2B Remesh", 'RETOPO': "2C Retopo",
+                             'PROJECT': "2D Only Project"}.get(chosen, "2A - 2D"))
+            if body is None:
+                return
+            layout = body
         cams = any(o.type == 'CAMERA' for o in context.scene.objects)
         col = layout.column(align=True)
         col.scale_y = 1.3
@@ -240,7 +248,8 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
         if mm.is_loaded("remesh"):
             from .modules.remesh import ui as remesh_ui, workflow as wf
             if wf.decimate_pending(obj):
-                remesh_ui.draw_decide(layout, context, obj)
+                if not work:        # a work window decides it at the top of 03
+                    remesh_ui.draw_decide(layout, context, obj)
                 return
         if mm.is_loaded("baking"):
             from .modules.baking import common, operators as bops

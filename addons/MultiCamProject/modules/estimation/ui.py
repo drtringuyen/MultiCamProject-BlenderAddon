@@ -66,8 +66,9 @@ def _draw_tail(cells, context, obj, st):
     from ... import module_manager, steps
     if obj is None:
         return
-    if obj.type == 'MESH':
-        steps.draw_stage(cells[STAGE], context, obj, units=3.4)
+    if obj.type == 'MESH':       # a Raw scan's cell: Automate's popup
+        from . import automate
+        automate.draw_stage(cells[STAGE], context, obj, units=3.4)
     if module_manager.is_loaded("export"):
         from ..export import ui as export_ui
         export_ui.draw_fix(cells[FIX], obj.name, st)
@@ -151,6 +152,11 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
             _draw_window(layout, context)
             return
         s = context.scene.multicamproject_estimation
+        from ... import module_manager
+        if module_manager.is_loaded("baking"):
+            from ..baking import jobs
+            if jobs.busy():         # Automate (or a bake) runs: its progress
+                jobs.draw(layout)
         row = layout.row(align=True)
         row.prop(s, "budget")
         row.prop(s, "minimum")
@@ -212,9 +218,12 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         for state in (core.DONE, core.OVER, core.NEW):     # on budget, over, not worked on
             legend.label(text=str(count.count(state)), icon=core.ICONS[state])
         from ... import module_manager
+        from . import automate
         if module_manager.is_loaded("linking"):
             from ..linking import originals
-            originals.draw_all(box, context)
+            automate.draw_button(originals.draw_all(box, context), context)
+        else:
+            automate.draw_button(box.row(align=True), context)
         if budget > s.calculated_budget:
             box.label(text=f"Minimums alone exceed the budget ({core.short(budget)})",
                       icon='ERROR')

@@ -432,6 +432,42 @@ class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def window_copy(context, obj, mode, new_name, content=None):
+    """2B / 2C for a work window: the copy of obj (Object Mode), named `new_name` (MCP_ /
+    MAT_ / textures follow), in EXPORT, with the projection; the original keeps its name.
+    2B gets no Decimate here: the window adds it, decides and applies it (it never comes
+    back). `content`: 2C's start meshes (None = the selection). Returns (copy, warnings)."""
+    from ..export import fixes
+    scene = context.scene
+    name, mesh_name = obj.name, obj.data.name
+    # 0B only on the new object (after the copy): on the scan it would be scored once
+    # more and undone right away by the copy (~3 s on a scan with 500 cameras)
+    cp = getattr(obj, "multicamproject_cam", None)
+    need_setup = cp is not None and not cp.is_setup
+    warnings = []
+    if need_setup and not any(o.type == 'CAMERA' for o in scene.objects):
+        warnings.append("No camera in the scene: no projection")
+        need_setup = False
+    copy, more = wf.make_copy(context, obj, retopo=mode == 'RETOPO',
+                              decimate=mode != 'REMESH', content=content)
+    warnings += more
+    # the new object's own name, into EXPORT; the original takes its name back (make_copy
+    # gave it _original)
+    export = fixes.ensure_export_collection(scene)
+    if export not in copy.users_collection:
+        export.objects.link(copy)
+    fixes.rename_object(copy, new_name)
+    obj.name = name
+    if obj.data.users == 1:
+        obj.data.name = mesh_name
+    if need_setup:          # 0B on the copy, called directly (bpy.ops would evaluate
+        warnings += wf.setup_projection(copy, scene)    # the whole scan first)
+        if mode == 'REMESH':
+            wf.set_gn(copy, False)      # its GN waits for the Decimate (in the window)
+    wf.follow_in_estimation(scene, copy)
+    return copy, warnings
+
+
 class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
     """One click: 2B Remesh / 2C Retopo (with the camera projection),
     the new low poly named ENV_<prefix>.<next ##>_<New Object Name> (the original keeps its
@@ -510,7 +546,6 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         return _ask_existing(context, self.bl_idname, path, mode=self.mode)
 
     def execute(self, context):
-        from ..export import fixes
         obj = context.active_object
         if wf.is_copy(obj):
             return bpy.ops.multicamproject.work_send_out(object_name=obj.name,
@@ -533,33 +568,9 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             return {'CANCELLED'}
         if obj.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        name, mesh_name = obj.name, obj.data.name
-        # 0B only on the new object (after the copy): on the scan it would be scored once
-        # more and undone right away by the copy (~3 s on a scan with 500 cameras)
-        cp = getattr(obj, "multicamproject_cam", None)
-        need_setup = cp is not None and not cp.is_setup
-        if need_setup and not any(o.type == 'CAMERA' for o in context.scene.objects):
-            self.report({'WARNING'}, "No camera in the scene: no projection")
-            need_setup = False
-        # no Decimate here: the window adds it, decides and applies it (it never comes back)
-        copy, warnings = wf.make_copy(context, obj, retopo=self.mode == 'RETOPO',
-                                      decimate=self.mode != 'REMESH')
+        copy, warnings = window_copy(context, obj, self.mode, new_name)
         for w in warnings:
             self.report({'WARNING'}, w)
-        # the new object's own name (MCP_ / MAT_ / textures follow), into EXPORT; the
-        # original takes its name back (make_copy gave it _original)
-        export = fixes.ensure_export_collection(scene)
-        if export not in copy.users_collection:
-            export.objects.link(copy)
-        fixes.rename_object(copy, new_name)
-        obj.name = name
-        if obj.data.users == 1:
-            obj.data.name = mesh_name
-        if need_setup:          # 0B on the copy, called directly (bpy.ops would evaluate
-            for w in wf.setup_projection(copy, scene):   # the whole scan first)
-                self.report({'WARNING'}, w)
-            if self.mode == 'REMESH':
-                wf.set_gn(copy, False)      # its GN waits for the Decimate (in the window)
         if exists and self.existing == 'OPEN':
             return _open_existing(self, copy, path)
         try:

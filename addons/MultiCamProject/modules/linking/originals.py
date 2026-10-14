@@ -306,6 +306,7 @@ def draw_all(layout, context):
                  icon='LINKED').load = False
     row.operator(MULTICAMPROJECT_OT_OriginalsAll.bl_idname, text="Load All",
                  icon='MESH_ICOSPHERE').load = True
+    return row
 
 
 _classes = (MULTICAMPROJECT_OT_OriginalToggle, MULTICAMPROJECT_OT_OriginalsAll)

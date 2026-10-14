@@ -34,6 +34,26 @@ def _budget_color(self):
     return core.COLORS[core.DONE if b[1] <= b[0] else core.OVER]
 
 
+AUTO_STEPS = (
+    ('SKIP', "Skip", "Not part of Automate - stays Raw"),
+    ('REMESH', "2B Remesh", "A low poly copy of the scan (its Decimate is decided when you "
+                            "open the work file), named ENV_<prefix>.<##>_<Name>"),
+    ('RETOPO', "2C Retopo", "A new object started from the 'From' mesh (a ROOM_Template "
+                            "part) - or empty - on the scan, named ENV_<prefix>.<##>_<Name>"),
+    ('PROJECT', "2D Only Project", "The camera projection on the scan itself (it keeps its "
+                                   "name)"),
+)
+
+
+def _from_poll(self, obj):
+    return obj.type == 'MESH' and obj.name != self.name and not obj.library
+
+
+def _changed(self, context):
+    from ... import steps
+    steps.forget()          # the memoized table / checks
+
+
 class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
     # name = the object's name
     area: FloatProperty()           # world space, m²
@@ -44,6 +64,18 @@ class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
         size=3, subtype='COLOR_GAMMA', get=_row_color,
         description="Green: in EXPORT and within its budget · Orange: in EXPORT, over its "
                     "budget · Black: not worked on yet")
+    # Automate (picked in the Raw cell's popup): what 02 does to the row's scan
+    auto_step: EnumProperty(name="Step", items=AUTO_STEPS, default='SKIP', update=_changed)
+    auto_name: StringProperty(
+        name="Name", update=_changed,
+        description="The new object's name: ENV_<prefix>.<next ##>_<Name>; its work file is "
+                    "Bake Folder/<Name>.blend")
+    auto_from: PointerProperty(
+        name="From", type=bpy.types.Object, poll=_from_poll, update=_changed,
+        description="2C starts from this mesh (copied in, its UV as uv_normal) - empty: an "
+                    "empty retopo. Picked from ROOM_Template by where the scan lies")
+    auto_share: FloatProperty()     # how much of the scan lies on auto_from (the match)
+    auto_filled: BoolProperty()     # the defaults were filled once
 
 
 class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):

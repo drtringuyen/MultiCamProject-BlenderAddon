@@ -34,13 +34,14 @@ def _draw_amount_row(row, context, obj, dec, label, scale=1.0):
     split.operator("multicamproject.remesh_apply_decimate", text="Apply", icon='CHECKMARK')
 
 
-def draw_decide(layout, context, obj):
-    """The end of 2B Remesh (02 Mesh Workflow): the Decimate amount is decided and applied
-    before anything else (the GN modifiers are muted meanwhile, Protect still works)."""
+def draw_decide(layout, context, obj, text="Decide the Decimate - 03 unlocks after Apply"):
+    """The end of 2B Remesh (02 Mesh Workflow; a work window: the top of 03): the Decimate
+    amount is decided and applied before anything else (the GN modifiers are muted
+    meanwhile, Protect still works)."""
     dec = wf.decimate_modifier(obj)
     box = layout.box().column(align=True)
     box.alert = True
-    box.label(text="Decide the Decimate - 03 unlocks after Apply", icon='MOD_DECIM')
+    box.label(text=text, icon='MOD_DECIM')
     box.alert = False
     _draw_amount_row(box.row(align=True), context, obj, dec, "", 1.4)
     hint = box.row()
@@ -129,10 +130,15 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
         if module_manager.is_loaded("linking"):        # Send Out / Receive, Send Back
             from ..linking import core as link, ui as link_ui
             if link.is_work_window(context.scene):
+                if pending:     # a work window decides the Decimate here, first
+                    draw_decide(layout, context, obj,
+                                "Decide the Decimate first - the rest unlocks after Apply")
+                    layout = layout.column()
+                    layout.enabled = False          # the rest after Apply
                 link_ui.draw_work(layout, context)
             else:
                 link_ui.draw_main(layout, context, obj)
-        if pending:         # decided at the end of 02
+        if pending:         # decided at the end of 02 (a work window: just above)
             return
         if not wf.is_low_poly(obj):     # 2D Only Project: no low poly to edit
             hint = layout.row()

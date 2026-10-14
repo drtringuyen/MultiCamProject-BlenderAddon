@@ -311,11 +311,19 @@ def _save_paint():
     paint_tex.save_dirty()
 
 
-def send_out(context, obj, start="", save_as=""):
+BUILD_LOG = "build.log"      # a headless build's console output (its error, when it failed)
+HEADLESS = {}               # send-out id -> the background Blender building its work file
+
+
+def send_out(context, obj, start="", save_as="", headless=False):
     """Write obj (with everything it points to) for a new Blender and open it there.
     `start`: 'REMESH' / 'RETOPO' opens the window in the PolyCut tool / the retopo.
-    `save_as`: the window saves itself there right away (else it stays unsaved).
+    `save_as`: where Ctrl+S / Save in the window saves it.
+    `headless` (Automate, needs save_as): a background Blender builds the work file, saves
+    it at `save_as` and quits - no window; HEADLESS[id] is its process (headless_result).
     Returns the send-out id."""
+    if headless and not save_as:
+        raise RuntimeError("A headless Send Out needs the work file's path")
     main = bpy.data.filepath
     if not main:
         raise RuntimeError("Save the main file first (Receive copies the bakes into its folder)")
@@ -326,12 +334,45 @@ def send_out(context, obj, start="", save_as=""):
     from . import originals
     loaded = originals.ensure_loaded(obj)       # the window gets the full original
     try:
-        return _send_out(context, obj, start, save_as, main)
+        return _send_out(context, obj, start, save_as, main, headless)
     finally:
         originals.offload_quiet(loaded, context.scene)
 
 
-def _send_out(context, obj, start, save_as, main):
+def headless_result(job_id):
+    """A headless build: None while it runs, else '' when its work file is saved and the
+    main file knows it (window.json), or why not (the end of its log)."""
+    proc = HEADLESS.get(job_id)
+    if proc is not None and proc.poll() is None:
+        return None
+    HEADLESS.pop(job_id, None)
+    if _saved_window({"id": job_id}):
+        return ""
+    try:
+        with open(os.path.join(job_dir(job_id), BUILD_LOG), encoding="utf-8",
+                  errors="replace") as f:
+            lines = [ln.strip() for ln in f if ln.strip()]
+    except OSError:
+        lines = []
+    # build.py prints its traceback, then this marker: the exception is the line above it
+    # (other add-ons print their own errors at quit - not this build's)
+    marks = [i for i, ln in enumerate(lines) if "work file not built" in ln]
+    if marks and marks[-1] > 0:
+        why = lines[marks[-1] - 1]
+    else:
+        ours = [ln for ln in lines if "[MultiCamProject]" in ln]
+        why = (ours or lines or ["no output"])[-1]
+    code = proc.returncode if proc is not None else "?"
+    return f"work file not saved (exit {code}): {why[:200]}"
+
+
+def stop_headless(job_id):
+    proc = HEADLESS.pop(job_id, None)
+    if proc is not None and proc.poll() is None:
+        proc.kill()
+
+
+def _send_out(context, obj, start, save_as, main, headless=False):
     job_id = uuid.uuid4().hex[:12]
     os.makedirs(bakes_dir(job_id), exist_ok=True)
     lib = os.path.join(job_dir(job_id), OPEN_FILE)
@@ -351,7 +392,7 @@ def _send_out(context, obj, start, save_as, main):
                    scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
         "unit_system": scene.unit_settings.system,
         "unit_scale": scene.unit_settings.scale_length, "start": start, "save_as": save_as,
-        "target": _target(context, obj)}
+        "target": _target(context, obj), "headless": headless}
     settings_path = os.path.join(job_dir(job_id), SETTINGS_FILE)
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f)
@@ -359,7 +400,17 @@ def _send_out(context, obj, start, save_as, main):
                                "matrix": _matrix_list(obj.matrix_world),
                                "sig": mesh_signature(obj)})
     script = os.path.join(os.path.dirname(__file__), "build.py")
-    subprocess.Popen([bpy.app.binary_path, "--python", script, "--", settings_path])
+    if headless:
+        log = open(os.path.join(job_dir(job_id), BUILD_LOG), "w", encoding="utf-8")
+        try:
+            HEADLESS[job_id] = subprocess.Popen(
+                [bpy.app.binary_path, "--background", "--python", script, "--", settings_path],
+                stdout=log, stderr=subprocess.STDOUT,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0))
+        finally:
+            log.close()         # the child keeps its own handle
+    else:
+        subprocess.Popen([bpy.app.binary_path, "--python", script, "--", settings_path])
     return job_id
 
 
@@ -562,6 +613,12 @@ def _take_later():
     if not wm or not wm.windows:
         return None if _take_tries[0] > 40 else 0.25
     scene = bpy.context.scene
+    if is_work_window(scene):       # a saved work file (Automate's): its two editors, once
+        try:
+            from . import layout
+            layout.apply_once(scene)
+        except Exception as e:
+            print(f"[MultiCamProject] work file layout skipped: {e}")
     try:
         name = take_incoming(scene) if is_work_window(scene) else ""
     except Exception as e:      # never break opening the file
