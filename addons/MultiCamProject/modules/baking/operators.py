@@ -197,6 +197,11 @@ def source_poll_problem(obj):
     from ... import steps
     if steps.sent_out(obj):
         return "In a work window: bake BAo_ there (or X ends the link)"
+    return ""
+
+
+def source_uv_warning(obj):
+    """uv_normal outside 0-1 / overlapping: a warning only - Bake from Source still runs."""
     try:
         from ..export import checks
     except ImportError:
@@ -245,7 +250,7 @@ class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        if not _object_or_edit(context):
+        if not _any_mode(context):          # also Sculpt / Paint: bakes in Object Mode, back after
             return False
         objs = common.selected_meshes(context)
         if not objs:
@@ -259,7 +264,7 @@ class MULTICAMPROJECT_OT_BakeFromSource(bpy.types.Operator):
         return True
 
     def execute(self, context):
-        _to_object_mode(context)
+        _leave_mode(context)
         objs = common.selected_meshes(context)
         return jobs.start(self, context, "Bake from Source", [o.name for o in objs],
                           _source_steps(context, objs),

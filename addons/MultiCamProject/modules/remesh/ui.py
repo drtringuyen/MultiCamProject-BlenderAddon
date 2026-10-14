@@ -265,6 +265,11 @@ def draw_bao(layout, context, obj):
             sub = box.row()
             sub.alert = True
             sub.label(text=collapsed, icon='ERROR')
+        warn = bake_ops.source_uv_warning(obj)          # a warning: the bake still runs
+        if warn:
+            sub = box.row()
+            sub.alert = True
+            sub.label(text=warn + " (bakes anyway)", icon='ERROR')
     if d.ba_image is not None:
         info = box.row()
         info.active = False
