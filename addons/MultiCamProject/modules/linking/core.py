@@ -52,6 +52,7 @@ MESH_FILE = "mesh.blend"
 OPEN_FILE = "open.blend"
 SETTINGS_FILE = "settings.json"
 KEEP_DAYS = 30          # unlinked hand-off folders older than this go at the next Send Out
+PAINT_POINTERS = ("msk_image", "cmx1_image", "cmx2_image")     # made in the main 01.Bake
 # the textures Receive takes: pointer on multicamproject_bake -> name function in common
 TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
             ("bap_image", "bap_name", False), ("bnp_image", "bnp_name", True),
@@ -381,6 +382,12 @@ def _work_bakes(scene, obj):
         return os.path.join(os.path.dirname(bpy.data.filepath), "01.Bake")
 
 
+def paint_dir(scene):
+    """Where a work window makes its CMX1_ / CMX2_: the main file's bake folder (01.Bake),
+    so both files read the same file - '' outside a work window."""
+    return _bakes_dest(scene) if is_work_window(scene) else ""
+
+
 def _bakes_dest(scene):
     """The work window's bake folder - an older window's _work or _work/<object> moves up
     to the main bake folder (a long object name twice went past Windows' 260 characters)."""
@@ -666,12 +673,16 @@ def send_back(context):
         from ..baking import common
         d = common.data(obj)
         bakes = os.path.normcase(os.path.abspath(common.output_dir(scene)))
+        main = paint_dir(scene)     # the paint textures are made right in the main 01.Bake
+        main = os.path.normcase(os.path.abspath(main)) if main else ""
         tex = {}
         for ptr, _fn, _n in TEXTURES:
             path = common.image_file(getattr(d, ptr))
-            if path and os.path.normcase(os.path.dirname(os.path.abspath(path))) == bakes \
-                    and os.path.isfile(path):
-                tex[ptr] = path     # baked in this window
+            if not path or not os.path.isfile(path):
+                continue
+            where = os.path.normcase(os.path.dirname(os.path.abspath(path)))
+            if where == bakes or (main and where == main and ptr in PAINT_POINTERS):
+                tex[ptr] = path     # baked / painted in this window
         man["textures"] = tex
         man["fresh"] = _fresh(obj)
         man["stamps"] = {k: getattr(d, k) for k in ("ba_fingerprint", "bng_fingerprint",
@@ -874,7 +885,8 @@ def _take_size(obj, scene, size, real=0):
 
 TAKEN_LABELS = {"ba_image": "BAo_", "bn_image": "BNo_", "bap_image": "BAp_",
                 "bnp_image": "BNp_", "bng_image": "BNoG_", "alb_image": "ALB_",
-                "nor_image": "NOR_"}
+                "nor_image": "NOR_", "msk_image": "MSK_", "cmx1_image": "CMX1_",
+                "cmx2_image": "CMX2_"}
 
 
 def _status_text(obj, scene):
@@ -987,7 +999,7 @@ def receive(context, obj, action='REPLACE'):
             cache.clear()
         except ImportError:
             pass
-        notes = [("Textures: " + ", ".join(TAKEN_LABELS[p] for p in taken)) if taken
+        notes = [("Textures: " + ", ".join(TAKEN_LABELS.get(p, p) for p in taken)) if taken
                  else "No new textures"]
         if gone:
             notes.append("missing (bake again in the window): " + ", ".join(gone))

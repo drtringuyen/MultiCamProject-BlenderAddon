@@ -124,6 +124,13 @@ def ensure(obj, kind, scene, px=None):
         px = shown_pixels(obj)[kind]
     name = image_name(obj, kind)
     path = common.texture_path(scene, name)
+    try:                                # a work window: straight into the main 01.Bake
+        from ..linking import core as linking
+        main = linking.paint_dir(scene)
+    except ImportError:
+        main = ""
+    if main:
+        path = os.path.join(main, name + ".png")
     engine._check_length(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = bpy.data.images.new(name + "_MCP_TMP", SIZE, SIZE, alpha=True)
