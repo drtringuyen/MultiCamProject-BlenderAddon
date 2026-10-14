@@ -94,6 +94,7 @@ class Session:
         self.sel_rect = None                    # bounds of everything touched in sel
         self.undo = []                          # [(x0, y0, before, after)]
         self.redo = []
+        self.baked = []                         # undo records the copy holds already (push)
         self.overlay = None                     # (texture, rect) of the selection
         self.overlay_dirty = False
         self.tex = {}                           # id(undo record) -> GPU texture of its after
@@ -152,7 +153,11 @@ class Session:
         img = self.temp
         if img is not None:
             lasso_raster.write_pixels(img, self.buf)
+        self.baked = list(self.undo)            # in the copy now: no longer drawn over it
         redraw()
+
+    def is_baked(self, rec):
+        return any(r is rec for r in self.baked)
 
     def _record(self, x0, y0, before, after):
         for rec in self.redo:
@@ -191,6 +196,8 @@ class Session:
         h, w = before.shape[:2]
         self.buf[y0:y0 + h, x0:x0 + w] = before if back else after
         dst.append(rec)
+        if self.is_baked(rec):  # the copy holds it: write it again (0.3 s at 8K)
+            self.push()
         redraw()                # the overlay follows the undo list; the copy is not written
         return True
 
@@ -241,6 +248,51 @@ def active():
 
 def running():
     return _op is not None
+
+
+def owns(img):
+    """img is the open session's working copy (Lasso and Liquify edit it through it)."""
+    s = active()
+    return s is not None and img is not None and img.name == s.temp_name
+
+
+def dormant():
+    """Lasso or Liquify works on the copy now: the Inpaint modal lets every event through."""
+    from . import lasso_draw, session
+    if lasso_draw.get_active_op() is not None:
+        return True
+    lq = session.active()
+    return lq is not None and _session is not None and lq.photo_name == _session.temp_name
+
+
+def record_edit(x0, y0, before):
+    """Lasso / Liquify changed the session's pixels (s.buf) in the block at (x0, y0) that
+    held `before`: one undo step, drawn like a fill and written by Save. Returns it."""
+    s = active()
+    if s is None:
+        return None
+    h, w = before.shape[:2]
+    s._record(x0, y0, before, s.buf[y0:y0 + h, x0:x0 + w].copy())
+    redraw()
+    return s.undo[-1] if s.undo else None
+
+
+def revert_edit(rec):
+    """Take a record_edit back (the Lasso's Esc / Ctrl+Z): its pixels and its step go,
+    nothing to redo. False when the session no longer has it."""
+    s = active()
+    i = next((i for i, r in enumerate(s.undo) if r is rec), None) if s is not None else None
+    if i is None:
+        return False
+    x0, y0, before, _after = rec
+    h, w = before.shape[:2]
+    s.buf[y0:y0 + h, x0:x0 + w] = before
+    s.undo.pop(i)
+    s.tex.pop(id(rec), None)
+    if s.is_baked(rec):
+        s.push()
+    redraw()
+    return True
 
 
 def is_temp(img):
@@ -304,6 +356,8 @@ def _uv_triangles(obj, w, h):
     """(uv_normal triangles of obj in image pixels (n, 3, 2), UV island per triangle), or
     None."""
     me = obj.data if obj.type == 'MESH' else None
+    if me is not None and obj.mode == 'EDIT':
+        obj.update_from_editmode()      # in Edit Mode the mesh's UV data reads empty
     uv = me.uv_layers.get("uv_normal") if me is not None else None
     if uv is None:
         return None
@@ -314,7 +368,18 @@ def _uv_triangles(obj, w, h):
     loops = np.empty(n * 3, dtype=np.int32)
     me.loop_triangles.foreach_get("loops", loops)
     uvs = np.empty(len(me.loops) * 2, dtype=np.float32)
-    uv.data.foreach_get("uv", uvs)
+    if obj.mode == 'EDIT':      # the layer's data reads empty there: the edit mesh has them,
+        import bmesh            # its loops in the mesh's order (faces, then their loops)
+        bm = bmesh.from_edit_mesh(me)
+        lay = bm.loops.layers.uv.get("uv_normal")
+        if lay is None:
+            return None
+        flat = [c for f in bm.faces for lp in f.loops for c in lp[lay].uv]
+        if len(flat) != len(uvs):
+            return None
+        uvs[:] = flat
+    else:
+        uv.data.foreach_get("uv", uvs)
     tris = uvs.reshape(-1, 2)[loops].reshape(n, 3, 2)
     vidx = np.empty(len(me.loops), dtype=np.int32)
     me.loops.foreach_get("vertex_index", vidx)
@@ -543,6 +608,8 @@ def _draw_patches(s, to_region):
     if shader is None:
         return
     for rec in s.undo:
+        if s.is_baked(rec):
+            continue
         tex = s.patch_texture(rec)
         if tex is None:
             continue
@@ -565,7 +632,7 @@ def _draw():
         gpu.state.blend_set('ALPHA')
         _draw_patches(s, to_region)
         op = _op
-        if op is None or region.as_pointer() != op._region_ptr:
+        if op is None or region.as_pointer() != op._region_ptr or dormant():
             gpu.state.blend_set('NONE')
             return
         ov = _overlay(s)
@@ -778,6 +845,10 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         if s is not self._s:                    # saved / discarded from the panel
             self._stop(context)
             return {'FINISHED'}
+        if dormant():                           # Lasso / Liquify on the copy: theirs
+            return {'PASS_THROUGH'}
+        if event.ctrl and event.alt and event.type in {'K', 'L'}:
+            return {'PASS_THROUGH'}             # Lasso Cut / Liquify start on the copy
         why = self._lost(context)
         if why:
             return self._ask(context, why)
@@ -1106,6 +1177,9 @@ class MULTICAMPROJECT_OT_inpaint_save(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         s = active()
+        if dormant():
+            cls.poll_message_set("Finish the Lasso / Liquify on the copy first")
+            return False
         return s is not None and bool(s.undo)
 
     def execute(self, context):
@@ -1120,7 +1194,7 @@ class MULTICAMPROJECT_OT_inpaint_discard(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return active() is not None
+        return active() is not None and not dormant()
 
     def execute(self, context):
         discard()

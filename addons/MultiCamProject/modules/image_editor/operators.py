@@ -84,7 +84,7 @@ class MULTICAMPROJECT_OT_LiquifyBake(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         s = session.active()
-        if s is not None and not s.out_path:
+        if s is not None and not s.out_path and not s.inpaint:
             cls.poll_message_set("Save the .blend first - this photo has no folder to bake into")
             return False
         return s is not None

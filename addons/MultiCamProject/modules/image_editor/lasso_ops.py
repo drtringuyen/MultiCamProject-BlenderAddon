@@ -93,11 +93,66 @@ def _push_undo(rec) -> None:
         total -= sum(e[3].nbytes for e in _UNDO.pop(0))
 
 
+# ── The Inpaint copy: its pixels are the Inpaint session's buffer ─────────────
+# Lasso on the copy reads and changes that buffer in place (never the copy image, which
+# Inpaint draws its edits over); each applied edit becomes one Inpaint step instead of a
+# Lasso Undo record, so Inpaint's Ctrl+Z / Save cover it.
+
+_IP_RECS = {}       # id(lasso record) -> its Inpaint step
+
+
+def _ip(img):
+    """The Inpaint session whose copy `img` is, else None."""
+    from . import inpaint
+    return inpaint.active() if inpaint.owns(img) else None
+
+
+def _read(img):
+    s = _ip(img)
+    return s.buf if s is not None else lasso_raster.read_pixels(img)
+
+
+def _write(img, buf) -> None:
+    if _ip(img) is None:        # the copy: the buffer is changed already (in place)
+        lasso_raster.write_pixels(img, buf)
+
+
+def _on_copy(entry) -> bool:
+    return _ip(bpy.data.images.get(entry[0])) is not None
+
+
+def _to_inpaint(rec):
+    """The record's blocks on the Inpaint copy as one Inpaint step (their union, its
+    `before` rebuilt from the saved blocks). Returns the other entries."""
+    from . import inpaint
+    mine = [e for e in rec if _on_copy(e)]
+    if not mine:
+        return rec
+    s = inpaint.active()
+    x0 = min(e[1] for e in mine)
+    y0 = min(e[2] for e in mine)
+    x1 = max(e[1] + e[3].shape[1] for e in mine)
+    y1 = max(e[2] + e[3].shape[0] for e in mine)
+    before = s.buf[y0:y1, x0:x1].copy()
+    for _n, ex, ey, block in reversed(mine):
+        bh, bw = block.shape[:2]
+        before[ey - y0:ey - y0 + bh, ex - x0:ex - x0 + bw] = block
+    _IP_RECS[id(rec)] = inpaint.record_edit(x0, y0, before)
+    ids = {id(e) for e in mine}
+    return [e for e in rec if id(e) not in ids]
+
+
 def _restore(rec):
     """Write the pixels of one record back; also drops it from _UNDO.
     Returns (restored, skipped) image names."""
     _UNDO[:] = [r for r in _UNDO if r is not rec]
     restored, skipped, bufs = set(), set(), {}
+    step = _IP_RECS.pop(id(rec), None)
+    if step is not None:        # its part on the Inpaint copy: Inpaint takes it back
+        from . import inpaint
+        if inpaint.revert_edit(step):
+            restored.add(inpaint.active().temp_name)
+        rec = [e for e in rec if not _on_copy(e)]
     for name, x0, y0, block in reversed(rec):
         img = bpy.data.images.get(name)
         bh, bw = block.shape[:2]
@@ -128,8 +183,8 @@ def target_reason(img):
     if session.is_preview(img):
         return "This is a Liquify preview - Bake or Cancel Liquify first"
     from . import inpaint
-    if inpaint.is_temp(img):
-        return "This is the Inpaint copy - use the Inpaint tools"
+    if inpaint.is_temp(img) and not inpaint.owns(img):
+        return "An old Inpaint copy - no Inpaint session edits it"
     if img.library is not None:
         return "Linked image - make it local first"
     if img.source not in {'FILE', 'GENERATED'}:
@@ -308,7 +363,10 @@ class LassoMixin:
         """Enter: the session's edits stay (Lasso Undo can still revert them)."""
         n = len(self._recs)
         self._cleanup(context)
-        if n:
+        if n and _ip(bpy.data.images.get(self._cur_name)) is not None:
+            self.report({'INFO'}, f"Lasso: {n} edit(s) on the Inpaint copy - Inpaint's "
+                                  "Ctrl+Z undoes them, its Save keeps them")
+        elif n:
             self.report({'INFO'}, f"Lasso: {n} edit(s) applied to {self._cur_name} "
                                   "(Image > Save to keep them on disk)")
         return {'FINISHED'}
@@ -644,7 +702,7 @@ class LassoMixin:
             self._points = []
             return {'RUNNING_MODAL'}
 
-        src_buf = lasso_raster.read_pixels(img)
+        src_buf = _read(img)
         patch = src_buf[by0:by1, bx0:bx1].copy()
         patch[..., 3] = np.where(mask, patch[..., 3], 0.0)
         del src_buf
@@ -898,7 +956,7 @@ class LassoMixin:
 
     def _record(self, rec) -> None:
         if rec:
-            _push_undo(rec)
+            _push_undo(_to_inpaint(rec))    # the copy's part: an Inpaint step instead
             self._recs.append(rec)
 
     def _delete_selection(self, context):
@@ -907,10 +965,10 @@ class LassoMixin:
         src = self._pending_cut_source()
         if src is not None:
             rec = []
-            buf = lasso_raster.read_pixels(src)
+            buf = _read(src)
             _save_rect(rec, src, buf, self._hole_rect())
             self._apply_hole(buf, src)
-            lasso_raster.write_pixels(src, buf)
+            _write(src, buf)
             self._record(rec)
             self.report({'INFO'}, f"[{src.name}] Lasso selection deleted.")
         self._reset_to_draw(context)
@@ -929,12 +987,12 @@ class LassoMixin:
         rec = []
         src = self._pending_cut_source()
         if src is not None and src.name != dest.name:
-            buf = lasso_raster.read_pixels(src)
+            buf = _read(src)
             _save_rect(rec, src, buf, self._hole_rect())
             self._apply_hole(buf, src)
-            lasso_raster.write_pixels(src, buf)
+            _write(src, buf)
 
-        buf = lasso_raster.read_pixels(dest)
+        buf = _read(dest)
         dh, dw = buf.shape[:2]
         bounds = lasso_raster.affine_bounds(self._transformed_bbox_corners(), dw, dh)
         combined = src is not None and src.name == dest.name
@@ -945,7 +1003,7 @@ class LassoMixin:
         if combined:
             self._apply_hole(buf, dest)
         self._composite_float(buf)
-        lasso_raster.write_pixels(dest, buf)
+        _write(dest, buf)
 
         self._hole_live   = False
         self._source_mode = 'COPY'

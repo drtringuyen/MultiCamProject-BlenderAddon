@@ -39,6 +39,7 @@ class Session:
         self.users = users          # {"cameras": [...], "materials": [...]} at start
         self.out_path = out_path    # Bake target, None when there is nowhere to write
         self.reedit = reedit
+        self.inpaint = False        # on the Inpaint copy: Bake is an Inpaint step, no file
 
     @property
     def preview(self):
@@ -133,9 +134,11 @@ def can_start(img):
         return "No image"
     if is_preview(img):
         return "This is a Liquify preview"
-    from . import inpaint
-    if inpaint.is_temp(img):
-        return "This is the Inpaint copy - Save or Discard the Inpaint first"
+    from . import inpaint, lasso_draw
+    if inpaint.is_temp(img) and not inpaint.owns(img):
+        return "An old Inpaint copy - no Inpaint session edits it"
+    if inpaint.owns(img) and lasso_draw.get_active_op() is not None:
+        return "The lasso is running"
     if img.library is not None:
         return "Linked image - make it local first"
     if img.source not in {'FILE', 'GENERATED'}:
@@ -148,7 +151,9 @@ def start(img):
     reason = can_start(img)
     if reason:
         raise ValueError(reason)
-    side = bake.read_sidecar(img)
+    from . import inpaint
+    ip = inpaint.active() if inpaint.owns(img) else None    # the Inpaint copy: its buffer
+    side = None if ip is not None else bake.read_sidecar(img)
     source = img
     if side:
         if not os.path.isfile(side["source"]):
@@ -161,7 +166,7 @@ def start(img):
         raise ValueError(f"Cannot read the pixels of {source.name} - is the file missing?")
     from . import props
     pw, ph = field.preview_size(w, h, props.preview_long_side())
-    src = field.downscale(read_pixels(source), pw, ph)
+    src = field.downscale(ip.buf if ip is not None else read_pixels(source), pw, ph)
     users = users_of(img)
 
     name = (PREFIX + img.name)[:63]
@@ -173,7 +178,9 @@ def start(img):
         lq.load_field_uv(side["field"])
     _swap_in(img, preview)
     _session = Session(img, source, preview, lq, users,
-                       bake.output_path(img, source, side), side is not None)
+                       None if ip is not None else bake.output_path(img, source, side),
+                       side is not None)
+    _session.inpaint = ip is not None
     push(_session)
     return _session
 
@@ -212,9 +219,31 @@ def bake_and_finish():
         raise ValueError("No Liquify session")
     if s.lq.in_stroke:
         s.lq.stroke_end()
+    if s.inpaint:
+        return _bake_into_inpaint(s)
     img = bake.bake(s, read_pixels)
     _end(img)
     return s.out_path
+
+
+def _bake_into_inpaint(s):
+    """Liquify on the Inpaint copy: the warp applied to the session's full-size pixels, the
+    changed block one Inpaint step (no _lq file). Returns a label for the report."""
+    from . import inpaint
+    ip = inpaint.active()
+    if ip is None or ip.temp_name != s.photo_name:
+        raise ValueError("The Inpaint copy is gone")
+    full = ip.buf
+    out = field.warp_image(full, s.lq.field_uv())
+    moved = np.any(out != full, axis=2)
+    rows, cols = np.flatnonzero(moved.any(axis=1)), np.flatnonzero(moved.any(axis=0))
+    if rows.size:
+        y0, y1, x0, x1 = int(rows[0]), int(rows[-1]) + 1, int(cols[0]), int(cols[-1]) + 1
+        before = full[y0:y1, x0:x1].copy()
+        full[y0:y1, x0:x1] = out[y0:y1, x0:x1]
+        inpaint.record_edit(x0, y0, before)
+    _end(s.photo)               # the editors show the copy again
+    return f"{ip.alb_name} (Inpaint copy)"
 
 
 def recover():

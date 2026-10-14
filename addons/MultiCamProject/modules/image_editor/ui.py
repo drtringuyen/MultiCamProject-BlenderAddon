@@ -73,7 +73,11 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
         row.scale_y = 1.4
         row.operator("multicamproject.liquify_bake", icon='CHECKMARK')
         row.operator("multicamproject.liquify_cancel", icon='CANCEL')
-        if s.out_path:
+        if s.inpaint:
+            col = layout.column(align=True)
+            col.active = False
+            col.label(text="Bakes into the Inpaint copy (its Ctrl+Z, its Save)")
+        elif s.out_path:
             col = layout.column(align=True)
             col.active = False
             col.label(text="Bakes to " + bpy.path.basename(s.out_path))
