@@ -252,9 +252,17 @@ def table(context):
     if s is None or not s.rows:
         return []
     export = roles.find(context.scene, 'EXPORT')
-    labels = display_names(context.scene, [r.name for r in s.rows])
+    # an object moved out of OBJECTS / ROOM (or deleted) since the Calculate is left out -
+    # the next Calculate drops its row
+    listed = set()
+    for role in ('OBJECTS', 'ROOM'):
+        coll = roles.find(context.scene, role)
+        if coll is not None:
+            listed.update(o.name for o in coll.all_objects)
+    rows = [r for r in s.rows if r.name in listed]
+    labels = display_names(context.scene, [r.name for r in rows])
     out = []
-    for r in s.rows:
+    for r in rows:
         state, now = row_state(context, r, export)
         out.append(Line(r.name, labels[r.name], r.area, r.budget, now, state, r.room))
     out.sort(key=lambda ln: (ln.room, ORDER[ln.state], -ln.area))

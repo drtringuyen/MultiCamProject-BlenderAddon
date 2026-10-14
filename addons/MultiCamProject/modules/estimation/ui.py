@@ -68,7 +68,9 @@ class MULTICAMPROJECT_UL_Estimation(bpy.types.UIList):
         _LINES.update({ln.name: ln for ln in lines})
         place = {ln.name: i for i, ln in enumerate(lines)}
         order = [place.get(it.name, len(lines) + i) for i, it in enumerate(items)]
-        return [self.bitflag_filter_item] * len(items), order
+        # rows no longer in OBJECTS / ROOM (core.table left them out) are hidden
+        flags = [self.bitflag_filter_item if it.name in place else 0 for it in items]
+        return flags, order
 
     def draw_item(self, context, layout, data, item, icon, active_data, active_propname,
                   index=0):
@@ -137,8 +139,9 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         name.label(text="Object")
         for text in ("Area", "Budget", "Now", "To Go"):
             _cell(nums, text)
+        shown = max(len(_table(context)), 1)
         box.template_list("MULTICAMPROJECT_UL_Estimation", "", s, "rows", s, "active_index",
-                          rows=len(s.rows), maxrows=len(s.rows))
+                          rows=shown, maxrows=shown)
         lines = [ln for ln in _table(context) if not ln.room]     # the budget's objects
         col = box.column(align=True)
         tris = sum(ln.now for ln in lines)
