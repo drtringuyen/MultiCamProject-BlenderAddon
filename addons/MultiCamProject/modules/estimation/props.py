@@ -22,8 +22,7 @@ def _on_row(self, context):
     from . import core
     if 0 <= self.active_index < len(self.rows):
         core.focus(context, self.rows[self.active_index].name)
-        from ... import properties
-        properties.check_new_name(context)      # the name may belong to another object
+        core.fill_new_name(context, self.rows[self.active_index].name)
 
 
 def _budget_color(self):

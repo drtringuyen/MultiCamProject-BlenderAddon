@@ -37,6 +37,7 @@ class MULTICAMPROJECT_OT_EstimationSelect(bpy.types.Operator):
             s.active_index = i          # the row pressed in; its update focuses the object
             return {'FINISHED'}
         why = core.focus(context, self.object_name)
+        core.fill_new_name(context, self.object_name)
         if why:
             self.report({'WARNING'}, why)
             return {'CANCELLED'}

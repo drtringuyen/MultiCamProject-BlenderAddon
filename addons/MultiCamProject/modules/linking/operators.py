@@ -8,6 +8,7 @@ from bpy_extras.io_utils import ImportHelper
 
 from ... import folders, roles
 from . import core
+from ..remesh import workflow as wf
 
 
 def _target(context, name):
@@ -15,19 +16,97 @@ def _target(context, name):
     return obj if obj is not None and obj.type == 'MESH' and not obj.library else None
 
 
+def work_target(context, obj):
+    """(the ENV_ name obj takes first or None, its work file or '') - as the 2B / 2C window
+    buttons name them: an ENV_<prefix>.<##>_<name> object keeps its name and works in
+    Bake Folder/<name>.blend; a Remesh / Retopo copy made here (2B / 2C without the window)
+    that has no ENV_ name yet gets ENV_<prefix>.<next ##>_<New Object Name> first. No Name
+    Prefix or Bake Folder: ('', unsaved window)."""
+    from ..baking import naming
+    scene = context.scene
+    sc = naming.scheme(scene)
+    if sc is None:
+        return None, ""
+    folders.make_dir(scene, 'ORIGINALS')
+    bake_dir = folders.folder(scene, 'ORIGINALS')
+    if not bake_dir or not os.path.isdir(bake_dir):
+        return None, ""
+    p = naming.parse(obj.name, sc)
+    new = None
+    if p:
+        short = p[1]
+    elif wf.is_low_poly(obj):
+        typed = scene.multicamproject_props.new_object_name.strip() or naming.short_name(obj.name)
+        new = naming.full_name(sc, naming.next_index(sc), typed)
+        if bpy.data.objects.get(new) is not None:
+            new = None
+        short = typed
+    else:                   # a scan worked on itself (2D): its own name
+        short = naming.short_name(obj.name)
+    return new, os.path.join(bake_dir, naming.clean_name(short) + ".blend")
+
+
+def _ask_existing(context, op_id, path, **props):
+    """The work file is there already: Open Existing (link to it) or Replace."""
+    def draw(menu, _context):
+        col = menu.layout.column()
+        col.label(text=f"{os.path.basename(path)} is already in the Bake Folder", icon='ERROR')
+        op = col.operator(op_id, text="Open Existing (link the object to it)", icon='FILE_BLEND')
+        for k, v in props.items():
+            setattr(op, k, v)
+        op.existing = 'OPEN'
+        op = col.operator(op_id, text="Replace (fresh work window over it)", icon='FILE_REFRESH')
+        for k, v in props.items():
+            setattr(op, k, v)
+        op.existing = 'REPLACE'
+    context.window_manager.popup_menu(draw, title="Work file exists", icon='QUESTION')
+    return {'CANCELLED'}
+
+
+def _open_existing(op, obj, path):
+    """The work file is there already: obj is linked to it and its mesh sent along - the
+    window keeps its version in "old version" and takes this one."""
+    try:
+        work_name = core.send_mesh(obj, path)
+    except Exception as e:      # not a work window (or unreadable): open it anyway
+        op.report({'WARNING'}, f"'{obj.name}' is not linked to {os.path.basename(path)}: {e}")
+        subprocess.Popen([bpy.app.binary_path, path])
+        return {'FINISHED'}
+    op.report({'INFO'}, f"'{obj.name}' -> {os.path.basename(path)}: its '{work_name}' "
+                        "takes this mesh (the old one goes to 'old version')")
+    return {'FINISHED'}
+
+
+_EXISTING = (('ASK', "Ask", "Stop when the work file already exists"),
+             ('OPEN', "Open Existing", "Link the object to the existing work file and open it"),
+             ('REPLACE', "Replace", "Send out a fresh work window over the existing file"))
+
+
 class MULTICAMPROJECT_OT_WorkSendOut(bpy.types.Operator):
-    """Send Out: work on this object in a new, unsaved Blender - its materials, cameras and
-    Bake Source come along (transforms applied there). Model, paint and bake, then Send Back
-    and Receive here"""
+    """Send Out: work on this object in a new Blender, saved as Bake Folder/<name>.blend
+    (a Remesh / Retopo copy without its ENV_ name gets it first, as the 2B / 2C window
+    buttons do) - its materials, cameras and Bake Source come along (transforms applied
+    there). Model, paint and bake, then Send Back and Receive here"""
     bl_idname = "multicamproject.work_send_out"
     bl_label = "Send Out"
     bl_options = {'REGISTER', 'UNDO'}
 
     object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    existing: bpy.props.EnumProperty(items=_EXISTING, default='ASK',
+                                     options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def poll(cls, context):
         return context.mode == 'OBJECT' and not core.is_work_window(context.scene)
+
+    def invoke(self, context, event):
+        obj = _target(context, self.object_name)
+        if obj is None or self.existing != 'ASK' or core.out_record(obj) is not None:
+            return self.execute(context)
+        _new, path = work_target(context, obj)
+        if not path or not os.path.exists(path):
+            return self.execute(context)
+        return _ask_existing(context, self.bl_idname, path, object_name=obj.name)
 
     def execute(self, context):
         obj = _target(context, self.object_name)
@@ -38,11 +117,29 @@ class MULTICAMPROJECT_OT_WorkSendOut(bpy.types.Operator):
                                      "(X) first")
             return {'CANCELLED'}
         try:
-            core.send_out(context, obj)
+            new, path = work_target(context, obj)
+            from ..export import fixes
+        except ImportError:         # no Baking / Export module: no names, an unsaved window
+            new, path = None, ""
+        if new:                     # the copy's ENV_ name, into EXPORT (as 2B / 2C's window)
+            export = fixes.ensure_export_collection(context.scene)
+            if export not in obj.users_collection:
+                export.objects.link(obj)
+            fixes.rename_object(obj, new)
+            wf.follow_in_estimation(context.scene, obj)
+        if path and os.path.exists(path):
+            if self.existing == 'ASK':
+                self.report({'ERROR'}, f"{path} already exists - Open Existing or Replace")
+                return {'CANCELLED'}
+            if self.existing == 'OPEN':
+                return _open_existing(self, obj, path)
+        try:
+            core.send_out(context, obj, save_as=path)
         except Exception as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
-        self.report({'INFO'}, f"'{obj.name}' sent out: a work window is opening (unsaved)")
+        self.report({'INFO'}, f"'{obj.name}' sent out: a work window is opening, "
+                              + (f"saved as {os.path.basename(path)}" if path else "unsaved"))
         return {'FINISHED'}
 
 
@@ -349,12 +446,8 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         items=(('REMESH', "Remesh", "2B Remesh, then Send Out"),
                ('RETOPO', "Retopo", "2C Retopo, then Send Out")),
         options={'HIDDEN', 'SKIP_SAVE'})
-    existing: bpy.props.EnumProperty(
-        items=(('ASK', "Ask", "Stop when the work file already exists"),
-               ('OPEN', "Open Existing", "Link the new object to the existing work file and "
-                                         "open it"),
-               ('REPLACE', "Replace", "Send out a fresh work window over the existing file")),
-        default='ASK', options={'HIDDEN', 'SKIP_SAVE'})
+    existing: bpy.props.EnumProperty(items=_EXISTING, default='ASK',
+                                     options={'HIDDEN', 'SKIP_SAVE'})
 
     @classmethod
     def description(cls, context, props):
@@ -380,6 +473,8 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         except ImportError:
             cls.poll_message_set("Needs the Remesh and Export modules")
             return False
+        if wf.is_copy(obj) and core.out_record(obj) is None:
+            return True             # made here already: named and sent out as it is
         if not context.scene.multicamproject_props.new_object_name.strip():
             cls.poll_message_set("Type the new object's name first")
             return False
@@ -406,28 +501,20 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
         return new_name, os.path.join(bake_dir, short + ".blend")
 
     def invoke(self, context, event):
+        obj = context.active_object
+        if wf.is_copy(obj):         # 2B / 2C made here already: Send Out names and saves it
+            return bpy.ops.multicamproject.work_send_out('INVOKE_DEFAULT', object_name=obj.name)
         new_name, path = self._target(context)
         if new_name is None or self.existing != 'ASK' or not os.path.exists(path):
             return self.execute(context)
-        mode = self.mode
-
-        def draw(menu, _context):
-            col = menu.layout.column()
-            col.label(text=f"{os.path.basename(path)} is already in the Bake Folder",
-                      icon='ERROR')
-            op = col.operator(self.bl_idname, text="Open Existing (link the new object to it)",
-                              icon='FILE_BLEND')
-            op.mode, op.existing = mode, 'OPEN'
-            op = col.operator(self.bl_idname, text="Replace (fresh work window over it)",
-                              icon='FILE_REFRESH')
-            op.mode, op.existing = mode, 'REPLACE'
-        context.window_manager.popup_menu(draw, title="Work file exists", icon='QUESTION')
-        return {'CANCELLED'}
+        return _ask_existing(context, self.bl_idname, path, mode=self.mode)
 
     def execute(self, context):
-        from ..remesh import workflow as wf
         from ..export import fixes
         obj = context.active_object
+        if wf.is_copy(obj):
+            return bpy.ops.multicamproject.work_send_out(object_name=obj.name,
+                                                         existing=self.existing)
         if core.out_record(obj) is not None:
             self.report({'WARNING'}, f"'{obj.name}' is linked to a work window: end the link "
                                      "(X) first")
@@ -474,7 +561,7 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             if self.mode == 'REMESH':
                 wf.set_gn(copy, False)      # its GN waits for the Decimate (in the window)
         if exists and self.existing == 'OPEN':
-            return self._open_existing(copy, obj, path)
+            return _open_existing(self, copy, path)
         try:
             core.send_out(context, copy, start=self.mode, save_as=path)
         except Exception as e:
@@ -482,20 +569,6 @@ class MULTICAMPROJECT_OT_WorkRemeshOut(bpy.types.Operator):
             return {'FINISHED'}
         self.report({'INFO'}, f"'{copy.name}' sent out: a work window is opening, saved as "
                               f"{os.path.basename(path)} ('{obj.name}' is its original)")
-        return {'FINISHED'}
-
-    def _open_existing(self, copy, obj, path):
-        """The work file is there already: the new object is linked to it and its mesh sent
-        along - the window keeps its version in "old version" and takes this one."""
-        try:
-            work_name = core.send_mesh(copy, path)
-        except Exception as e:      # not a work window (or unreadable): open it anyway
-            self.report({'WARNING'}, f"'{copy.name}' is made, but not linked to "
-                                     f"{os.path.basename(path)}: {e}")
-            subprocess.Popen([bpy.app.binary_path, path])
-            return {'FINISHED'}
-        self.report({'INFO'}, f"'{copy.name}' -> {os.path.basename(path)}: its '{work_name}' "
-                              "takes this mesh (the old one goes to 'old version')")
         return {'FINISHED'}
 
 

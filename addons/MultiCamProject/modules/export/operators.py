@@ -610,6 +610,67 @@ class MULTICAMPROJECT_OT_ExportFixObject(bpy.types.Operator):
         return jobs.start(self, context, f"Fix {name}", [name], steps(), finish)
 
 
+def fixable(scene):
+    """[(object, what its Fix does)] - every EXPORT object whose row shows the fix button."""
+    objs, per, _g = status.scene_status(scene)
+    out = []
+    for o in objs:
+        st = per.get(o.name)
+        if st is None or st.stage in {'READY', 'WARN'}:
+            continue
+        todo = autofix.describe(autofix.object_steps(o, st.issues))
+        if todo:
+            out.append((o, todo))
+    return out
+
+
+class MULTICAMPROJECT_OT_ExportFixAll(bpy.types.Operator):
+    """Fix every object with a fix button (the red ones): each as its own Fix does, one
+    after the other. Nothing is exported"""
+    bl_idname = "multicamproject.export_fix_all"
+    bl_label = "Fix All"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll(context)
+
+    def invoke(self, context, event):
+        todo = fixable(context.scene)
+        if not todo:
+            self.report({'INFO'}, "Nothing the add-on can fix")
+            return {'CANCELLED'}
+        self._todo = todo
+        return context.window_manager.invoke_props_dialog(
+            self, width=460, title=f"Fix {len(todo)} object(s)", confirm_text="Fix All")
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        for o, todo in getattr(self, "_todo", None) or fixable(context.scene):
+            col.label(text=o.name, icon='MODIFIER')
+            col.label(text="      " + ", then ".join(todo))
+
+    def execute(self, context):
+        objs = [o for o, _t in fixable(context.scene)]
+        if not objs:
+            return {'CANCELLED'}
+        lines = []
+
+        def steps():
+            for obj in objs:
+                name = obj.name
+                try:
+                    yield from autofix.run_object_steps(context, obj,
+                                                        lambda s, t: lines.append((s, t)))
+                except (RuntimeError, KeyError) as e:
+                    lines.append(('ERROR', f"{name}: {e}"))
+
+        def finish(result, error):
+            return lines
+        return jobs.start(self, context, f"Fix {len(objs)} objects", [o.name for o in objs],
+                          steps(), finish)
+
+
 # wm[_SOLO_KEY][<space pointer>] = {"obj": soloed object, "hidden": objects solo unhid}
 _SOLO_KEY = "multicamproject_export_solo"
 
@@ -745,7 +806,8 @@ class MULTICAMPROJECT_OT_ExportApplyDecimate(bpy.types.Operator):
         return {'FINISHED'} if n else {'CANCELLED'}
 
 
-_classes = (MULTICAMPROJECT_OT_ExportFixObject, MULTICAMPROJECT_OT_ExportApplyDecimate,
+_classes = (MULTICAMPROJECT_OT_ExportFixObject, MULTICAMPROJECT_OT_ExportFixAll,
+            MULTICAMPROJECT_OT_ExportApplyDecimate,
             MULTICAMPROJECT_OT_ToggleCollection,
             MULTICAMPROJECT_OT_ExportMakeUV, MULTICAMPROJECT_OT_ExportAdd, MULTICAMPROJECT_OT_ExportRemove,
             MULTICAMPROJECT_OT_ExportRename, MULTICAMPROJECT_OT_ExportFixTransforms,

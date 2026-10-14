@@ -77,12 +77,29 @@ def _draw_tail(cells, context, obj, st):
         link_ui.draw_row_button(cells[LINKS], obj)
 
 
+def _fit(context, text):
+    """`text` cut ('...') to fit the name column with its icon, measured in the UI font."""
+    import blf
+    prefs = context.preferences
+    scale = prefs.system.ui_scale
+    region = context.region
+    if region is None:
+        return text
+    avail = (region.width - 60 * scale) * WIDTHS[NAME] - 34 * scale
+    blf.size(0, prefs.ui_styles[0].widget.points * scale)
+    if blf.dimensions(0, text)[0] <= avail:
+        return text
+    while len(text) > 4 and blf.dimensions(0, text + "...")[0] > avail:
+        text = text[:-1]
+    return text + "..."
+
+
 def _sort_button(layout, s, column, text):
     """A header cell that sorts the list by its column (again: reversed). The sorted column
     shows its arrow; the colour column has the arrow only."""
     sub = layout.row(align=True)
     if column == 'NAME':
-        sub.alignment = 'LEFT'      # over the names
+        sub.alignment = 'LEFT'          # over the names
     on = s.sort_by == column
     icon = ('SORT_DESC' if s.sort_reverse else 'SORT_ASC') if on else 'NONE'
     if not text and not on:
@@ -96,13 +113,13 @@ def _draw_row(col, context, s, index, ln, st):
     cells = _line(col)
     _blocks(cells, item)
     active = index == s.active_index
-    # the name focuses the object (selected, active, framed) - the active row pressed in;
-    # left-aligned, so the names start in one line
-    left = cells[NAME].row(align=True)
-    left.alignment = 'LEFT'
-    op = left.operator("multicamproject.estimation_select", text=ln.label,
-                              emboss=active, depress=active,
-                              icon='HOME' if ln.room else core.ICONS[ln.state])
+    # the name focuses the object (selected, active, framed) - the active row pressed in.
+    # Left-aligned and cut to fit here (a button Blender has to squeeze starts further left)
+    name = cells[NAME].row(align=True)
+    name.alignment = 'LEFT'
+    op = name.operator("multicamproject.estimation_select", text=_fit(context, ln.label),
+                       emboss=active, depress=active,
+                       icon='HOME' if ln.room else core.ICONS[ln.state])
     op.object_name = ln.name
     if ln.room:         # ROOM: no budget, no To Go
         texts = (f"{ln.area:.2f} m²", "-", core.short(ln.now), "")
@@ -164,7 +181,14 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
                                 (NOW, 'NOW', "Now"), (TOGO, 'TOGO', "To Go"),
                                 (STAGE, 'STAGE', "Stage")):
             _sort_button(cells[i], s, column, text)
-        _cell(cells[FIX], "", 'FILE_REFRESH')
+        # fix every red one (as each row's button does)
+        fix = cells[FIX].row(align=True)
+        fix.alert = any(st.stage not in {'READY', 'WARN'} for st in per.values())
+        fix.enabled = hasattr(bpy.types, "MULTICAMPROJECT_OT_export_fix_all")
+        if fix.enabled:
+            fix.operator("multicamproject.export_fix_all", text="", icon='FILE_REFRESH')
+        else:
+            fix.label(text="", icon='FILE_REFRESH')
         cells[LINKS].label(text="")
         col = box.column(align=True)
         for ln in table:
