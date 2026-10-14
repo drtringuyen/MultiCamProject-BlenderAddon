@@ -59,7 +59,8 @@ TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
             ("bng_image", "bng_name", True), ("alb_image", "alb_name", False),
             ("nor_image", "nor_name", True), ("msk_image", "msk_name", True),
             ("cmx1_image", "cmx1_name", True), ("cmx2_image", "cmx2_name", True))
-META = ("ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
+# route first: Receive re-stamps ALB_ by it (a stamp by this file's route read outdated)
+META = ("route", "route_user", "route_prompt", "ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
         "last_ba_seconds", "last_bp_seconds", "last_bake_seconds", "last_nor_seconds",
         "ba_far_share", "ba_far_max", "ba_fit_cage", "bn_stale")
 SCENE_GROUPS = ("multicamproject_bake_settings", "multicamproject_export",
@@ -663,6 +664,8 @@ def send_back(context):
                         for i in range(1, 7)]
         man["slot_count"] = cam.slot_count
         man["user_picked"] = cam.user_picked
+        man["resorted"] = cam.resorted
+        man["paint_mode"] = cam.paint_mode
         man["shifts"] = {it.camera.name: list(it.shift) for it in cam.shifts
                          if it.camera is not None and not cp.is_global(it.camera)}
         man["cameras"] = [(it.camera.name, it.score, it.coverage) for it in cam.cameras
@@ -763,6 +766,10 @@ def _take_cameras(obj, scene, man):
     if cam.slot_count != man["slot_count"]:
         cam["slot_count"] = int(man["slot_count"])     # raw: no re-pick from the callback
     cam.user_picked = man["user_picked"]
+    if "resorted" in man:           # Resort red only when the window never resorted either
+        cam.resorted = man["resorted"]
+    if man.get("paint_mode") in {'TEXTURE', 'VERTEX'}:     # Texture Mask / Vertex Sharp-Smooth
+        cam.paint_mode = man["paint_mode"]
     if "cameras" in man:            # the list as scored / edited in the window
         cam.cameras.clear()
         for name, score, cov in man["cameras"]:
@@ -1003,6 +1010,11 @@ def receive(context, obj, action='REPLACE'):
                  else "No new textures"]
         if gone:
             notes.append("missing (bake again in the window): " + ", ".join(gone))
+        try:                        # the Polycount row shows this object, not its scan
+            from ..remesh import workflow as wf
+            wf.follow_in_estimation(scene, obj)
+        except ImportError:
+            pass
         stage = _status_text(obj, scene)
         if stage:
             notes.append(f"status: {stage}")

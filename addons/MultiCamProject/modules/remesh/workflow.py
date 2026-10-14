@@ -636,6 +636,15 @@ def retopo_mesh(obj, name, content=()):
     return new
 
 
+def follow_in_estimation(scene, copy):
+    """The Polycount Estimation row of the scan goes to its copy (no module: nothing)."""
+    try:
+        from ..estimation import core as est
+    except ImportError:
+        return
+    est.follow_copy(scene, copy)
+
+
 def apply_new_name(scene, copy, obj, name, mesh_name):
     """0C / 0D: the New Object Name typed on the Setup rows names the copy
     ENV_<prefix>.<next ##>_<typed> (MCP_ / MAT_ / textures follow, as in 07) and the

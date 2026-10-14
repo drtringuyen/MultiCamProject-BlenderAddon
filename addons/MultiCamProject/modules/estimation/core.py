@@ -171,6 +171,18 @@ ICONS = {DONE: 'STRIP_COLOR_04', OVER: 'STRIP_COLOR_02', NEW: 'RADIOBUT_OFF'}
 STATE = {}      # row name -> state, filled by the panel's draw (read by the row's colour)
 
 
+def follow_copy(scene, obj):
+    """obj (a 2B / 2C copy) takes over its scan's row: the list shows its stage, triangles
+    and buttons from now on (as the next Calculate would). Run when the copy is made or
+    received - never per redraw."""
+    s = getattr(scene, "multicamproject_estimation", None)
+    if s is None or s.rows.get(obj.name) is not None:
+        return
+    row = _row(s, obj)
+    if row is not None:
+        row.name = obj.name
+
+
 def row_state(context, row, export):
     """(state, triangles now): worked on = in EXPORT, counted as shown now (DONE within its
     budget, else OVER); not touched yet = NEW with the Calculate's count."""
