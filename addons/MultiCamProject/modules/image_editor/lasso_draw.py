@@ -253,7 +253,8 @@ _STATUS_TEXT = {
                   "Esc revert & exit",
     'GRAB':       "Grab: move mouse · release/LMB/Enter confirm · RMB/Esc cancel",
     'ROTATE':     "Rotate around selection center · LMB/Enter confirm · RMB/Esc cancel",
-    'SCALE':      "Scale around selection center · LMB/Enter confirm · RMB/Esc cancel",
+    'SCALE':      "Scale around selection center · X / Y one axis · LMB/Enter confirm · "
+                  "RMB/Esc cancel",
 }
 
 
@@ -261,6 +262,8 @@ def _draw_status(op, region) -> None:
     if blf is None:
         return
     text = _STATUS_TEXT.get(op._state, "")
+    if op._state == 'SCALE' and getattr(op, "_axis", None):
+        text = f"[{op._axis} only] " + text
     if op._state != 'DRAW':
         mode = "cut" if op._source_mode == 'CUT' and op._hole_live else "copy"
         dest = op._cur_name or "no image"

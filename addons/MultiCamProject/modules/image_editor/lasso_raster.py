@@ -140,7 +140,8 @@ def composite_float(dest_buf, patch, corners,
       patch    — (ph, pw, 4) float32 straight RGBA, alpha=0 outside the lasso
       corners  — the four transformed bbox corners in dest pixel space, used
                  only to bound the work region
-      tx, ty   — translation      angle — rotation (rad)      scale — uniform
+      tx, ty   — translation      angle — rotation (rad)
+      scale    — uniform, or (sx, sy) along the piece's axes: p' = R(a)*diag(sx,sy)*p + t
       bx0, by0 — patch origin in the source image (undoes the crop offset)
     """
     dh, dw = dest_buf.shape[:2]
@@ -157,9 +158,9 @@ def composite_float(dest_buf, patch, corners,
     qx = xx.astype(np.float32) + 0.5 - tx
     qy = yy.astype(np.float32) + 0.5 - ty
     ca, sa = math.cos(angle), math.sin(angle)
-    inv_s  = 1.0 / max(scale, 1e-6)
-    u = ( ca * qx + sa * qy) * inv_s - bx0 - 0.5
-    v = (-sa * qx + ca * qy) * inv_s - by0 - 0.5
+    sx, sy = scale if isinstance(scale, (tuple, list)) else (scale, scale)
+    u = ( ca * qx + sa * qy) / max(sx, 1e-6) - bx0 - 0.5
+    v = (-sa * qx + ca * qy) / max(sy, 1e-6) - by0 - 0.5
 
     patch_pre = patch.copy()
     patch_pre[..., :3] *= patch_pre[..., 3:4]

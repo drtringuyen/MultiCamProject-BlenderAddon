@@ -145,7 +145,7 @@ def draw_lasso_settings(context, layout, img):
     col = layout.column(align=True)
     col.active = False
     col.label(text="Ctrl+Alt+K: lasso · click outside: apply, next")
-    col.label(text="G R S · Shift+D stamp · X delete · Ctrl+C/V")
+    col.label(text="G R S (S then X/Y: one axis) · Shift+D stamp · X delete · Ctrl+C/V")
     col.label(text="Ctrl+Z undo · Enter apply · Esc revert all")
 
 

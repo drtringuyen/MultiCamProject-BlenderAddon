@@ -19,6 +19,7 @@ at once: camera backgrounds and projection materials read the same image.
 Session keys (mouse over the view):
   LMB                        add lasso point · click point 1 / double-click closes
   drag inside the piece      move it                 G / R / S  move / rotate / scale
+                                                     S then X / Y  scale one axis
   click outside the piece    apply it, next lasso    K          same
   Shift+D                    stamp a copy, keep moving it
   X                          delete the selection (leaves the hole)
@@ -36,7 +37,8 @@ afterwards (_UNDO). The edited image only changes in memory: Image > Save writes
 it, Image > Reload throws it away.
 
 States: DRAW -> FLOAT_IDLE <-> GRAB / ROTATE / SCALE.
-The floating piece carries a single 2D affine  p' = scale * R(angle) * p + t.
+The floating piece carries a single 2D affine  p' = R(angle) * diag(sx, sy) * p + t
+(sx, sy along the piece's own axes: S then X / Y scales one of them).
 """
 
 import math
@@ -334,8 +336,9 @@ class LassoMixin:
         self._hole_tex   = None
         self._hole_key   = None
         self._sel_center = (0.0, 0.0)
-        # Accumulated affine: p' = scale * R(angle) * p + (tx, ty)
-        self._angle, self._scale = 0.0, 1.0
+        # Accumulated affine: p' = R(angle) * diag(sx, sy) * p + (tx, ty)
+        self._angle, self._sx, self._sy = 0.0, 1.0, 1.0
+        self._axis = None         # S: None (uniform), 'X' or 'Y' (the piece's own axis)
         self._tx, self._ty       = 0.0, 0.0
         # A CUT hole stays virtual (drawn, never written) until the piece is
         # applied; then it is punched into the source and the float is a COPY.
@@ -531,13 +534,13 @@ class LassoMixin:
                     inside = not inside
         return inside
 
-    # ── Affine helpers  (p' = s * R(a) * p + t) ──────────────────────────────
+    # ── Affine helpers  (p' = R(a) * diag(sx, sy) * p + t) ───────────────────
 
     def _affine_apply_points(self, points):
-        ca = math.cos(self._angle) * self._scale
-        sa = math.sin(self._angle) * self._scale
-        return [(ca * x - sa * y + self._tx,
-                 sa * x + ca * y + self._ty) for x, y in points]
+        ca, sa = math.cos(self._angle), math.sin(self._angle)
+        sx, sy = self._sx, self._sy
+        return [(ca * sx * x - sa * sy * y + self._tx,
+                 sa * sx * x + ca * sy * y + self._ty) for x, y in points]
 
     def _transformed_bbox_corners(self):
         bx1 = self._bx0 + self._pw
@@ -815,7 +818,7 @@ class LassoMixin:
             'points':     list(self._points),
             'bx0':        self._bx0, 'by0': self._by0,
             'pw':         self._pw,  'ph':  self._ph,
-            'affine':     (self._angle, self._scale, self._tx, self._ty),
+            'affine':     (self._angle, self._sx, self._sy, self._tx, self._ty),
             'sel_center': self._sel_center,
             'is_float':   self._is_float,
         }
@@ -836,7 +839,7 @@ class LassoMixin:
         self._points     = list(clip['points'])
         self._bx0, self._by0 = clip['bx0'], clip['by0']
         self._pw,  self._ph  = clip['pw'],  clip['ph']
-        (self._angle, self._scale,
+        (self._angle, self._sx, self._sy,
          self._tx, self._ty) = clip['affine']
         self._sel_center = clip['sel_center']
         self._is_float   = clip['is_float']
@@ -873,7 +876,9 @@ class LassoMixin:
         start = self._mouse_px(event)
         if start is None:
             return
-        self._snap         = (self._angle, self._scale, self._tx, self._ty)
+        self._snap         = (self._angle, self._sx, self._sy, self._tx, self._ty)
+        self._axis         = None
+        self._sub_cur      = None
         self._sub_start_px = start
         self._sub_drag     = drag
         if mode in {'ROTATE', 'SCALE'}:
@@ -892,28 +897,15 @@ class LassoMixin:
             cur = self._mouse_px(event)
             if cur is None:
                 return {'RUNNING_MODAL'}
-            a0, s0, tx0, ty0 = self._snap
-            cx, cy           = self._pivot_px
+            self._sub_cur = cur
+            self._submode_to(cur)
+            return {'RUNNING_MODAL'}
 
-            if self._state == 'GRAB':
-                self._tx = tx0 + (cur[0] - self._sub_start_px[0])
-                self._ty = ty0 + (cur[1] - self._sub_start_px[1])
-
-            elif self._state == 'ROTATE':
-                ang = math.atan2(cur[1] - cy, cur[0] - cx)
-                da  = ang - self._sub_start_angle
-                ca, sa      = math.cos(da), math.sin(da)
-                vx, vy      = tx0 - cx, ty0 - cy
-                self._angle = a0 + da
-                self._tx    = ca * vx - sa * vy + cx
-                self._ty    = sa * vx + ca * vy + cy
-
-            elif self._state == 'SCALE':
-                d  = math.hypot(cur[0] - cx, cur[1] - cy)
-                ds = max(d / self._sub_start_dist, 1e-4)
-                self._scale = s0 * ds
-                self._tx    = ds * (tx0 - cx) + cx
-                self._ty    = ds * (ty0 - cy) + cy
+        if (event.value == 'PRESS' and self._state == 'SCALE'
+                and event.type in {'X', 'Y'}):
+            # S then X / Y: the piece's own axis only; the same key again: uniform
+            self._axis = None if self._axis == event.type else event.type
+            self._submode_to(self._sub_cur or self._sub_start_px)
             return {'RUNNING_MODAL'}
 
         if event.type == 'LEFTMOUSE':
@@ -932,12 +924,41 @@ class LassoMixin:
                 self._state = 'FLOAT_IDLE'        # accept sub-move
                 return {'RUNNING_MODAL'}
             if event.type in {'RIGHTMOUSE', 'ESC'}:
-                (self._angle, self._scale,
+                (self._angle, self._sx, self._sy,
                  self._tx, self._ty) = self._snap  # revert sub-move only
                 self._sub_drag = False
                 self._state = 'FLOAT_IDLE'
                 return {'RUNNING_MODAL'}
         return {'RUNNING_MODAL'}
+
+    def _submode_to(self, cur) -> None:
+        """The G / R / S transform with the mouse at `cur` (image pixels)."""
+        a0, sx0, sy0, tx0, ty0 = self._snap
+        cx, cy = self._pivot_px
+
+        if self._state == 'GRAB':
+            self._tx = tx0 + (cur[0] - self._sub_start_px[0])
+            self._ty = ty0 + (cur[1] - self._sub_start_px[1])
+
+        elif self._state == 'ROTATE':
+            ang = math.atan2(cur[1] - cy, cur[0] - cx)
+            da  = ang - self._sub_start_angle
+            ca, sa      = math.cos(da), math.sin(da)
+            vx, vy      = tx0 - cx, ty0 - cy
+            self._angle = a0 + da
+            self._tx    = ca * vx - sa * vy + cx
+            self._ty    = sa * vx + ca * vy + cy
+
+        elif self._state == 'SCALE':
+            d  = math.hypot(cur[0] - cx, cur[1] - cy)
+            ds = max(d / self._sub_start_dist, 1e-4)
+            fx, fy = {'X': (ds, 1.0), 'Y': (1.0, ds)}.get(self._axis, (ds, ds))
+            self._sx, self._sy = sx0 * fx, sy0 * fy
+            # the selection center stays put: c = R(a) * diag(sx, sy) * p_c + t
+            ca, sa = math.cos(a0), math.sin(a0)
+            px, py = self._sel_center
+            self._tx = cx - (ca * self._sx * px - sa * self._sy * py)
+            self._ty = cy - (sa * self._sx * px + ca * self._sy * py)
 
     # ── Commit paths (the only image.pixels writes) ──────────────────────────
 
@@ -1016,7 +1037,7 @@ class LassoMixin:
         to the pure vectorized bake in lasso_raster)."""
         lasso_raster.composite_float(
             dest_buf, self._patch, self._transformed_bbox_corners(),
-            self._tx, self._ty, self._angle, self._scale,
+            self._tx, self._ty, self._angle, (self._sx, self._sy),
             self._bx0, self._by0)
 
 
