@@ -3,7 +3,7 @@ from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
 from ... import gate
 from . import core, paint_session, paint_tex
-from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo
+from .operators import CAM_BRUSHES, cameras_hidden, flood_ready, is_solo, view_locked
 
 
 def _liquify_loaded():
@@ -310,8 +310,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
         eye = left.row(align=True)
         eye.active = True       # never dimmed: clicking another eye switches the solo camera
-        op = eye.operator("multicamproject.solo_camera", text="",
-                          icon='HIDE_OFF' if solo else 'HIDE_ON', depress=solo)
+        # soloed: eye = view rotates, lock = rotation locked (one lock for all cameras)
+        icon = ('LOCKED' if view_locked(bpy.context) else 'HIDE_OFF') if solo else 'HIDE_ON'
+        op = eye.operator("multicamproject.solo_camera", text="", icon=icon, depress=solo)
         op.camera = cam.name
 
         nsplit = left.split(factor=name_f, align=True)

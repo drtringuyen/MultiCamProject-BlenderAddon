@@ -316,13 +316,36 @@ def enter_camera_view(context, space):
         rv3d.view_perspective = 'CAMERA'
 
 
+# The rotation lock is one flag for every camera, kept on the window manager (an ID, so it
+# survives addon reloads; not saved with the file)
+_LOCK_KEY = "multicamproject_view_lock"
+
+
+def view_locked(context):
+    return bool(context.window_manager.get(_LOCK_KEY, False))
+
+
 class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
-    """Solo the active object in local view and look through this camera
-    (click again to leave solo)"""
+    """Solo the active object in local view and look through this camera.
+    Click again: lock / unlock the view rotation (all cameras). Ctrl+click: leave solo"""
     bl_idname = "multicamproject.solo_camera"
     bl_label = "Solo Camera View"
 
     camera: StringProperty()
+
+    def invoke(self, context, event):
+        # a click on the soloed camera's eye toggles the lock; Ctrl+click (and every
+        # script call, which runs execute) keeps the old click-again-to-leave
+        cam = bpy.data.objects.get(self.camera)
+        if cam is not None and is_solo(context, cam) and not event.ctrl:
+            wm = context.window_manager
+            wm[_LOCK_KEY] = not view_locked(context)
+            for window in wm.windows:
+                for area in window.screen.areas:
+                    if area.type == 'VIEW_3D':
+                        area.tag_redraw()
+            return {'FINISHED'}
+        return self.execute(context)
 
     @classmethod
     def poll(cls, context):
@@ -570,6 +593,25 @@ def show_in_list(obj, cam, force=False):
         bpy.app.timers.register(_restore, first_interval=0.05)
         return
     d.cam_index = i     # its update skips: the camera is already soloed
+
+
+class MULTICAMPROJECT_OT_ViewRotateLocked(bpy.types.Operator):
+    """Swallows the orbit keys while the rotation lock is on in a camera view (its poll
+    fails otherwise, so the key falls through to Blender's own rotate)"""
+    bl_idname = "multicamproject.view_rotate_locked"
+    bl_label = "View Rotation Locked"
+    bl_options = {'INTERNAL'}
+
+    @classmethod
+    def poll(cls, context):
+        rv3d = context.region_data
+        return (view_locked(context) and context.area is not None
+                and context.area.type == 'VIEW_3D' and rv3d is not None
+                and rv3d.view_perspective == 'CAMERA')
+
+    def invoke(self, context, event):
+        self.report({'INFO'}, "View rotation is locked - click the lock in the camera list")
+        return {'FINISHED'}
 
 
 def is_solo(context, cam):
@@ -1292,6 +1334,7 @@ _classes = (
     MULTICAMPROJECT_OT_ReloadAll,
     MULTICAMPROJECT_OT_AssignSlot,
     MULTICAMPROJECT_OT_SoloCamera,
+    MULTICAMPROJECT_OT_ViewRotateLocked,
     MULTICAMPROJECT_OT_SoloStep,
     MULTICAMPROJECT_OT_CamStep,
     MULTICAMPROJECT_OT_ToggleCameraFolder,
@@ -1341,6 +1384,19 @@ def register():
                 kmi = km.keymap_items.new(MULTICAMPROJECT_OT_SoloAssign.bl_idname, key, 'PRESS')
                 kmi.properties.slot = slot
                 _keymaps.append((km, kmi))
+        # the rotation lock: orbit keys in a camera view do nothing while it is on (its poll
+        # lets them through to Blender's rotate otherwise; Shift/Ctrl+MMB pan and zoom stay)
+        km = kc.keymaps.new(name="3D View", space_type='VIEW_3D')
+        for kmi in [k for k in km.keymap_items
+                    if k.idname == MULTICAMPROJECT_OT_ViewRotateLocked.bl_idname]:
+            km.keymap_items.remove(kmi)
+        for key in ('MIDDLEMOUSE', 'TRACKPADPAN', 'NUMPAD_2', 'NUMPAD_4', 'NUMPAD_6', 'NUMPAD_8'):
+            kmi = km.keymap_items.new(MULTICAMPROJECT_OT_ViewRotateLocked.bl_idname, key, 'PRESS')
+            _keymaps.append((km, kmi))
+        # Alt+MMB drag snaps to a side view - out of the camera view as well
+        kmi = km.keymap_items.new(MULTICAMPROJECT_OT_ViewRotateLocked.bl_idname, 'MIDDLEMOUSE',
+                                  'CLICK_DRAG', alt=True)
+        _keymaps.append((km, kmi))
         # Enter / Esc finish the camera brush (its poll: only while one is in use)
         for name in ("Image Paint", "Vertex Paint"):
             km = kc.keymaps.new(name=name, space_type='EMPTY')

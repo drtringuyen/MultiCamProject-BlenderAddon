@@ -221,12 +221,12 @@ def _budget(context):
 
 
 def _send_back_text(context, budget):
-    """'Send Back to Main File · 33K / 38K tris': its Estimation budget / the object now."""
+    """'Send Back to Main File · 38K / 33K tris': the object now / its Estimation budget."""
     text = ops.MULTICAMPROJECT_OT_WorkSendBack.bl_label
     if budget is None:
         return text
     from ..estimation import core as est
-    return f"{text} · {est.short(budget[0])} / {est.short(budget[1])} tris"
+    return f"{text} · {est.short(budget[1])} / {est.short(budget[0])} tris"
 
 
 def _budget_block(row):
