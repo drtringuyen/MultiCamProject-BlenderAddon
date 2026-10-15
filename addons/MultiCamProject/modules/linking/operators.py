@@ -188,7 +188,7 @@ class MULTICAMPROJECT_OT_WorkReceive(bpy.types.Operator):
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
         verb = "added" if self.action == 'ADD' else "received"
-        level = ('WARNING' if any(n.startswith(("missing", "NOT locked")) for n in notes)
+        level = ('WARNING' if any(n.startswith(("missing", "NOT locked", "Raw here")) for n in notes)
                  else 'INFO')
         self.report({level}, " · ".join([f"'{obj.name}': {faces:,} faces {verb}"] + notes
                                         + ["still linked: X ends it"]))

@@ -1037,6 +1037,40 @@ def _refresh(obj, scene):
     cache.clear()
 
 
+def _keep_window_verdict(obj, man, taken):
+    """Receive never makes a bake outdated that was up to date in the window: anything that
+    still reads outdated here once Receive is done is stamped again from this file's state,
+    and the note says what differed. Returns the notes."""
+    from ... import steps
+    from ..baking import cache, fingerprint, normal
+    fresh = man.get("fresh", {})
+    checks = (("ba", "BAo_", fingerprint.ba_outdated, fingerprint.ba_why),
+              ("bp", "BAp_", fingerprint.bp_outdated, None),
+              ("alb", "ALB_", fingerprint.is_outdated, None),
+              ("nor", "NOR_", normal.nor_outdated, None))
+    cache.clear()
+    off = []
+    for key, label, outdated, why in checks:
+        if fresh.get(key) and outdated(obj):
+            off.append(f"{label} ({why(obj)})" if why else label)
+    notes = []
+    if off:
+        print(f"[MultiCamProject] Receive '{obj.name}': read outdated here, current in the "
+              f"window - stamped again: {'; '.join(off)}")
+        _restamp(obj, man, taken)
+        cache.clear()
+        still = [label for key, label, outdated, _w in checks if fresh.get(key) and outdated(obj)]
+        notes.append(f"stamped as in the window: {', '.join(off)}"
+                     + (f" - still outdated: {', '.join(still)}" if still else ""))
+    steps.forget()
+    if fresh.get("ba") and 3 not in steps.state(obj, bpy.context.scene, fresh=True).done:
+        why = ("02 not done here (Decimate / uv_normal)" if not steps.mesh_done(obj)
+               else f"BAo_ {fingerprint.ba_why(obj) or 'missing'}")
+        print(f"[MultiCamProject] Receive '{obj.name}': Raw here - {why}")
+        notes.append(f"Raw here: {why}")
+    return notes
+
+
 def _lock_received(obj, scene):
     """A Bake Final from the window: Lock Finish (receive dropped the ALB_ inpaint first).
     Returns the note."""
@@ -1107,6 +1141,10 @@ def receive(context, obj, action='REPLACE'):
         try:                        # the Polycount row shows this object, not its scan
             from ..remesh import workflow as wf
             wf.follow_in_estimation(scene, obj)
+        except ImportError:
+            pass
+        try:
+            notes += _keep_window_verdict(obj, man, taken)
         except ImportError:
             pass
         if final:
