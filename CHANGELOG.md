@@ -2,6 +2,55 @@
 
 ## Unreleased
 
+### Finalize, camera view modes, Send Back that stays final, new ROOM_Template (2026-10-15)
+
+**05 row: Finalize in one click**
+- The 05 row is now: green | **05. Bake Albedo** + ALB_ inpaint (the wider part) | green |
+  **lock** | **Finalize + Lock** (main file) / **Finalize + Send Back** (work window) | **Send**
+  (work window only) | green | gear.
+- **Finalize** takes the Processing look as it is now as the final: a saved ALB_ inpaint is
+  dropped (Recycle Bin), ALB_ is baked new, NOR_ made from it, then Lock Finish (ALB_ / NOR_
+  copied into Export). Nothing is locked if a bake fails.
+- In a work window Finalize also puts the origin at the bottom center (Export's check) -
+  nothing moves in the world, bakes that were current stay current - locks the object there
+  and sends it back. The Send Back button then reads **Send Back Final to Main File**.
+- **Send** (after Finalize, work window): send an already final object again without baking.
+- **Lock** button (after the middle green pad): Lock Finish / Unlock, in any mode.
+
+**Send Back / Receive**
+- Receive of a final: unlocks, takes everything, drops the main file's ALB_ inpaint, centers
+  the main object's origin the same way (parent kept), then locks it (Export reads Ready).
+- Receive refuses an object locked in the main file unless what comes back is a final.
+- Fix: NOR_ came back "outdated" (its stamp was never sent), so a final was not locked.
+- Receive keeps the window's verdict: a bake current in the window that reads outdated here is
+  stamped again, and the message says what differed (e.g. "BAo_ (Cage changed)"); if the object
+  would still be Raw, Receive warns why.
+- Send Back writes the mesh in world space whatever the window object's transform.
+- Send Back button: **now / budget** tris (was budget / now).
+
+**Camera list**
+- The highlighted camera's eye cycles a view mode, one for all cameras:
+  **Focus** (camera icon, the default) - Brush / Bucket / Eraser solo their camera first;
+  **Lock** (lock icon) - as Focus, and no camera view can be rotated (middle mouse, trackpad,
+  numpad 2/4/6/8, Alt+middle drag); **Freestyle** (eye) - the view stays put, the row of the
+  camera last painted with is highlighted. **Ctrl+click** the eye leaves solo. Another
+  camera's eye starts over at Focus.
+- The highlighted row has an **Overlays** toggle (the camera photo). The camera brush no
+  longer turns Overlays off; switching camera or brush keeps them as set.
+- **Baked Source** row laid out as a camera row: BAo_'s inpaint and a dropdown with its file
+  (original / _inpaint - MCP_ and 05 take the one picked, both files stay) where a camera's
+  photo is, and a short **03. BAo_ 8K** over the slot buttons.
+
+**Projection**
+- A face counts as seen by a camera only when **all its corners** see it (was: its center).
+  Removes the ghost of an object painted onto the surface behind it with a saw-tooth edge,
+  mostly in cameras 4-6. Paint Textures (CMX_) keep the old mix until Reset Camera Mix.
+
+**Setup File IO**
+- **ROOM_Template** is now the one of ENV_05_KR_Corridor2.blend: Ceiling, Floor, Wall_A-D, each
+  with its own origin. The old combined room box and Wall_Windows are no longer made; a file
+  that has a ROOM_Template only gets the parts it is missing.
+
 ### Paint Textures: camera mix and blend mask painted at 1K on uv_normal (2026-10-12)
 - New toggle **Paint** in the projection box (on by default): the camera paint buttons paint
   1K textures through uv_normal instead of the mesh's vertices - precise, whatever the
