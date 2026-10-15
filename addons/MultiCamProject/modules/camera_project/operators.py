@@ -316,30 +316,54 @@ def enter_camera_view(context, space):
         rv3d.view_perspective = 'CAMERA'
 
 
-# The rotation lock is one flag for every camera, kept on the window manager (an ID, so it
-# survives addon reloads; not saved with the file)
-_LOCK_KEY = "multicamproject_view_lock"
+# The view mode is one setting for every camera, kept on the window manager (an ID, so it
+# survives addon reloads; not saved with the file). The soloed camera's eye cycles it:
+#   FREE   eye     a brush / bucket leaves the view alone, the view rotates
+#   FOCUS  camera  a brush / bucket solos its camera first, the view rotates
+#   LOCK   lock    as FOCUS, and a camera view never rotates
+_MODE_KEY = "multicamproject_view_mode"
+VIEW_MODES = ('FREE', 'FOCUS', 'LOCK')
+VIEW_MODE_ICONS = {'FREE': 'HIDE_OFF', 'FOCUS': 'VIEW_CAMERA', 'LOCK': 'LOCKED'}
+
+
+def view_mode(context):
+    mode = context.window_manager.get(_MODE_KEY, 'FREE')
+    return mode if mode in VIEW_MODES else 'FREE'
 
 
 def view_locked(context):
-    return bool(context.window_manager.get(_LOCK_KEY, False))
+    return view_mode(context) == 'LOCK'
+
+
+def focus_camera(context, cam):
+    """Focus / Lock: a brush or bucket of `cam` looks through it first (solo). Freestyle,
+    or already soloed: the view stays as it is."""
+    if view_mode(context) == 'FREE' or is_solo(context, cam):
+        return
+    if bpy.ops.multicamproject.solo_camera.poll():
+        bpy.ops.multicamproject.solo_camera(camera=cam.name)
 
 
 class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
     """Solo the active object in local view and look through this camera.
-    Click again: lock / unlock the view rotation (all cameras). Ctrl+click: leave solo"""
+    Click again: Freestyle (brush keeps the view) > Focus (brush solos its camera) > Lock
+    (as Focus, no view rotation) - one mode for all cameras. Ctrl+click: leave solo"""
     bl_idname = "multicamproject.solo_camera"
     bl_label = "Solo Camera View"
 
     camera: StringProperty()
 
     def invoke(self, context, event):
-        # a click on the soloed camera's eye toggles the lock; Ctrl+click (and every
+        # a click on the soloed camera's eye cycles the view mode; Ctrl+click (and every
         # script call, which runs execute) keeps the old click-again-to-leave
         cam = bpy.data.objects.get(self.camera)
         if cam is not None and is_solo(context, cam) and not event.ctrl:
             wm = context.window_manager
-            wm[_LOCK_KEY] = not view_locked(context)
+            mode = VIEW_MODES[(VIEW_MODES.index(view_mode(context)) + 1) % len(VIEW_MODES)]
+            wm[_MODE_KEY] = mode
+            self.report({'INFO'}, {'FREE': "Freestyle: the brush keeps the view",
+                                   'FOCUS': "Focus: the brush solos its camera",
+                                   'LOCK': "Lock: the brush solos its camera, no rotation"}[mode])
             for window in wm.windows:
                 for area in window.screen.areas:
                     if area.type == 'VIEW_3D':
@@ -815,8 +839,10 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             self.report({'ERROR'}, "Select faces in Edit Mode first")
             return {'CANCELLED'}
         if self.mode != 'FLOOD' and paint_session.current(obj) == (cam.name, self.mode):
-            finish_painting(context, obj)       # the pressed button again: done
+            finish_painting(context, obj)       # the pressed button again: done (view kept)
             return {'FINISHED'}
+        if self.mode != 'ERASE':
+            focus_camera(context, cam)          # Focus / Lock: look through it first
         processing_preview(context, obj)
         if paint_tex.can_paint(obj, context.scene):
             return self._texture(context, obj, cam, slot)
