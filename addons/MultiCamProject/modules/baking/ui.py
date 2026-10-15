@@ -316,9 +316,9 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                            icon='EXPORT')
         else:
             right.operator("multicamproject.bake_final", text="Finalize + Lock", icon='LOCKED')
-        draw_green(right)
         if window:          # already final: just send it (Send Back Final, no new bake)
             right.operator("multicamproject.work_send_back", text="", icon='EXPORT')
+        draw_green(right)
         row = right
         if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
                 and getattr(obj, "multicamproject_cam", None) is not None
