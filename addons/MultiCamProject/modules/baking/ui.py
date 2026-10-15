@@ -287,23 +287,31 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     @staticmethod
     def _draw_bake_button(layout, s, obj):
         """[A v] (the active object's own size), the green "05. Bake Albedo" (ALB_ only:
-        NOR_ is 07's) | "05+07. Bake Final" (ALB_ + NOR_ + Lock), the bake settings' gear at
-        its end."""
+        NOR_ is 07's) + its inpaint | "Finalize + Lock" (ALB_ + NOR_ + Lock; a work window:
+        "Finalize + Send Back"), the bake settings' gear at its end."""
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
         row.separator(factor=0.5)
-        draw_green(row)
-        row.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
-                     icon='RENDER_STILL')
+        split = row.split(factor=0.55, align=True)     # 05 + its inpaint get the wider part
+        left, right = split.row(align=True), split.row(align=True)
+        draw_green(left)
+        left.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
+                      icon='RENDER_STILL')
         d = common.data(obj)
         from ... import module_manager
         if d.alb_image is not None and module_manager.is_loaded("image_editor"):
             from ..image_editor import sources
             if sources.draw_ready(obj):
-                sources.draw_button(row, 'ALB', obj)   # 06: inpaint ALB_ (05's own result)
-        row.operator("multicamproject.bake_final", text="05+07. Bake Final", icon='LOCKED')
-        draw_green(row)
+                sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (05's own result)
+        draw_green(left)
+        if operators._in_work_window(bpy.context.scene, obj):
+            right.operator("multicamproject.bake_final", text="Finalize + Send Back",
+                           icon='EXPORT')
+        else:
+            right.operator("multicamproject.bake_final", text="Finalize + Lock", icon='LOCKED')
+        draw_green(right)
+        row = right
         if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
                 and getattr(obj, "multicamproject_cam", None) is not None
                 and obj.multicamproject_cam.is_setup
