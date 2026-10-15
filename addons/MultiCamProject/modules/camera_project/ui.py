@@ -318,6 +318,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         nsplit = left.split(factor=name_f, align=True)
         nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
         mid = nsplit.row(align=True)
+        space = bpy.context.space_data
+        if solo and space is not None and space.type == 'VIEW_3D':
+            # the header's Overlays: a camera brush turns them off, and with them its photo
+            mid.prop(space.overlay, "show_overlays", text="", icon='OVERLAY')
         if solo:        # Liquify / Lasso work in the solo view: only the soloed camera has them
             _draw_liquify(mid, cam)
         if inpaint and core.image_ok(core.cam_image(cam)):
