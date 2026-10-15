@@ -750,6 +750,7 @@ def send_back(context):
                                                     "fingerprint", "ba_parts")}
         man["meta"] = {k: getattr(d, k) for k in META}
         man["size"] = {"tex_size": d.tex_size, "resolution": common.resolution(obj, scene)}
+        man["final"] = bool(d.locked)       # Bake Final here: Receive locks it in the main file
     except ImportError:
         pass
     tmp = os.path.join(folder, MANIFEST + ".tmp")
@@ -1019,6 +1020,15 @@ def _refresh(obj, scene):
     cache.clear()
 
 
+def _lock_received(obj, scene):
+    """A Bake Final from the window: its new ALB_ is the final (this file's ALB_ inpaint
+    goes), then Lock Finish. Returns the note."""
+    from ..baking import operators as bake_ops
+    bake_ops.drop_alb_inpaint(obj, scene)
+    why = bake_ops.lock_final(obj, scene)
+    return f"NOT locked: {why}" if why else "Locked Finish (final from the window)"
+
+
 def receive(context, obj, action='REPLACE'):
     """Take back what the work window sent. REPLACE: mesh, modifiers, slots / shifts, bakes,
     materials, stamps. ADD: the window's mesh joined into obj, nothing else."""
@@ -1029,6 +1039,13 @@ def receive(context, obj, action='REPLACE'):
     if obj.mode != 'OBJECT':
         raise RuntimeError("Object Mode first")
     scene = context.scene
+    final = bool(man.get("final")) and action == 'REPLACE'
+    bake = getattr(obj, "multicamproject_bake", None)
+    if bake is not None and bake.locked and not final:
+        raise RuntimeError("Locked Finish here - unlock it in 08 first (or Bake Final in the "
+                           "work window)")
+    if final:       # the window's final replaces it: unlocked to take it, locked again below
+        bake.locked = False
     me = _load_mesh(rec["id"], man["mesh"])
     if action == 'ADD':
         tmp = bpy.data.objects.new(f"{obj.name}_work", me)     # world space, like the window
@@ -1072,6 +1089,8 @@ def receive(context, obj, action='REPLACE'):
             wf.follow_in_estimation(scene, obj)
         except ImportError:
             pass
+        if final:
+            notes.append(_lock_received(obj, scene))
         stage = _status_text(obj, scene)
         if stage:
             notes.append(f"status: {stage}")

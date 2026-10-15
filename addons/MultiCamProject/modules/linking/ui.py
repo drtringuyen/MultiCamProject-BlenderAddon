@@ -221,8 +221,12 @@ def _budget(context):
 
 
 def _send_back_text(context, budget):
-    """'Send Back to Main File · 38K / 33K tris': the object now / its Estimation budget."""
+    """'Send Back to Main File · 38K / 33K tris': the object now / its Estimation budget.
+    A locked object (Bake Final): 'Send Back Final', Receive locks it in the main file."""
     text = ops.MULTICAMPROJECT_OT_WorkSendBack.bl_label
+    obj = core.work_object(context.scene)
+    if getattr(getattr(obj, "multicamproject_bake", None), "locked", False):
+        text = text.replace("Send Back", "Send Back Final")
     if budget is None:
         return text
     from ..estimation import core as est

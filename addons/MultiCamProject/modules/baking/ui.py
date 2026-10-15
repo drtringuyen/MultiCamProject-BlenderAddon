@@ -287,7 +287,8 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     @staticmethod
     def _draw_bake_button(layout, s, obj):
         """[A v] (the active object's own size), the green "05. Bake Albedo" (ALB_ only:
-        NOR_ is 07's), the bake settings' gear at its end."""
+        NOR_ is 07's) | "05+07. Bake Final" (ALB_ + NOR_ + Lock), the bake settings' gear at
+        its end."""
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
@@ -295,6 +296,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         draw_green(row)
         row.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
                      icon='RENDER_STILL')
+        row.operator("multicamproject.bake_final", text="05+07. Bake Final", icon='LOCKED')
         draw_green(row)
         d = common.data(obj)
         from ... import module_manager

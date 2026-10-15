@@ -824,6 +824,103 @@ def draw_uv_fix(layout, obj):
                         icon='UV').scope = 'SELECTED'
 
 
+def lock_final(obj, scene, copy=True):
+    """08 Lock Finish for `obj`: '' when locked, else why not. `copy`: ALB_ / NOR_ go into
+    the Export folder (a work window leaves that to the main file's Receive)."""
+    from ... import steps
+    steps.forget()
+    if 7 not in steps.state(obj, scene, fresh=True).done:
+        return "Finish 07 first: ALB_ and NOR_ baked and current"
+    folder = common.export_textures_dir(scene) if copy else ""
+    if folder:          # the Export folder holds them from now on
+        from ..export import fbx
+        fbx.copy_textures([obj], os.path.dirname(folder))
+    common.data(obj).locked = True
+    steps.forget()
+    return ""
+
+
+def drop_alb_inpaint(obj, scene):
+    """Bake Final takes the new ALB_ as it is: a saved ALB_ inpaint goes (Recycle Bin)."""
+    if getattr(common.data(obj), "alb_inpaint", None) is None:
+        return False
+    try:
+        from ..image_editor import sources
+    except ImportError:
+        common.data(obj).alb_inpaint = None
+        return True
+    sources.remove(sources.Source('ALB', obj), scene)
+    return True
+
+
+def _in_work_window(scene, obj):
+    """`obj` is this work window's object (its Send Back goes to the main file)."""
+    try:
+        from ..linking import core as linking
+    except ImportError:
+        return False
+    return linking.is_work_window(scene) and linking.work_object(scene) == obj
+
+
+class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
+    """05+07 Bake Final: the Processing look as it is now is the final - ALB_ baked new (a
+    saved ALB_ inpaint is dropped), NOR_ made from it, then Lock Finish. In a work window
+    the object is locked and sent back: Receive locks it in the main file"""
+    bl_idname = "multicamproject.bake_final"
+    bl_label = "Bake Final"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if not MULTICAMPROJECT_OT_BakeAlbedo.poll(context):
+            return False
+        src = common.settings(context.scene).nor_source
+        for o in common.selected_meshes(context):
+            why = normal.problem(o, context.scene, src)
+            if why:
+                cls.poll_message_set(f"{o.name}: {why}")
+                return False
+        return True
+
+    def execute(self, context):
+        _leave_mode(context)            # bakes in Object Mode, then back to the mode
+        scene = context.scene
+        objs = scope_objects(context, 'SELECTED')
+        if not objs:
+            self.report({'WARNING'}, "No meshes to bake (handmade ones are baked by hand)")
+            return {'CANCELLED'}
+        dropped = [o.name for o in objs if drop_alb_inpaint(o, scene)]
+        log = [f"ALB_ inpaint dropped: {', '.join(dropped)}"] if dropped else []
+        finish = _finisher("Baked Final", len(objs))
+
+        def final(result, error):
+            lines = [('INFO', t) for t in log] + finish(result, error)
+            if result is None:
+                return lines
+            sc = bpy.context.scene
+            for obj in result[0]:
+                window = _in_work_window(sc, obj)
+                why = lock_final(obj, sc, copy=not window)
+                if why:
+                    lines.append(('WARNING', f"{obj.name}: not locked - {why}"))
+                    continue
+                if not window:
+                    lines.append(('INFO', f"{obj.name}: Locked Finish"))
+                    continue
+                from ..linking import core as linking
+                try:
+                    linking.send_back(bpy.context)
+                    lines.append(('INFO', f"{obj.name}: final sent back - Receive in the "
+                                          "main file locks it there"))
+                except Exception as e:
+                    lines.append(('ERROR', f"{obj.name}: Send Back failed - {e}"))
+            return lines
+        return jobs.start(self, context, "Bake Final", [o.name for o in objs],
+                          bake_objects_steps(context, objs, True, common.settings(scene).nor_source,
+                                             log=lambda t: log.append(t)),
+                          final)
+
+
 class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
     """08 Lock Finish: the active object is final - ALB_ / NOR_ are copied into the Export
     folder, never removed by a clean-up, and every step is locked until Unlock"""
@@ -865,15 +962,10 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
         d = common.data(obj)
         steps.forget()
         if self.action == 'LOCK':
-            if 7 not in steps.state(obj, context.scene, fresh=True).done:
-                self.report({'WARNING'}, "Finish 07 first: ALB_ and NOR_ baked and current")
+            why = lock_final(obj, context.scene)
+            if why:
+                self.report({'WARNING'}, why)
                 return {'CANCELLED'}
-            folder = common.export_textures_dir(context.scene)
-            if folder:          # the Export folder holds them from now on
-                from ..export import fbx
-                fbx.copy_textures([obj], os.path.dirname(folder))
-            d.locked = True
-            steps.forget()
             self.report({'INFO'}, f"{obj.name}: Locked Finish")
             return {'FINISHED'}
         d.locked = False
@@ -886,7 +978,7 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
         return _start_bake(self, context, "Rebake", [obj], True, s.nor_source, "Rebaked")
 
 
-_classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
+_classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_BakeFinal, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
