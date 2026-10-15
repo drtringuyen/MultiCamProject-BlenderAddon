@@ -889,6 +889,10 @@ class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
         if not objs:
             self.report({'WARNING'}, "No meshes to bake (handmade ones are baked by hand)")
             return {'CANCELLED'}
+        for o in objs:      # a work window: the origin to the bottom center (Export's check),
+            if _in_work_window(scene, o):       # Receive centers the main file's too
+                from ..linking import core as linking
+                linking.center_origin_kept(o)
         dropped = [o.name for o in objs if drop_alb_inpaint(o, scene)]
         log = [f"ALB_ inpaint dropped: {', '.join(dropped)}"] if dropped else []
         finish = _finisher("Baked Final", len(objs))

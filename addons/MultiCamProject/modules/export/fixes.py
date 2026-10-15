@@ -282,6 +282,25 @@ def rename_all(objs, sc=None, plan=None):
 
 # ---------------------------------------------------------------- transforms
 
+def center_origin(obj):
+    """Only the origin to the bottom center (nothing applied, the mesh stays where it is in
+    the world). Returns the world offset it moved by."""
+    pivot = Vector(checks._bbox_pivot(obj))         # world orientation, from the origin
+    if max(abs(v) for v in pivot) <= 0.001:
+        return Vector()
+    mw = obj.matrix_world.copy()
+    local = mw.to_3x3().inverted() @ pivot
+    obj.data.transform(Matrix.Translation(-local), shape_keys=True)
+    obj.data.update()
+    children = [(c, c.matrix_world.copy()) for c in obj.children]
+    obj.matrix_world = Matrix.Translation(pivot) @ mw
+    for c, m in children:
+        c.matrix_world = m
+    from ..baking import cache
+    cache.clear(obj)
+    return pivot
+
+
 def fix_transform(obj):
     """Apply all transforms into the mesh, then put the origin at the bottom center.
     Children keep their place. Returns '' or why it was skipped."""

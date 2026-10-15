@@ -697,6 +697,28 @@ def _nor_fresh(obj):
     return bool(d.nor_image and d.nor_fingerprint and d.nor_fingerprint == normal.state(obj))
 
 
+ORIGIN_KEY = "multicamproject_origin_centered"     # work object: Finalize centered its origin
+
+
+def center_origin_kept(obj):
+    """Finalize in a work window: the origin to the bottom center (as Export wants it), the
+    bakes that were current stay current (only the mesh's local numbers moved, nothing in
+    the world). Receive centers the main file's origin the same way."""
+    from ..export import fixes
+    try:
+        from ..baking import common
+    except ImportError:
+        return
+    d = common.data(obj)
+    before = {"fresh": _fresh(obj),
+              "stamps": {k: getattr(d, k) for k in ("ba_fingerprint", "bng_fingerprint",
+                                                    "bp_fingerprint", "bnp_fingerprint",
+                                                    "fingerprint", "nor_fingerprint")}}
+    fixes.center_origin(obj)
+    obj[ORIGIN_KEY] = True
+    _restamp(obj, before, [])
+
+
 def send_back(context):
     """The work object's base mesh + manifest into its hand-off folder. Returns faces."""
     scene = context.scene
@@ -712,6 +734,10 @@ def send_back(context):
     me = obj.data.copy()
     me.name = obj.name
     me.materials.clear()        # the faces keep their slot index; the main file has the slots
+    if obj.matrix_world != Matrix.Identity(4):      # Receive reads world space (a centered origin)
+        me.transform(obj.matrix_world)
+        if obj.matrix_world.determinant() < 0:
+            me.flip_normals()
     try:
         bpy.data.libraries.write(os.path.join(folder, MESH_FILE), {me}, path_remap='ABSOLUTE')
         faces = len(me.polygons)
@@ -719,7 +745,8 @@ def send_back(context):
         bpy.data.meshes.remove(me)
     man = {"mesh": obj.name, "time": time.time(),
            "modifiers": [m.name for m in obj.modifiers],
-           "applied": bool(obj.get(wf.APPLIED_KEY))}
+           "applied": bool(obj.get(wf.APPLIED_KEY)),
+           "origin_centered": bool(obj.get(ORIGIN_KEY))}
     dec, snap = wf.decimate_modifier(obj), wf.snap_modifier(obj)
     if dec is not None:
         man["decimate"] = {"ratio": dec.ratio, "show_viewport": dec.show_viewport}
@@ -1120,6 +1147,9 @@ def receive(context, obj, action='REPLACE'):
         _to_local(me, obj)
         faces = len(me.polygons)
         _swap_mesh(obj, me)
+        if man.get("origin_centered"):  # centered in the window: here too (before the stamps)
+            from ..export import fixes
+            fixes.center_origin(obj)
         _take_modifiers(obj, man)
         _take_cameras(obj, scene, man)
         taken, gone = [], []
