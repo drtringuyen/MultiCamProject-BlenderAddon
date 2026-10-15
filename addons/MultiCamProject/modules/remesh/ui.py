@@ -250,7 +250,10 @@ def draw_bao(layout, context, obj):
     row = box.row(align=True)
     row.scale_y = 1.4
     why = bake_ops.source_poll_problem(obj)
-    # the object's size: its own pick (05 / the EXPORT list), or the scene's in front of Export
+    # the object's size: its own pick (05 / the EXPORT list), or the scene's in front of Export -
+    # its picker here too, so it can change while 04-09 are still locked
+    from ..baking import ui as bake_ui
+    bake_ui.draw_object_size(row, obj)
     row.operator("multicamproject.bake_from_source",
                  text=f"03. Bake from Scan BAo_ ({_res(common.resolution(obj, context.scene))})",
                  icon='RENDER_STILL')

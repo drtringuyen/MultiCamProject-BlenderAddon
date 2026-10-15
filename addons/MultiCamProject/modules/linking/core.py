@@ -333,6 +333,8 @@ def send_out(context, obj, start="", save_as="", headless=False):
     _clear_old_jobs()
     from . import originals
     loaded = originals.ensure_loaded(obj)       # the window gets the full original
+    if ensure_origin(obj):
+        print(f"[MultiCamProject] {obj.name}: origin centered before Send Out")
     try:
         return _send_out(context, obj, start, save_as, main, headless)
     finally:
@@ -489,6 +491,7 @@ def send_mesh(obj, path):
     os.makedirs(folder, exist_ok=True)
     if obj.mode != 'OBJECT':
         obj.update_from_editmode()
+    ensure_origin(obj)
     lib = os.path.join(folder, INCOMING_FILE)
     bpy.data.libraries.write(lib, {obj.data}, path_remap='ABSOLUTE')
     applied = bool(obj.get(wf.APPLIED_KEY))
@@ -719,6 +722,22 @@ def center_origin_kept(obj):
     _restamp(obj, before, [])
 
 
+def ensure_origin(obj):
+    """The origin at the bottom center (as Export wants it) before obj leaves a file: the
+    main file's Send Out / Open Existing, the window's build and Send Back. Only when it is
+    off (the bakes stay current). Returns True when it moved."""
+    if obj is None or obj.type != 'MESH' or obj.library or obj.data.users > 1:
+        return False
+    try:
+        from ..export import checks
+    except ImportError:
+        return False
+    if max(abs(v) for v in checks._bbox_pivot(obj)) <= 0.001:
+        return False
+    center_origin_kept(obj)
+    return True
+
+
 def send_back(context):
     """The work object's base mesh + manifest into its hand-off folder. Returns faces."""
     scene = context.scene
@@ -728,6 +747,8 @@ def send_back(context):
         raise RuntimeError("This window's object is gone")
     if obj.mode != 'OBJECT':
         obj.update_from_editmode()
+    ensure_origin(obj)          # checked once more as it leaves: Receive centers it too
+    obj[ORIGIN_KEY] = True
     _save_paint()
     folder = job_dir(job_id)
     os.makedirs(folder, exist_ok=True)

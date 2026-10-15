@@ -240,6 +240,10 @@ def _build():
     if orig is not None and bpy.context.view_layer.objects.get(orig.name) is not None:
         orig.hide_set(True)     # as in the main file: the low poly is what you work on
     if obj is not None:
+        try:                    # world transforms applied: the origin back to its bottom center
+            importlib.import_module(f"{settings['addon']}.modules.linking.core").ensure_origin(obj)
+        except Exception as e:  # never stop the window over the origin
+            print(f"[MultiCamProject] work window: origin not centered: {e}")
         for o in bpy.context.view_layer.objects:
             o.select_set(False)
         bpy.context.view_layer.objects.active = obj
