@@ -464,9 +464,9 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
             state = {"overlays": space.overlay.show_overlays}
         elif state is None:
             state = {"overlays": space.overlay.show_overlays}
-        else:
-            _restore_camera(state, space)   # switching camera inside solo
         entering = "cam" not in state
+        if not entering:
+            _restore_camera(state, space)   # switching camera inside solo
 
         # Camera background images are drawn only when overlays are on and the
         # camera object itself is visible in this (local) view.
