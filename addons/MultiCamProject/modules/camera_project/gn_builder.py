@@ -9,7 +9,7 @@ SINGLE = "GN-CamProject_Single"
 MIX = "MCP-MixResult"
 MATINDEX = "MCP-MatIndex_to_uv"   # legacy (Convert Material button) - removed by setup
 MAIN = "GN-CameraProject"
-VERSION = 13         # bump when the node layout changes
+VERSION = 14         # bump when the node layout changes
 SLOT_COUNTS = (3, 4, 5, 6)
 LAYERS = ("VCMix", "VCMix2")        # cameras 1-3 / 4-6 in R, G, B
 MASK2_STASH = "_mcp_mask2"          # VCMix2 alpha while paint_sync uses it as its marker
@@ -205,7 +205,9 @@ def build_single():
     dot = b.vmath("DOT_PRODUCT", nrm.outputs["Normal"], dirn, (-150, -200))
     facing = b.math("MAXIMUM", dot.outputs["Value"], 0.0, (-150, -200), "Facing")
 
-    # occlusion: ray from face toward camera, offset along normal
+    # occlusion: ray from each vertex toward the camera, offset along the normal. A face is
+    # visible only when ALL its corners are: one ray from the face center gave a face half
+    # behind an object that object's photo pixels (a ghost, cut along the triangles)
     off = b.vmath("SCALE", nrm.outputs["Normal"], None, (-550, -450))
     off.inputs["Scale"].default_value = 0.001
     src = b.vmath("ADD", pos.outputs[0], off.outputs[0], (-350, -450))
@@ -216,6 +218,11 @@ def build_single():
     b.link(dist.outputs["Value"], rc.inputs["Ray Length"])
     hit = b.math("MULTIPLY", rc.outputs["Is Hit"], gi.outputs["Occlusion"], (50, -400))
     visible = b.math("SUBTRACT", 1.0, hit, (250, -400), "Visible")
+    vpt = b.n("GeometryNodeFieldOnDomain", (250, -500), domain="POINT", data_type="FLOAT")
+    vpt.label = "Visible per Vertex"
+    b.link(visible, vpt.inputs[0])
+    # on the face domain the vertices' values arrive averaged: 1 = every corner sees it
+    visible = b.math("GREATER_THAN", vpt.outputs[0], 0.999, (420, -450), "All Corners Visible")
 
     w = b.math("MULTIPLY", facing, inframe, (600, -150))
     w = b.math("MULTIPLY", w, visible, (600, -250))
