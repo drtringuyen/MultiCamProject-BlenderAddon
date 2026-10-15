@@ -1,18 +1,17 @@
 """The camera brush in use: which object, camera and tool (Paint / Erase) the last camera
 paint button set up. Its button stays depressed while that brush is really what the
-viewport paints with, and the 3D View's overlays are off meanwhile, so the colors at the
-object's rims can be judged.
+viewport paints with. The 3D View's Overlays (and with them the camera photo) are left
+as they are: the camera row's toggle switches them.
 
 It stays on while: the object is active and in Texture Paint (Vertex Paint) on the canvas
 (color layer) the button chose, with the button's blend (Erase: Erase / Add Alpha) and,
 for Paint, the camera's color. Anything else - another mode, object, canvas, brush or
-color - ends it: paint_sync's timer checks every 0.1-0.25 s and the overlays come back.
+color - ends it: paint_sync's timer checks every 0.1-0.25 s.
 """
 import bpy
 from bpy.app.handlers import persistent
 
-_state = {}     # obj, cam, mode ('PAINT' / 'ERASE'), target (canvas / layer name), color,
-                # overlays {area pointer: show_overlays before}
+_state = {}     # obj, cam, mode ('PAINT' / 'ERASE'), target (canvas / layer name), color
 
 
 def _brush_color(ps):
@@ -68,42 +67,24 @@ def current(obj):
 
 
 def begin(context, obj, cam, mode, texture, target, color):
-    """The button just set the brush up: remember it, overlays off (kept off when another
-    camera / tool follows)."""
-    overlays = _state.get("overlays", {}) if _state else {}
+    """The button just set the brush up: remember it."""
     _state.clear()
     _state.update(obj=obj.name, cam=cam.name, mode=mode, texture=texture, target=target,
-                  color=tuple(color or (0.0, 0.0, 0.0)), overlays=overlays)
-    area = context.area
-    if area is not None and area.type == 'VIEW_3D':
-        sp = area.spaces.active
-        overlays.setdefault(area.as_pointer(), sp.overlay.show_overlays)
-        sp.overlay.show_overlays = False
+                  color=tuple(color or (0.0, 0.0, 0.0)))
 
 
 def end():
-    """Overlays back as they were - only where they are still off (solo mode may have
-    changed them meanwhile)."""
+    """The brush is no longer the button's: its button pops up."""
     if not _state:
         return
-    saved = _state.get("overlays", {})
     _state.clear()
-    wm = bpy.context.window_manager
-    for win in wm.windows if wm else ():
-        for area in win.screen.areas:
-            before = saved.get(area.as_pointer())
-            if area.type == 'VIEW_3D' and before is not None:
-                sp = area.spaces.active
-                if not sp.overlay.show_overlays:
-                    sp.overlay.show_overlays = before
-                area.tag_redraw()
+    _redraw_sidebars()
 
 
 def tick():
     """paint_sync's timer: the brush changed away from the button's -> end."""
     if _state and not _valid():
         end()
-        _redraw_sidebars()
 
 
 def _redraw_sidebars():

@@ -305,6 +305,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             if sources.draw_ready(obj):
                 sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (05's own result)
         draw_green(left)
+        # 08 at the middle pad: the object's lock (Lock Finish / Unlock)
+        op = right.operator("multicamproject.lock_finish", text="",
+                            icon='LOCKED' if d.locked else 'UNLOCKED', depress=d.locked)
+        op.action = 'UNLOCK' if d.locked else 'LOCK'
+        op.object_name = obj.name
         if operators._in_work_window(bpy.context.scene, obj):
             right.operator("multicamproject.bake_final", text="Finalize + Send Back",
                            icon='EXPORT')

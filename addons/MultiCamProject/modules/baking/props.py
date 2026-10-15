@@ -51,6 +51,34 @@ def _on_tex_size(data, context):
     cache.clear()
 
 
+_ba_items = []      # kept alive: Blender only borrows a dynamic enum's strings
+
+
+def _ba_show_items(data, _context):
+    """BAo_'s file names: the original, and its _inpaint when there is one."""
+    ba, ip = data.ba_image, data.ba_inpaint
+    _ba_items[:] = [('ORIGINAL', ba.name if ba else "(no BAo_)", "The BAo_ as baked", 'IMAGE_DATA', 0)]
+    if ip is not None:
+        _ba_items.append(('INPAINT', ip.name, "BAo_'s inpainted copy (06)", 'BRUSH_DATA', 1))
+    return _ba_items
+
+
+def _get_ba_show(data):
+    return 1 if data.ba_inpaint is not None and data.ba_use_inpaint else 0
+
+
+def _set_ba_show(data, value):
+    if data.ba_use_inpaint == bool(value):
+        return
+    data.ba_use_inpaint = bool(value)
+    obj = data.id_data
+    try:            # MCP_'s BAKED frame takes it now
+        from ..image_editor import sources
+        sources.relink(sources.Source('BAO', obj), bpy.context.scene)
+    except ImportError:
+        pass
+
+
 class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     handmade: BoolProperty(
         name="Handmade", update=_on_handmade,
@@ -75,6 +103,12 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     ba_inpaint: PointerProperty(type=bpy.types.Image, name="Baked Albedo Inpainted",
                                 description="BAo_<name>_inpaint: BAo_ inpainted - MCP_ and "
                                             "05 Bake Albedo use it")
+    ba_use_inpaint: BoolProperty(default=True, description="MCP_ and 05 take BAo_'s _inpaint "
+                                                           "(off: the original, the inpaint kept)")
+    ba_show: EnumProperty(name="BAo_ shown", items=_ba_show_items, get=_get_ba_show,
+                          set=_set_ba_show, options={'SKIP_SAVE'},
+                          description="Which BAo_ MCP_ and 05 Bake Albedo take: the original or "
+                                      "its inpaint (both files stay)")
     # handmade Rebake: the textures as painted on uv_old (files in <bake folder>/_previous)
     prev_alb: PointerProperty(type=bpy.types.Image, name="Previous Albedo")
     prev_nor: PointerProperty(type=bpy.types.Image, name="Previous Normal")

@@ -446,6 +446,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
             bpy.ops.view3d.localview(frame_selected=False)
             rv3d.view_perspective = 'PERSP'
             if state:
+                context.window_manager[_OVERLAYS_KEY] = space.overlay.show_overlays
                 space.overlay.show_overlays = state["overlays"]
                 _restore_collections(context, state)
             _save_state(context, key, None)
@@ -465,6 +466,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
             state = {"overlays": space.overlay.show_overlays}
         else:
             _restore_camera(state, space)   # switching camera inside solo
+        entering = "cam" not in state
 
         # Camera background images are drawn only when overlays are on and the
         # camera object itself is visible in this (local) view.
@@ -480,7 +482,8 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         if bg:
             bg.show_background_image = True
             bg.display_depth = 'FRONT'   # BACK is hidden behind Material Preview
-        space.overlay.show_overlays = True
+        if entering:    # as the last solo left them; a camera switch keeps them as they are
+            space.overlay.show_overlays = context.window_manager.get(_OVERLAYS_KEY, True)
 
         scene.camera = cam
         space.camera = cam   # local view looks through the view's own camera
@@ -496,6 +499,9 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
 # Solo state lives on the window manager (an ID), so it survives addon reloads:
 # wm["multicamproject_solo"][<space pointer>] = {"overlays", "cam", "hidden", "depth", "colls"}
 _WM_KEY = "multicamproject_solo"
+# the Overlays (and with them the camera photo) as the last solo left them: the next solo
+# starts with them, a camera switch or a camera brush leaves them alone
+_OVERLAYS_KEY = "multicamproject_solo_overlays"
 
 
 def _load_state(context, key):
@@ -780,7 +786,7 @@ def leave_paint(obj):
 
 
 def finish_painting(context, obj):
-    """End the camera brush: the last stroke synced, Object Mode, overlays back."""
+    """End the camera brush: the last stroke synced, Object Mode."""
     leave_paint(obj)
     if obj.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
@@ -802,7 +808,7 @@ def processing_preview(context, obj):
 
 class MULTICAMPROJECT_OT_CamPaintFinish(bpy.types.Operator):
     """Finish painting the camera projection (Enter / Esc, or the pressed button again):
-    back to Object Mode, the overlays come back"""
+    back to Object Mode"""
     bl_idname = "multicamproject.cam_paint_finish"
     bl_label = "Finish Camera Painting"
     bl_options = {'REGISTER', 'UNDO'}
@@ -846,8 +852,8 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             layer = f"{paint_tex.kind_of_slot(slot or 1)}_, 1K on uv_normal"
         # the vertices (no uv_normal yet): Fill still keeps to what the camera sees
         through = textures or (obj is not None and core.data(obj).project_through)
-        reach = ("The brush paints the first surface under it. Overlays are off while this "
-                 "brush is in use - click it again, Enter or Esc finishes")
+        reach = ("The brush paints the first surface under it. The camera row's Overlays "
+                 "toggle shows / hides the photo - click it again, Enter or Esc finishes")
         return {
             'PAINT': f"Paint Camera Projection: paint where this camera's photo shows "
                      f"({layer}).\n{reach}.\nShift+drag while painting: smooth"
@@ -860,7 +866,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
             'ERASE': "Paint Original Mesh: erase the projection so the original mesh's bake "
                      "(BAo_) shows. Where nothing was baked from a real mesh it shows black."
                      "\nShift+click: bring the projection back. Click it again, Enter or Esc "
-                     "finishes (overlays back)",
+                     "finishes",
         }[props.mode]
 
     def invoke(self, context, event):

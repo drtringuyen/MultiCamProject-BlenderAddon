@@ -65,7 +65,10 @@ def has_inpaint(src):
 
 
 def current(src):
-    """What the source shows now: its _inpaint when there is one, else the original."""
+    """What the source shows now: its _inpaint when there is one (BAo_: unless switched to
+    the original), else the original."""
+    if src.kind == 'BAO' and not src.owner.multicamproject_bake.ba_use_inpaint:
+        return original(src)
     return inpaint_image(src) if has_inpaint(src) else original(src)
 
 
@@ -162,6 +165,8 @@ def _point(src, img):
         return
     d = src.owner.multicamproject_bake
     setattr(d, "alb_inpaint" if src.kind == 'ALB' else "ba_inpaint", img)
+    if src.kind == 'BAO':
+        d.ba_use_inpaint = True     # a saved inpaint is what shows (the switch back on)
 
 
 def _image_on(path, name, colorspace, skip=None):

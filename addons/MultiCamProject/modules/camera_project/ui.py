@@ -273,21 +273,38 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         return slots_f, name_f, image_x
 
     def _draw_source_block(self, context, layout, obj, debug):
-        """Above the cameras, as their boxes: "Baked Source" (greyed), then 03's Bake from
-        Scan BAo_ + Inpaint where a camera row has its photo - BAo_ shows where the mask
-        leaves the projection out."""
+        """Above the cameras, laid out as a camera row: "Baked Source" (greyed) where a
+        camera's name is, BAo_'s Inpaint + its file (original / _inpaint, the switch) where a
+        camera's photo is, 03's Bake from Scan BAo_ over the slot buttons - BAo_ shows where
+        the mask leaves the projection out."""
         try:
-            from ..baking import ui as bake_ui
+            from ..baking import common as bake_common
         except ImportError:
             return
         col = layout.box().column()
         col.scale_y = 1.25
-        image_x = self._metrics(context, debug, core.slot_count(core.data(obj)))[2]
-        split = col.split(factor=image_x, align=True)
-        name = split.row(align=True)
+        slots_f, name_f = self._metrics(context, debug, core.slot_count(core.data(obj)))[:2]
+        split = col.row().split(factor=1.0 - slots_f, align=True)
+        left, right = split.row(align=True), split.row(align=True)
+        left.label(text="", icon='IMAGE_RGB')               # where a camera's eye is
+        nsplit = left.split(factor=name_f, align=True)
+        name = nsplit.row(align=True)
         name.active = False
-        name.label(text="Baked Source", icon='IMAGE_RGB')
-        bake_ui.draw_bao_buttons(split.row(align=True), obj)
+        name.label(text="Baked Source")
+        mid = nsplit.row(align=True)
+        d = bake_common.data(obj)
+        if d.ba_image is not None and _inpaint_ready(obj):
+            _draw_inpaint(mid, 'BAO', obj)
+        if d.ba_image is not None:
+            mid.prop(d, "ba_show", text="")
+        else:
+            sub = mid.row(align=True)
+            sub.active = False
+            sub.label(text="(no BAo_ yet)")
+        n = bake_common.resolution(obj, context.scene)
+        size = f"{n // 1024}K" if n % 1024 == 0 else f"{n}"
+        right.operator("multicamproject.bake_from_source", text=f"03. BAo_ {size}",
+                       icon='RENDER_STILL')
 
     def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift, flood):
         """One camera = one box. While a camera is soloed every other box is dimmed, so
@@ -320,7 +337,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         mid = nsplit.row(align=True)
         space = bpy.context.space_data
         if solo and space is not None and space.type == 'VIEW_3D':
-            # the header's Overlays: a camera brush turns them off, and with them its photo
+            # the header's Overlays = the camera photo; kept as set across camera switches and brushes
             mid.prop(space.overlay, "show_overlays", text="", icon='OVERLAY')
         if solo:        # Liquify / Lasso work in the solo view: only the soloed camera has them
             _draw_liquify(mid, cam)

@@ -950,12 +950,14 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
 
     @classmethod
     def poll(cls, context):
-        return _object_mode(context)
+        return not jobs.busy()      # any mode: the 05 row's lock works while painting too
 
     def execute(self, context):
         from ... import steps
         obj = (bpy.data.objects.get(self.object_name) if self.object_name
                else context.active_object)
+        if self.action == 'REBAKE':
+            _leave_mode(context)    # bakes in Object Mode, then back to the mode
         if obj is None or obj.type != 'MESH' or obj.library:
             self.report({'WARNING'}, "No mesh to lock")
             return {'CANCELLED'}

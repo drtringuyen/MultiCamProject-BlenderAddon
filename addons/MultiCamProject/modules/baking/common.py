@@ -222,7 +222,7 @@ def bao_source(obj):
     else BAo_<name>."""
     d = data(obj)
     ip = getattr(d, "ba_inpaint", None)
-    if ip is not None and file_ok(ip):
+    if ip is not None and getattr(d, "ba_use_inpaint", True) and file_ok(ip):
         return ip
     return d.ba_image
 
