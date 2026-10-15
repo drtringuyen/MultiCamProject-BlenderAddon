@@ -7,10 +7,29 @@ from . import core
 # Send Out / Receive). Splits, never ui units: header, rows and the total line up exactly
 WIDTHS = (0.02, 0.2, 0.095, 0.075, 0.075, 0.12, 0.02, 0.15, 0.045, 0.2)
 L, NAME, AREA, BUDGET, NOW, TOGO, R, STAGE, FIX, LINKS = range(len(WIDTHS))
+# the last two columns hold buttons of a fixed size: their width in ui units, the rest of
+# the list stretches - no empty space after the buttons in a wide panel
+FIXED_UNITS = {FIX: 1.3, LINKS: 4.6}
+CURRENT = [WIDTHS]      # the widths of this draw (_widths)
 
 
-def _line(col, widths=WIDTHS):
-    """One line of the table: its cells, in WIDTHS' order."""
+def _widths(context):
+    """WIDTHS for the region's width now: FIX / LINKS as wide as their buttons (never more
+    than WIDTHS gives them), the other columns share what is left as WIDTHS splits it."""
+    region = context.region
+    if region is None:
+        return WIDTHS
+    scale = context.preferences.system.ui_scale
+    avail = max(1.0, region.width - 60 * scale)
+    fixed = {i: min(WIDTHS[i], u * 20 * scale / avail) for i, u in FIXED_UNITS.items()}
+    rest = sum(w for i, w in enumerate(WIDTHS) if i not in fixed)
+    left = 1.0 - sum(fixed.values())
+    return tuple(fixed[i] if i in fixed else w * left / rest for i, w in enumerate(WIDTHS))
+
+
+def _line(col, widths=None):
+    """One line of the table: its cells, in WIDTHS' order (this draw's widths)."""
+    widths = widths or CURRENT[0]
     cells, rest, left = [], col.row(align=True), 1.0
     for w in widths[:-1]:
         split = rest.split(factor=w / left, align=True)
@@ -86,7 +105,7 @@ def _fit(context, text):
     region = context.region
     if region is None:
         return text
-    avail = (region.width - 60 * scale) * WIDTHS[NAME] - 34 * scale
+    avail = (region.width - 60 * scale) * CURRENT[0][NAME] - 34 * scale
     blf.size(0, prefs.ui_styles[0].widget.points * scale)
     if blf.dimensions(0, text)[0] <= avail:
         return text
@@ -175,6 +194,7 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         if s.calculated_budget != s.budget:
             layout.label(text="Budget changed: Calculate again", icon='ERROR')
 
+        CURRENT[0] = _widths(context)
         table = _table(context)
         per = _export_status(context)
         index = {r.name: i for i, r in enumerate(s.rows)}
@@ -205,7 +225,8 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         tris = sum(ln.now for ln in lines)
         budget = sum(ln.budget for ln in lines)
         core.TOTAL_STATE[0] = core.DONE if tris <= budget else core.OVER
-        cells = _line(box.column(align=True), WIDTHS[:STAGE] + (sum(WIDTHS[STAGE:]),))
+        w = CURRENT[0]
+        cells = _line(box.column(align=True), w[:STAGE] + (sum(w[STAGE:]),))
         _blocks(cells, s)
         for i, text in ((NAME, f"{len(lines)} objects"),
                         (AREA, f"{sum(ln.area for ln in lines):.2f} m²"),
