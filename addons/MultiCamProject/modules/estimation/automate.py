@@ -116,6 +116,7 @@ class Task:
         self.content = []           # 2C: the names of its start meshes
         self.problems = []          # red: it won't run
         self.notes = []
+        self.local = False          # Keep Local: made here, no work file
 
 
 def tasks(context):
@@ -148,6 +149,7 @@ def tasks(context):
             continue
         obj = bpy.data.objects.get(row.name)
         t = Task(row.name, row.auto_step)
+        t.local = row.auto_local
         out.append(t)
         why = pickable(obj)
         if why:
@@ -172,7 +174,9 @@ def tasks(context):
         else:                       # 2D: the scan keeps its name (as Send Out names it)
             t.new_name = obj.name
             file_name = naming.short_name(obj.name)
-        if bake_dir and file_name:
+        if t.local:
+            t.notes.append("Keep Local: stays in this file, no work file")
+        elif bake_dir and file_name:
             t.path = os.path.join(bake_dir, naming.clean_name(file_name) + ".blend")
             key = os.path.normcase(t.path)
             if key in files:
@@ -205,7 +209,8 @@ def run(ts, lines):
             lines.append(('ERROR', f"{t.row}: {e}"))
             continue
         jobs.item_end(t.row)
-        lines.append(('INFO', f"{name} -> {os.path.basename(t.path)}"))
+        lines.append(('INFO', f"{name} -> {os.path.basename(t.path)}" if t.path
+                      else f"{name}: kept local"))
 
 
 def _one(t, lines):
@@ -221,7 +226,7 @@ def _one(t, lines):
         raise RuntimeError(why)
     if context.mode != 'OBJECT':
         bpy.ops.object.mode_set(mode='OBJECT')
-    if os.path.exists(t.path):
+    if t.path and os.path.exists(t.path):
         raise RuntimeError(f"{os.path.basename(t.path)} is in the Bake Folder already")
     if t.step in {'REMESH', 'RETOPO'}:
         yield jobs.Step(f"{SHORT[t.step]}: the copy and its projection")
@@ -243,6 +248,8 @@ def _one(t, lines):
     if row is not None:
         row.auto_step = 'SKIP'      # done: the row (it followed the copy) is no pick any more
     steps.forget()
+    if t.local:                     # Keep Local: no work file, it is worked on here
+        return target.name
     yield jobs.Step(f"writing {target.name}")
     folders.make_dir(scene, 'ORIGINALS')
     job_id = lk.send_out(context, target, start='' if t.step == 'PROJECT' else t.step,
@@ -265,14 +272,10 @@ def _one(t, lines):
 
 # ---------------------------------------------------------------- Start Over
 
-def start_over(context, obj):
-    """Undo 2B / 2C / 2D on a row's object: the link ends, its work file goes to
-    Bake Folder/_previous, a copy is deleted and its scan reset (back where the copy was,
-    its name back), a 2D scan reset. The row is Raw again. Returns text lines."""
-    from ... import folders, roles, steps
-    from ..linking import core as lk, originals
-    from ..remesh import workflow as wf
-    scene = context.scene
+def _unlink(scene, obj):
+    """The link ends and its work file goes to Bake Folder/_previous. Returns text lines."""
+    from ... import folders
+    from ..linking import core as lk
     out = []
     path = lk.saved_window(obj) or lk.last_window(obj)
     lk.cancel(obj)
@@ -288,6 +291,40 @@ def start_over(context, obj):
         if os.path.isfile(path + "1"):      # Blender's backup goes along
             os.replace(path + "1", dest + "1")
         out.append(f"{os.path.basename(path)} -> {PREVIOUS_DIR}/{os.path.basename(dest)}")
+    return out
+
+
+def linked(obj):
+    """obj is linked to a work file (or has one from before its X)."""
+    from ..linking import core as lk
+    return obj is not None and (lk.out_record(obj) is not None or bool(lk.last_window(obj)))
+
+
+def keep_local(context, obj):
+    """Keep obj in the main file: the link ends, its work file goes to Bake Folder/_previous,
+    the object stays as it is (worked on here from now on). Returns text lines."""
+    from ... import steps
+    from ..linking import core as lk
+    from ..remesh import workflow as wf
+    if lk.new_send(obj) is not None:
+        raise RuntimeError("Its work window sent something back: Receive it first (or X)")
+    out = _unlink(context.scene, obj)
+    if wf.decimate_in_window(obj):      # a Decimate that never came back: its GN show again
+        wf.set_gn(obj, True)
+    steps.forget()
+    return out
+
+
+def start_over(context, obj):
+    """Undo 2B / 2C / 2D on a row's object: the link ends, its work file goes to
+    Bake Folder/_previous, a copy is deleted and its scan reset (back where the copy was,
+    its name back), a 2D scan reset. The row is Raw again. Returns text lines."""
+    from ... import roles, steps
+    from ..linking import originals
+    from ..remesh import workflow as wf
+    scene = context.scene
+    out = []
+    out += _unlink(scene, obj)
     s = _settings(scene)
     if wf.is_copy(obj):
         orig = wf.source_of(obj)
@@ -382,6 +419,7 @@ class MULTICAMPROJECT_OT_EstimationAutoPick(bpy.types.Operator):
         col = layout.column()
         if row.auto_step in {'REMESH', 'RETOPO'}:
             col.prop(row, "auto_name")
+        col.prop(row, "auto_local")
         if row.auto_step == 'RETOPO':
             line = col.row(align=True)
             line.prop(row, "auto_from")
@@ -399,7 +437,8 @@ class MULTICAMPROJECT_OT_EstimationAutoPick(bpy.types.Operator):
         box = layout.box().column(align=True)
         if t is not None:
             box.label(text=t.new_name or "-", icon='OBJECT_DATA')
-            box.label(text=os.path.basename(t.path) if t.path else "-", icon='FILE_BLEND')
+            box.label(text=os.path.basename(t.path) if t.path else
+                      ("stays in this file" if t.local else "-"), icon='FILE_BLEND')
             _draw_lines(box, problems + t.problems, t.notes)
 
     def execute(self, context):
@@ -440,6 +479,13 @@ def _draw_made(layout, context, obj, why):
     path = lk.saved_window(obj) or lk.last_window(obj)
     if path:
         col.label(text=f"Work file: {os.path.basename(path)}", icon='FILE_BLEND')
+    if linked(obj):
+        col.separator()
+        col.operator(MULTICAMPROJECT_OT_EstimationKeepLocal.bl_idname,
+                     icon='HOME').object_name = obj.name
+        hint = col.row()
+        hint.active = False
+        hint.label(text="Worked on in this file: the link ends, its work file to _previous")
     if made(obj):
         col.separator()
         col.operator(MULTICAMPROJECT_OT_EstimationStartOver.bl_idname,
@@ -532,11 +578,13 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
                 box.label(text=f"→ {t.new_name}", icon='OBJECT_DATA')
             if t.path:
                 box.label(text=f"→ {os.path.basename(t.path)}", icon='FILE_BLEND')
+            elif t.local:
+                box.label(text="→ stays in this file", icon='HOME')
             _draw_lines(box, t.problems, t.notes)
         hint = self.layout.column(align=True)
         hint.active = False
         hint.label(text="One at a time: each work file is built by a background Blender "
-                        "(about 15-25 s each)", icon='INFO')
+                        "(about 15-25 s each); Keep Local ones stay here", icon='INFO')
         hint.label(text="Blender is locked meanwhile - Esc stops after the current object")
 
     def execute(self, context):
@@ -551,7 +599,7 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
 
         def finish(result, error):
             ok = sum(1 for sev, _t in lines if sev == 'INFO')
-            return lines + [('INFO', f"Automate: {ok} of {len(ts)} work file(s) saved")]
+            return lines + [('INFO', f"Automate: {ok} of {len(ts)} object(s) done")]
         return jobs.start(self, context, "Automate", [t.row for t in ts], run(ts, lines),
                           finish, block=True)
 
@@ -593,6 +641,36 @@ class MULTICAMPROJECT_OT_EstimationStartOver(bpy.types.Operator):
         for line in lines:
             print(f"[MultiCamProject] start over: {line}")
         self.report({'INFO'}, f"Back to Raw ({len(lines)} item(s), list in the console)")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_EstimationKeepLocal(bpy.types.Operator):
+    """Keep this object in the main file: the link to its work file ends and the file goes to
+    Bake Folder/_previous - the object stays as it is and is worked on here"""
+    bl_idname = "multicamproject.estimation_keep_local"
+    bl_label = "Keep Local"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    object_name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        from ..baking import jobs
+        return context.mode == 'OBJECT' and not jobs.busy()
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.object_name)
+        if not linked(obj):
+            self.report({'WARNING'}, "Not linked to a work file")
+            return {'CANCELLED'}
+        try:
+            lines = keep_local(context, obj)
+        except Exception as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        for line in lines:
+            print(f"[MultiCamProject] keep local: {line}")
+        self.report({'INFO'}, f"'{obj.name}' stays in this file")
         return {'FINISHED'}
 
 
@@ -639,7 +717,8 @@ def draw_button(layout, context):
 
 CLASSES = (MULTICAMPROJECT_OT_EstimationAutoPick, MULTICAMPROJECT_OT_EstimationFromActive,
            MULTICAMPROJECT_OT_EstimationAutoMatch,
-           MULTICAMPROJECT_OT_EstimationAutomate, MULTICAMPROJECT_OT_EstimationStartOver)
+           MULTICAMPROJECT_OT_EstimationAutomate, MULTICAMPROJECT_OT_EstimationStartOver,
+           MULTICAMPROJECT_OT_EstimationKeepLocal)
 
 
 def register():

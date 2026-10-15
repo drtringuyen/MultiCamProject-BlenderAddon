@@ -74,6 +74,9 @@ class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
         name="From", type=bpy.types.Object, poll=_from_poll, update=_changed,
         description="2C starts from this mesh (copied in, its UV as uv_normal) - empty: an "
                     "empty retopo. Picked from ROOM_Template by where the scan lies")
+    auto_local: BoolProperty(
+        name="Keep Local", default=False, update=_changed,
+        description="Made here and worked on in this file: no work file is built or linked")
     auto_share: FloatProperty()     # how much of the scan lies on auto_from (the match)
     auto_filled: BoolProperty()     # the defaults were filled once
 
