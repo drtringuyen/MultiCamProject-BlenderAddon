@@ -683,7 +683,18 @@ def _fresh(obj):
         "bng": bool(ba and d.bng_image and d.bng_fingerprint.startswith(d.ba_fingerprint + "|")),
         "bnp": bool(bp and d.bnp_image and d.bnp_fingerprint.startswith(d.bp_fingerprint + "|")),
         "alb": bool(d.alb_image and d.fingerprint and d.fingerprint == fingerprint.compute(obj)),
+        "nor": _nor_fresh(obj),
     }
+
+
+def _nor_fresh(obj):
+    """NOR_ is made from this window's current ALB_ and normal settings."""
+    try:
+        from ..baking import common, normal
+    except ImportError:
+        return False
+    d = common.data(obj)
+    return bool(d.nor_image and d.nor_fingerprint and d.nor_fingerprint == normal.state(obj))
 
 
 def send_back(context):
@@ -747,7 +758,7 @@ def send_back(context):
         man["fresh"] = _fresh(obj)
         man["stamps"] = {k: getattr(d, k) for k in ("ba_fingerprint", "bng_fingerprint",
                                                     "bp_fingerprint", "bnp_fingerprint",
-                                                    "fingerprint", "ba_parts")}
+                                                    "fingerprint", "ba_parts", "nor_fingerprint")}
         man["meta"] = {k: getattr(d, k) for k in META}
         man["size"] = {"tex_size": d.tex_size, "resolution": common.resolution(obj, scene)}
         man["final"] = bool(d.locked)       # Bake Final here: Receive locks it in the main file
@@ -1006,6 +1017,12 @@ def _restamp(obj, man, taken):
         d.fingerprint = fingerprint.compute(obj)
     elif "alb_image" in taken:
         d.fingerprint = stamps.get("fingerprint", "")
+    # NOR_ last: its stamp holds the ALB_ stamp (Bake from Scan)
+    if fresh.get("nor"):
+        from ..baking import normal
+        d.nor_fingerprint = normal.state(obj)
+    elif "nor_image" in taken:
+        d.nor_fingerprint = stamps.get("nor_fingerprint", "")
 
 
 def _refresh(obj, scene):
@@ -1021,10 +1038,9 @@ def _refresh(obj, scene):
 
 
 def _lock_received(obj, scene):
-    """A Bake Final from the window: its new ALB_ is the final (this file's ALB_ inpaint
-    goes), then Lock Finish. Returns the note."""
+    """A Bake Final from the window: Lock Finish (receive dropped the ALB_ inpaint first).
+    Returns the note."""
     from ..baking import operators as bake_ops
-    bake_ops.drop_alb_inpaint(obj, scene)
     why = bake_ops.lock_final(obj, scene)
     return f"NOT locked: {why}" if why else "Locked Finish (final from the window)"
 
@@ -1046,6 +1062,10 @@ def receive(context, obj, action='REPLACE'):
                            "work window)")
     if final:       # the window's final replaces it: unlocked to take it, locked again below
         bake.locked = False
+        # its new ALB_ is the final: this file's ALB_ inpaint goes before NOR_ is re-stamped
+        # (NOR_'s stamp names the ALB_ it was made from)
+        from ..baking import operators as bake_ops
+        bake_ops.drop_alb_inpaint(obj, scene)
     me = _load_mesh(rec["id"], man["mesh"])
     if action == 'ADD':
         tmp = bpy.data.objects.new(f"{obj.name}_work", me)     # world space, like the window
