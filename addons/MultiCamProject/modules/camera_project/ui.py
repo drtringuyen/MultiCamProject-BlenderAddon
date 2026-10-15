@@ -3,7 +3,8 @@ from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
 from ... import gate
 from . import core, paint_session, paint_tex
-from .operators import CAM_BRUSHES, VIEW_MODE_ICONS, cameras_hidden, flood_ready, is_solo, view_mode
+from .operators import (CAM_BRUSHES, VIEW_MODE_ICONS, cameras_hidden, flood_ready,
+                        highlight_camera, is_solo, view_mode)
 
 
 def _liquify_loaded():
@@ -178,8 +179,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             return
 
         debug = context.scene.multicamproject_props.debug_mode
-        cam = context.scene.camera
-        solo_cam = cam if is_solo(context, cam) else None
+        solo_cam = highlight_camera(context)    # Freestyle: the camera of the last tool
         flood = flood_ready(context, obj)
         top, rest = core.display_order(obj)
         # always drawn: its header holds the slot count
@@ -310,7 +310,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
         eye = left.row(align=True)
         eye.active = True       # never dimmed: clicking another eye switches the solo camera
-        # soloed: the view mode (one for all cameras): eye Freestyle, camera Focus, lock Lock
+        # highlighted: the view mode (one for all cameras): camera Focus, lock Lock, eye Freestyle
         icon = VIEW_MODE_ICONS[view_mode(bpy.context)] if solo else 'HIDE_ON'
         op = eye.operator("multicamproject.solo_camera", text="", icon=icon, depress=solo)
         op.camera = cam.name

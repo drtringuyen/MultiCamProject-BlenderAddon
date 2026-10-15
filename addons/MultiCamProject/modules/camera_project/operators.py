@@ -317,27 +317,57 @@ def enter_camera_view(context, space):
 
 
 # The view mode is one setting for every camera, kept on the window manager (an ID, so it
-# survives addon reloads; not saved with the file). The soloed camera's eye cycles it:
-#   FREE   eye     a brush / bucket leaves the view alone, the view rotates
-#   FOCUS  camera  a brush / bucket solos its camera first, the view rotates
-#   LOCK   lock    as FOCUS, and a camera view never rotates
+# survives addon reloads; not saved with the file). The highlighted camera's eye cycles it,
+# another camera's eye starts over at Focus:
+#   FOCUS  camera  a brush / bucket / eraser solos its camera first, the view rotates
+#   LOCK   lock    as FOCUS, and a camera view never rotates (pan and zoom still work)
+#   FREE   eye     a brush / bucket / eraser leaves the view alone, the view rotates
 _MODE_KEY = "multicamproject_view_mode"
-VIEW_MODES = ('FREE', 'FOCUS', 'LOCK')
+VIEW_MODES = ('FOCUS', 'LOCK', 'FREE')
 VIEW_MODE_ICONS = {'FREE': 'HIDE_OFF', 'FOCUS': 'VIEW_CAMERA', 'LOCK': 'LOCKED'}
+# the camera last picked by its eye or a tool: in Freestyle it is the highlighted one,
+# although the view did not move to it
+_CUR_KEY = "multicamproject_current_cam"
 
 
 def view_mode(context):
-    mode = context.window_manager.get(_MODE_KEY, 'FREE')
-    return mode if mode in VIEW_MODES else 'FREE'
+    mode = context.window_manager.get(_MODE_KEY, 'FOCUS')
+    return mode if mode in VIEW_MODES else 'FOCUS'
 
 
 def view_locked(context):
     return view_mode(context) == 'LOCK'
 
 
+def _solo_active(context):
+    space = context.space_data
+    return (space is not None and space.type == 'VIEW_3D' and space.local_view is not None
+            and _load_state(context, str(space.as_pointer())) is not None)
+
+
+def highlight_camera(context):
+    """The camera row that stands out: the soloed camera, or in Freestyle the camera whose
+    tool was used last (the view stayed where it was)."""
+    if view_mode(context) == 'FREE' and _solo_active(context):
+        cur = bpy.data.objects.get(context.window_manager.get(_CUR_KEY, ""))
+        if cur is not None and cur.type == 'CAMERA':
+            return cur
+    cam = context.scene.camera
+    return cam if is_solo(context, cam) else None
+
+
+def _redraw_views(context):
+    for window in context.window_manager.windows:
+        for area in window.screen.areas:
+            if area.type == 'VIEW_3D':
+                area.tag_redraw()
+
+
 def focus_camera(context, cam):
-    """Focus / Lock: a brush or bucket of `cam` looks through it first (solo). Freestyle,
-    or already soloed: the view stays as it is."""
+    """A brush / bucket / eraser of `cam`: it becomes the highlighted camera. Focus / Lock
+    look through it first (solo); Freestyle, or already soloed: the view stays."""
+    context.window_manager[_CUR_KEY] = cam.name
+    _redraw_views(context)
     if view_mode(context) == 'FREE' or is_solo(context, cam):
         return
     if bpy.ops.multicamproject.solo_camera.poll():
@@ -345,31 +375,39 @@ def focus_camera(context, cam):
 
 
 class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
-    """Solo the active object in local view and look through this camera.
-    Click again: Freestyle (brush keeps the view) > Focus (brush solos its camera) > Lock
-    (as Focus, no view rotation) - one mode for all cameras. Ctrl+click: leave solo"""
+    """Solo the active object in local view and look through this camera (Focus).
+    Click again: Lock (no view rotation) > Freestyle (tools keep the view) > Focus (tools
+    look through their camera). Another camera's eye starts over at Focus. Ctrl+click:
+    leave solo"""
     bl_idname = "multicamproject.solo_camera"
     bl_label = "Solo Camera View"
 
     camera: StringProperty()
 
     def invoke(self, context, event):
-        # a click on the soloed camera's eye cycles the view mode; Ctrl+click (and every
-        # script call, which runs execute) keeps the old click-again-to-leave
+        # the highlighted camera's eye cycles the view mode, another eye starts at Focus;
+        # both look through the camera. Ctrl+click (and every script call, which runs
+        # execute) keeps the old click-again-to-leave
         cam = bpy.data.objects.get(self.camera)
-        if cam is not None and is_solo(context, cam) and not event.ctrl:
-            wm = context.window_manager
+        if cam is None or cam.type != 'CAMERA' or event.ctrl:
+            return self.execute(context)
+        wm = context.window_manager
+        if cam == highlight_camera(context):
             mode = VIEW_MODES[(VIEW_MODES.index(view_mode(context)) + 1) % len(VIEW_MODES)]
-            wm[_MODE_KEY] = mode
-            self.report({'INFO'}, {'FREE': "Freestyle: the brush keeps the view",
-                                   'FOCUS': "Focus: the brush solos its camera",
-                                   'LOCK': "Lock: the brush solos its camera, no rotation"}[mode])
-            for window in wm.windows:
-                for area in window.screen.areas:
-                    if area.type == 'VIEW_3D':
-                        area.tag_redraw()
-            return {'FINISHED'}
-        return self.execute(context)
+        else:
+            mode = 'FOCUS'
+        wm[_MODE_KEY] = mode
+        if not is_solo(context, cam):
+            result = self.execute(context)
+            if 'FINISHED' not in result:
+                return result
+        wm[_CUR_KEY] = cam.name
+        self.report({'INFO'}, {'FREE': "Freestyle: the tools keep the view",
+                               'FOCUS': "Focus: the tools look through their camera",
+                               'LOCK': "Lock: the tools look through their camera, "
+                                       "no rotation"}[mode])
+        _redraw_views(context)
+        return {'FINISHED'}
 
     @classmethod
     def poll(cls, context):
@@ -446,6 +484,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
 
         scene.camera = cam
         space.camera = cam   # local view looks through the view's own camera
+        context.window_manager[_CUR_KEY] = cam.name
         enter_camera_view(context, space)
         show_in_list(obj, cam)
         if not cam.visible_get():
@@ -841,8 +880,7 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if self.mode != 'FLOOD' and paint_session.current(obj) == (cam.name, self.mode):
             finish_painting(context, obj)       # the pressed button again: done (view kept)
             return {'FINISHED'}
-        if self.mode != 'ERASE':
-            focus_camera(context, cam)          # Focus / Lock: look through it first
+        focus_camera(context, cam)          # Focus / Lock: look through it first
         processing_preview(context, obj)
         if paint_tex.can_paint(obj, context.scene):
             return self._texture(context, obj, cam, slot)
