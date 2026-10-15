@@ -310,12 +310,15 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                             icon='LOCKED' if d.locked else 'UNLOCKED', depress=d.locked)
         op.action = 'UNLOCK' if d.locked else 'LOCK'
         op.object_name = obj.name
-        if operators._in_work_window(bpy.context.scene, obj):
+        window = operators._in_work_window(bpy.context.scene, obj)
+        if window:
             right.operator("multicamproject.bake_final", text="Finalize + Send Back",
                            icon='EXPORT')
         else:
             right.operator("multicamproject.bake_final", text="Finalize + Lock", icon='LOCKED')
         draw_green(right)
+        if window:          # already final: just send it (Send Back Final, no new bake)
+            right.operator("multicamproject.work_send_back", text="", icon='EXPORT')
         row = right
         if (hasattr(bpy.types, "MULTICAMPROJECT_OT_bake_view_mix")      # camera_project on
                 and getattr(obj, "multicamproject_cam", None) is not None
