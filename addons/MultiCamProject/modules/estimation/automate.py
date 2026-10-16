@@ -368,12 +368,11 @@ def unsent_edits(obj):
     was built): edits a Receive would not bring."""
     from ..linking import core as lk
     rec = lk.out_record(obj)
-    path = lk.saved_window(obj) or lk.last_window(obj)
-    if not path:
+    path = lk.saved_window(obj)
+    if rec is None or not path:     # after X: no send-out time to compare with
         return False
-    man = lk.sent_back(obj) if rec is not None else None
-    last = max(rec.get("time", 0) if rec else 0, rec.get("received", 0) if rec else 0,
-               man.get("time", 0) if man else 0)
+    man = lk.sent_back(obj)
+    last = max(rec.get("time", 0), rec.get("received", 0), man.get("time", 0) if man else 0)
     try:
         return os.path.getmtime(path) > last + SAVED_SLACK
     except OSError:
