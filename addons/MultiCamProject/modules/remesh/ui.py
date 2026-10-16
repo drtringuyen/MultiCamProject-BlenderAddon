@@ -254,6 +254,7 @@ def draw_bao(layout, context, obj):
     # its picker here too, so it can change while 04-09 are still locked
     from ..baking import ui as bake_ui
     bake_ui.draw_object_size(row, obj)
+    bake_ui.draw_lock(row, obj)         # 08's lock: unlock here to bake BAo_ again
     row.operator("multicamproject.bake_from_source",
                  text=f"03. Bake from Scan BAo_ ({_res(common.resolution(obj, context.scene))})",
                  icon='RENDER_STILL')

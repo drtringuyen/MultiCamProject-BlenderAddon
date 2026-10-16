@@ -253,6 +253,10 @@ def draw_work(layout, context):
     colored = budget is not None and hasattr(scene, "multicamproject_budget_color")
     if colored:
         _budget_block(row)
+    obj = core.work_object(scene)
+    if obj is not None and hasattr(bpy.types, "MULTICAMPROJECT_OT_lock_finish"):
+        from ..baking import ui as bake_ui      # 08's lock: locked = Send Back Final
+        bake_ui.draw_lock(row, obj)
     row.operator(ops.MULTICAMPROJECT_OT_WorkSendBack.bl_idname, icon='EXPORT',
                  text=_send_back_text(context, budget))
     if colored:

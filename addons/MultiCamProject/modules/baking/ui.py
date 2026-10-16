@@ -33,6 +33,15 @@ def draw_final_toggle(layout, data, prop):
     row.prop(data, prop, expand=True)
 
 
+def draw_lock(layout, obj):
+    """08's lock as a toggle (Lock Finish / Unlock) - the 05 row, 03's BAo_ row, Send Back."""
+    d = common.data(obj)
+    op = layout.operator("multicamproject.lock_finish", text="",
+                         icon='LOCKED' if d.locked else 'UNLOCKED', depress=d.locked)
+    op.action = 'UNLOCK' if d.locked else 'LOCK'
+    op.object_name = obj.name
+
+
 def draw_green(layout):
     """A green block: 05 Bake Albedo stands out (panels cannot colour a button)."""
     cell = layout.row(align=True)
@@ -306,10 +315,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                 sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (05's own result)
         draw_green(left)
         # 08 at the middle pad: the object's lock (Lock Finish / Unlock)
-        op = right.operator("multicamproject.lock_finish", text="",
-                            icon='LOCKED' if d.locked else 'UNLOCKED', depress=d.locked)
-        op.action = 'UNLOCK' if d.locked else 'LOCK'
-        op.object_name = obj.name
+        draw_lock(right, obj)
         window = operators._in_work_window(bpy.context.scene, obj)
         if window:
             right.operator("multicamproject.bake_final", text="Finalize + Send Back",
