@@ -141,7 +141,9 @@ def _draw_row(col, context, s, index, ln, st):
     item = s.rows[index]
     cells = _line(col)
     _blocks(cells, item)
-    active = index == s.active_index
+    # pressed in: the 3D View's active object (picked there or here)
+    act = context.active_object
+    active = act is not None and act.name == ln.name
     # the name focuses the object (selected, active, framed) - the active row pressed in.
     # Left-aligned and cut to fit here (a button Blender has to squeeze starts further left)
     name = cells[NAME].row(align=True)
