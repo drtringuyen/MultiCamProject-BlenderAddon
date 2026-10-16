@@ -5,11 +5,11 @@ from . import core
 # the columns, as fractions of the list's width: colour block, name, Area, Budget, Now,
 # To Go, colour block, Stage, the EXPORT fix, the Linking buttons (original Load / Offload +
 # Send Out / Receive). Splits, never ui units: header, rows and the total line up exactly
-WIDTHS = (0.02, 0.2, 0.095, 0.075, 0.075, 0.12, 0.02, 0.15, 0.045, 0.2)
+WIDTHS = (0.02, 0.18, 0.095, 0.075, 0.075, 0.1, 0.02, 0.15, 0.045, 0.24)
 L, NAME, AREA, BUDGET, NOW, TOGO, R, STAGE, FIX, LINKS = range(len(WIDTHS))
 # the last two columns hold buttons of a fixed size: their width in ui units, the rest of
 # the list stretches - no empty space after the buttons in a wide panel
-FIXED_UNITS = {FIX: 1.3, LINKS: 4.6}
+FIXED_UNITS = {FIX: 1.3, LINKS: 5.7}
 CURRENT = [WIDTHS]      # the widths of this draw (_widths)
 
 
@@ -95,6 +95,15 @@ def _draw_tail(cells, context, obj, st):
         from ..linking import originals, ui as link_ui
         originals.draw_toggle(cells[LINKS], obj)
         link_ui.draw_row_button(cells[LINKS], obj)
+        from . import automate      # in a work file: load it back (Keep Local)
+        home = cells[LINKS].row(align=True)
+        home.ui_units_x = 1.1
+        from ..linking import core as lk     # (no file check per redraw: the record only)
+        if automate.ready() or lk.out_record(obj) is None:
+            home.label(text="", icon='BLANK1')
+        else:
+            home.operator(automate.MULTICAMPROJECT_OT_EstimationKeepLocal.bl_idname, text="",
+                          icon='HOME').object_name = obj.name
 
 
 def _fit(context, text):

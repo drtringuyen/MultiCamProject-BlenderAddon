@@ -360,15 +360,39 @@ def linked(obj):
     return obj is not None and (lk.out_record(obj) is not None or bool(lk.last_window(obj)))
 
 
+SAVED_SLACK = 120      # s: a work file saved this long after its last Send Back has edits
+
+
+def unsent_edits(obj):
+    """obj's work file was saved after its last Send Back (or, never sent back, after it
+    was built): edits a Receive would not bring."""
+    from ..linking import core as lk
+    rec = lk.out_record(obj)
+    path = lk.saved_window(obj) or lk.last_window(obj)
+    if not path:
+        return False
+    man = lk.sent_back(obj) if rec is not None else None
+    last = max(rec.get("time", 0) if rec else 0, rec.get("received", 0) if rec else 0,
+               man.get("time", 0) if man else 0)
+    try:
+        return os.path.getmtime(path) > last + SAVED_SLACK
+    except OSError:
+        return False
+
+
 def keep_local(context, obj):
-    """Keep obj in the main file: the link ends, its work file goes to Bake Folder/_previous,
-    the object stays as it is (worked on here from now on). Returns text lines."""
+    """Load obj back into the main file for good: a waiting Send Back is received first,
+    then the link ends and its work file goes to Bake Folder/_previous - obj is worked on
+    here from now on. Returns text lines."""
     from ... import steps
     from ..linking import core as lk
     from ..remesh import workflow as wf
+    out = []
     if lk.new_send(obj) is not None:
-        raise RuntimeError("Its work window sent something back: Receive it first (or X)")
-    out = _unlink(context.scene, obj)
+        faces, notes = lk.receive(context, obj, 'REPLACE')
+        out.append(f"received the work file's Send Back ({faces:,} faces)")
+        out += notes
+    out += _unlink(context.scene, obj)
     if wf.decimate_in_window(obj):      # a Decimate that never came back: its GN show again
         wf.set_gn(obj, True)
     steps.forget()
@@ -716,8 +740,8 @@ class MULTICAMPROJECT_OT_EstimationStartOver(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_EstimationKeepLocal(bpy.types.Operator):
-    """Keep this object in the main file: the link to its work file ends and the file goes to
-    Bake Folder/_previous - the object stays as it is and is worked on here"""
+    """Load it back into this file: a waiting Send Back is received first, then the link to
+    its work file ends and the file goes to Bake Folder/_previous - worked on here from now on"""
     bl_idname = "multicamproject.estimation_keep_local"
     bl_label = "Keep Local"
     bl_options = {'REGISTER', 'UNDO'}
@@ -728,6 +752,23 @@ class MULTICAMPROJECT_OT_EstimationKeepLocal(bpy.types.Operator):
     def poll(cls, context):
         from ..baking import jobs
         return context.mode == 'OBJECT' and not jobs.busy()
+
+    def invoke(self, context, event):
+        from ..linking import core as lk
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return {'CANCELLED'}
+        steps = []
+        if lk.new_send(obj) is not None:
+            steps.append("its Send Back is received first")
+        if unsent_edits(obj):
+            steps.append("its work file was saved after the last Send Back - those edits do "
+                         "not come (open it and Send Back first, or find it in _previous)")
+        steps.append("the work file moves to _previous, the object stays here")
+        return context.window_manager.invoke_confirm(
+            self, event, title=f"Load '{obj.name}' back into this file?",
+            message="; ".join(steps).capitalize() + ".", confirm_text="Keep Local",
+            icon='WARNING' if len(steps) > 1 else 'QUESTION')
 
     def execute(self, context):
         obj = bpy.data.objects.get(self.object_name)
