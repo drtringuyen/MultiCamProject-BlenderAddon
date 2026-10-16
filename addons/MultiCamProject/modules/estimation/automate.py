@@ -194,9 +194,14 @@ def task_of(context, name):
 
 # ---------------------------------------------------------------- the run
 
-def run(ts, lines):
-    """The job: each task in turn (a generator for jobs.start)."""
+FIX_ITEM = "Fix"           # the progress list's item of the Fix (export's own: "Write FBX")
+
+
+def run(ts, lines, fix=False, export=False):
+    """The job: each task in turn, then (`fix`) the Fix of the objects kept here and
+    (`export`) Fix + Export FBX (a generator for jobs.start)."""
     from ..baking import jobs
+    local = []
     for t in ts:
         if jobs.stop_requested():
             jobs.skip_rest()
@@ -211,6 +216,61 @@ def run(ts, lines):
         jobs.item_end(t.row)
         lines.append(('INFO', f"{name} -> {os.path.basename(t.path)}" if t.path
                       else f"{name}: kept local"))
+        if t.local:
+            local.append(name)
+    if fix and not jobs.stop_requested():
+        yield from _fix(local, lines)
+    if export and not jobs.stop_requested():
+        yield from _export(lines)
+    if jobs.stop_requested():
+        jobs.skip_rest()
+
+
+def _fix(names, lines):
+    """The Fix of each object Automate kept in this file (as its row's Fix button)."""
+    from ..baking import jobs
+    from ..export import autofix
+    jobs.item_start(FIX_ITEM)
+    for name in names:
+        obj = bpy.data.objects.get(name)
+        if obj is None:
+            continue
+        if jobs.stop_requested():
+            break
+        yield jobs.Step(f"Fix {name}")
+        try:
+            yield from autofix.run_object_steps(bpy.context, obj,
+                                                lambda sev, text: lines.append((sev, text)))
+        except (RuntimeError, KeyError) as e:
+            lines.append(('ERROR', f"{name}: Fix failed - {e}"))
+    jobs.item_end(FIX_ITEM, skipped=not names)
+    if not names:
+        lines.append(('INFO', "Fix: no object kept in this file (the others are fixed when "
+                              "they come back)"))
+
+
+def _linked(obj):
+    from ..linking import core as lk
+    return lk.out_record(obj) is not None
+
+
+def _export(lines):
+    """Fix + Export FBX, as the Export button - the objects linked to a work file are left
+    as they are (their work file has them; they are not baked here)."""
+    from ..baking import jobs
+    from ..export import autofix, operators as eops
+    scene = bpy.context.scene
+    eops._auto_names_on(bpy.context)
+    p = autofix.plan(scene)
+    keep = [o for o in p.bake + p.transforms + p.make_uv if _linked(o)]
+    if keep:
+        p = p._replace(bake=[o for o in p.bake if not _linked(o)],
+                       transforms=[o for o in p.transforms if not _linked(o)],
+                       make_uv=[o for o in p.make_uv if not _linked(o)])
+        lines.append(('INFO', f"Export: {len({o.name for o in keep})} object(s) in a work "
+                              "file not fixed here"))
+    log, files, missing = yield from eops._export_steps(bpy.context, p)
+    lines.extend(eops._export_finish((log, files, missing), None))
 
 
 def _one(t, lines):
@@ -586,6 +646,11 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
         hint.label(text="One at a time: each work file is built by a background Blender "
                         "(about 15-25 s each); Keep Local ones stay here", icon='INFO')
         hint.label(text="Blender is locked meanwhile - Esc stops after the current object")
+        s = _settings(context.scene)
+        after = self.layout.row(align=True)
+        after.label(text="Then:")
+        after.prop(s, "auto_fix", toggle=True, icon='MODIFIER')
+        after.prop(s, "auto_export", toggle=True, icon='EXPORT')
 
     def execute(self, context):
         from ..baking import jobs
@@ -597,10 +662,16 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
             return {'CANCELLED'}
         lines = []
 
+        s = _settings(context.scene)
+        fix, export = s.auto_fix, s.auto_export
+
         def finish(result, error):
-            ok = sum(1 for sev, _t in lines if sev == 'INFO')
+            ok = sum(1 for sev, t in lines if sev == 'INFO' and t.endswith(
+                ("kept local", ".blend")))
             return lines + [('INFO', f"Automate: {ok} of {len(ts)} object(s) done")]
-        return jobs.start(self, context, "Automate", [t.row for t in ts], run(ts, lines),
+        from ..export import operators as eops
+        names = [t.row for t in ts] + [FIX_ITEM] * fix + [eops.FBX_ITEM] * export
+        return jobs.start(self, context, "Automate", names, run(ts, lines, fix, export),
                           finish, block=True)
 
 

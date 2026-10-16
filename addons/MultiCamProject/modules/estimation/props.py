@@ -99,6 +99,16 @@ class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):
                ('BUDGET', "Budget", ""), ('NOW', "Now", ""), ('TOGO', "To Go", ""),
                ('STAGE', "Stage", "")], default='NAME')
     sort_reverse: BoolProperty()
+    # Automate's dialog: what runs after the 02 steps, in the same job
+    auto_fix: BoolProperty(
+        name="Fix", default=True,
+        description="Then Fix every object Automate kept in this file (Keep Local): rename, "
+                    "transform, uv_normal, bake - as its row's Fix button. Objects sent to a "
+                    "work file are fixed when they come back")
+    auto_export: BoolProperty(
+        name="Export FBX", default=True,
+        description="Then Fix + Export FBX, as the Export button (objects linked to a work "
+                    "file are not fixed or baked here)")
     color: FloatVectorProperty(
         size=3, subtype='COLOR_GAMMA', get=_total_color,
         description="Green: all the objects together are within the Budget · Orange: over it")
