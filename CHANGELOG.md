@@ -2,6 +2,23 @@
 
 ## Unreleased
 
+### uvMesh module: uvTube, uvExtrude, Close Hole (2026-10-17)
+
+A new module (Infos row: Uv_mesh). Its row sits in 03. Mesh Editing, under the Decimate Brush.
+- **Close Hole** (Edit Mode, face select): the selected faces go, their border becomes one
+  n-gon, flattened onto its plane and triangulated (Beauty), wound like the faces around it.
+  The mesh's open edges count as border; a hole inside the selection is covered.
+- **uvExtrude** (face select): seams inside the selection cleared, its border marked, then
+  Blender's extrude along the normal. Enter / click confirms, Esc takes everything back
+  (seams too). After it: base ring seamed, top ring not, one random vertical seam per closed
+  wall ring. (No unwrap.)
+- **uvTube** (edge select): the edges become a curve with the MCP-uvTube Geometry Nodes
+  modifier, live until Enter / Esc. Edit the points, Alt+S scales a point's radius,
+  Ctrl+Wheel sides, Shift+Wheel segments; the uvTube panel has Sides, Segments, Radius,
+  Smooth (Catmull-Rom) and Caps. Enter: the tube's faces go into the mesh with uv_normal
+  (u around, v along, caps planar, in 0-1 - pack afterwards) and seams; the source edges that
+  had no faces go. Esc: the curve goes, the mesh is as it was.
+
 ### Finalize, camera view modes, Send Back that stays final, new ROOM_Template (2026-10-15)
 
 **05 row: Finalize in one click**

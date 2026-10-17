@@ -209,6 +209,10 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
                              depress=dyn)
 
+        if module_manager.is_loaded("uv_mesh"):        # uvTube / uvExtrude / Close Hole
+            from ..uv_mesh import ui as uv_ui
+            uv_ui.draw_row(layout, context)
+
         # the Decimate (vg_Protect keeps parts) was applied in 02, before the unwrap
         box = layout.box().column(align=True)
         dec = wf.decimate_modifier(obj)
