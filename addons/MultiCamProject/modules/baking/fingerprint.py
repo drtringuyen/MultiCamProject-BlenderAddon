@@ -296,6 +296,21 @@ def projection_outdated(obj):
     return route.uses_projection(obj) and bp_outdated(obj)
 
 
+def restamped(obj, change):
+    """Run change() - a conversion that keeps the look (the paint textures' format) - and
+    store the stamps again that matched before it: an up-to-date bake stays up to date."""
+    d = common.data(obj)
+    if not (d.fingerprint or d.bp_fingerprint):
+        return change()
+    old, old_p = compute(obj), projection_state(obj)
+    out = change()
+    if d.fingerprint and d.fingerprint == old:
+        d.fingerprint = compute(obj)
+    if d.bp_fingerprint and d.bp_fingerprint.split(":")[0] == old_p:
+        d.bp_fingerprint = projection_state(obj) + d.bp_fingerprint[len(old_p):]
+    return out
+
+
 PATHS_KEY = "paths_normalized"
 
 

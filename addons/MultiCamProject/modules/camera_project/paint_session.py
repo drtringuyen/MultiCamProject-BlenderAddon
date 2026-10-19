@@ -45,7 +45,8 @@ def _valid():
     br = ps.brush
     if br is None:
         return False
-    erasing = br.blend in {'ERASE_ALPHA', 'ADD_ALPHA'}
+    # texture Erase: Add / Subtract on MSK_ R; vertex Erase: Erase / Add Alpha
+    erasing = br.blend in ({'ADD', 'SUB'} if s["texture"] else {'ERASE_ALPHA', 'ADD_ALPHA'})
     if erasing != (s["mode"] == 'ERASE'):
         return False
     if s["mode"] == 'PAINT':

@@ -62,19 +62,20 @@ def remember_face_set(obj, fs):
 
 
 def _in_textures(obj):
-    """Projected / Baked go into CMX1_'s alpha (when obj can paint into textures)."""
+    """Projected / Baked go into MSK_ R (when obj can paint into textures)."""
     from ..camera_project import paint_tex
     return paint_tex.can_paint(obj)
 
 
 def _set_mask_texture(obj, tris, all_tris, value):
-    """CMX1_ alpha = value over the region's uv_normal pixels (after the running operator)."""
+    """Projected (value 1) / Baked (0) into MSK_ R over the region's uv_normal pixels
+    (after the running operator)."""
     from ..camera_project import core as cp, paint_tex
-    _img, new = paint_tex.ensure(obj, "CMX1", bpy.context.scene)
+    _img, new = paint_tex.ensure(obj, "MSK", bpy.context.scene)
     if new:
         cp.ensure_material(obj)
     cov = paint_tex.coverage(obj, tris, all_tris)
-    paint_tex.queue(obj, "CMX1", paint_tex.mask_fn(cov, value))
+    paint_tex.queue(obj, "MSK", paint_tex.mask_fn(cov, value))
 
 
 def needs_paint_layers(obj, action):

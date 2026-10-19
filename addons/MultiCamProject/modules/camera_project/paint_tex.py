@@ -1,42 +1,55 @@
 """Paint Textures: the camera mix and the blend mask painted at 1K on uv_normal, so the
-paint no longer follows the mesh's vertices. They work exactly as VCMix / VCMix2:
+paint no longer follows the mesh's vertices (version 5, 2026-10-19):
 
-    CMX1_<name>  R, G, B = cameras 1-3, A = blend mask (1 projected, 0 baked)
-    CMX2_<name>  R, G, B = cameras 4-6, A = stroke marker (paint_sync), kept at 0
+    CMX1_<name>  R, G, B = the weights of cameras 1-3
+    CMX2_<name>  R, G, B = the weights of cameras 4-6
+    MSK_<name>   R = scan (1) or projection (0)
+                 G = cameras 1-3 (0) or 4-6 (1)
+                 B = SIG (marks the format: older MSK_ files hold a grey mask)
 
-Each starts as a copy of what VCMix / VCMix2 show now (rasterized on uv_normal), then MCP_
-reads the texture instead of the vertex layer - the scene's Paint Textures toggle (a Value
-node, no rebuild) switches back to the vertex layers. Painting a camera brings the
-projection back (alpha 1), Erase lowers CMX1_ alpha (the baked scan shows), Shift+Erase
-raises it again.
+No alpha is data: Blender paints every image softly with alpha 1 (an alpha-0 pixel takes
+the brush's full color wherever it touches - the hard, stair-stepped edges of before).
+
+Headroom: the camera weights sum to HEAD (0.5) at most between strokes - MCP_ divides the
+colors by their sum and counts the cover as sum / HEAD, so this does not show. A camera
+stroke raises its texture's weights toward 1 by the brush's strength, even where that
+camera already showed; paint_sync reads that strength after the stroke and moves MSK_ by
+it: G toward the stroke's group, R toward the projection. prime() brings a texture back
+under HEAD when a camera brush starts. Erase paints MSK_ R up (Add), Shift+Erase down
+(Subtract) - G stays.
+
+Each texture starts from what VCMix / VCMix2 show now (from_layers), then MCP_ reads them
+instead of the vertex layers - the object's Paint switch (a Value node, no rebuild)
+switches back.
 
 PNG files in the bake folder, named like the export (typed_name), pointers on the
 object's multicamproject_bake. Created on the first stroke, saved with the .blend.
 
-Undo: a Python write into an image is not undoable in Blender. write() first runs
-Image > Invert (an image operator with undo: Blender keeps the image as it was), then
-writes the real pixels. Ctrl+Z gives the old image back; a redo would give the inverted
-one, so _on_redo puts the written pixels back when it sees that state. Writes asked for
-inside an operator (Fill, Select & Set) wait for a timer (queue): the operator's own undo
-step comes first, then the image step.
+Undo: a Python write into an image is not undoable in Blender. write() wraps it in two
+Image > Invert steps so Blender records the image before and after (see write()). Writes
+asked for inside an operator (Fill, Select & Set) wait for a timer (queue): the operator's
+own undo step comes first, then the image steps.
 """
-import hashlib
-
 import bpy
 import numpy as np
 from bpy.app.handlers import persistent
 
 SIZE = 1024
-KINDS = ("CMX1", "CMX2")
-POINTER = {"MSK": "msk_image", "CMX1": "cmx1_image", "CMX2": "cmx2_image"}  # MSK_: before v2
+KINDS = ("CMX1", "CMX2", "MSK")
+CAM_KINDS = ("CMX1", "CMX2")
+POINTER = {"MSK": "msk_image", "CMX1": "cmx1_image", "CMX2": "cmx2_image"}
 LAYER = {"CMX1": "VCMix", "CMX2": "VCMix2"}
-VERSION_KEY = "multicamproject_paint_version"   # on the image: 2 = alpha is the mask
-VERSION = 2
+GROUP = {"CMX1": 0.0, "CMX2": 1.0}  # MSK_ G of a camera texture's cameras
+VERSION_KEY = "multicamproject_paint_version"   # on the image
+VERSION = 5     # 1: MSK_ + painted-here alphas; 2 / 4: CMX1_ alpha = mask, cameras 1-3 on
+                # top, CMX2_ alpha a stroke marker; 3: MSK_ grey = mask, cameras 4-6 on top
+HEAD = 0.5                          # camera weights sum to this at most between strokes
+SIG = 128 / 255                     # MSK_ B
 DILATE = 8                          # pixels the copy grows into the UV space no face uses
 TOGGLE = "Paint Textures"           # MCP_'s Value node: 1 (0 = vertex layers only, old files)
 UV_NORMAL = "uv_normal"
 BRUSH = "brushes/essentials_brushes-mesh_texture.blend/Brush/Paint Hard"
-REDO_KEEP = 20                      # writes per image a redo can still put back
+ERASE_COLOR = (1.0, 0.0, 0.0)       # Erase / Shift+Erase: MSK_ R up / down (Add / Subtract)
 
 
 def node_name(kind):
@@ -44,7 +57,8 @@ def node_name(kind):
 
 
 def mode(obj):
-    """'TEXTURE' (CMX1_ / CMX2_) or 'VERTEX' (VCMix / VCMix2): the object's Paint switch."""
+    """'TEXTURE' (CMX1_ / CMX2_ / MSK_) or 'VERTEX' (VCMix / VCMix2): the object's Paint
+    switch."""
     d = getattr(obj, "multicamproject_cam", None)
     return getattr(d, "paint_mode", 'TEXTURE') if d is not None else 'TEXTURE'
 
@@ -55,8 +69,8 @@ CHOICES = (('VERTEX_SHARP', "Vertex Sharp", "Paint the mesh's VCMix / VCMix2 ver
             ('VERTEX_SMOOTH', "Vertex Smooth", "Paint the mesh's VCMix / VCMix2 vertex colors; "
                                               "cameras blend across the vertices (Mode "
                                               "Combined)", 'SMOOTHCURVE', 1),
-            ('TEXTURE', "Texture Mask", "Paint CMX1_ / CMX2_, 1K on uv_normal: precise, not "
-                                       "tied to the vertices", 'TEXTURE', 2))
+            ('TEXTURE', "Texture Mask", "Paint CMX1_ / CMX2_ / MSK_, 1K on uv_normal: precise, "
+                                       "not tied to the vertices", 'TEXTURE', 2))
 GN_MODE = {'VERTEX_SHARP': "Sharp", 'VERTEX_SMOOTH': "Combined"}
 
 
@@ -75,8 +89,8 @@ def choice(obj):
 
 
 def can_paint(obj, scene=None):
-    """obj paints into CMX1_ / CMX2_: Paint on Texture and possible (else: into VCMix /
-    VCMix2)."""
+    """obj paints into CMX1_ / CMX2_ / MSK_: Paint on Texture and possible (else: into
+    VCMix / VCMix2)."""
     return mode(obj) == 'TEXTURE' and not problem(obj, scene or bpy.context.scene)
 
 
@@ -110,37 +124,62 @@ def problem(obj, scene):
     return ""
 
 
-def ensure(obj, kind, scene, px=None):
-    """obj's CMX1_ / CMX2_: its own (brought to the current format), or a new 1K PNG in the
-    bake folder holding what VCMix / VCMix2 show now. Object Mode. Returns (image, created)."""
-    import os
-    from ..baking import common, engine
+def _two(obj):
+    from . import core
+    return core.slot_count(core.data(obj)) > 3
+
+
+def wanted(obj):
+    """The kinds obj paints into: CMX1_ (CMX2_ with 4+ slots) and MSK_."""
+    return ("CMX1", "CMX2", "MSK") if _two(obj) else ("CMX1", "MSK")
+
+
+def ensure(obj, kind, scene):
+    """obj's CMX1_ / CMX2_ / MSK_: its own (brought to the current format), else a new 1K
+    PNG in the bake folder - made together with the other missing ones, from what VCMix /
+    VCMix2 show now, so nothing changes on screen. Object Mode. Returns (image, created)."""
+    if any(_version(obj, i) < VERSION for i in images(obj).values()):
+        migrate(obj, scene)
     img = get(obj, kind)
     if img is not None:
-        if img.get(VERSION_KEY, 1) < VERSION:
-            migrate(obj)
         return img, False
-    if px is None:
-        px = shown_pixels(obj)[kind]
+    missing = [k for k in set(wanted(obj)) | {kind} if get(obj, k) is None]
+    px = shown_pixels(obj)
+    for k in missing:
+        _create(obj, k, scene, px[k] if k in px else _empty(k))
+    return get(obj, kind), True
+
+
+def _empty(kind):
+    px = np.zeros((SIZE * SIZE, 4), np.float32)
+    px[:, 3] = 1.0
+    if kind == "MSK":
+        px[:, 2] = SIG
+    return px
+
+
+def _path(obj, kind, scene):
+    """Where obj's `kind` is made: the bake folder (a work window: the main 01.Bake)."""
+    import os
+    from ..baking import common
     name = image_name(obj, kind)
-    path = common.texture_path(scene, name)
     try:                                # a work window: straight into the main 01.Bake
         from ..linking import core as linking
         main = linking.paint_dir(scene)
     except ImportError:
         main = ""
-    if main:
-        path = os.path.join(main, name + ".png")
-    engine._check_length(path)
-    os.makedirs(os.path.dirname(path), exist_ok=True)
-    tmp = bpy.data.images.new(name + "_MCP_TMP", SIZE, SIZE, alpha=True)
-    tmp.pixels.foreach_set(px.ravel())
-    tmp.filepath_raw = path
-    tmp.file_format = 'PNG'
-    tmp.save(filepath=path)
-    bpy.data.images.remove(tmp)
+    return os.path.join(main, name + ".png") if main else common.texture_path(scene, name)
+
+
+def _load(obj, kind, path):
+    """The PNG at path as obj's `kind` (an image of that name from elsewhere: renamed; the
+    same file already loaded: read again)."""
+    from ..baking import engine
+    name = image_name(obj, kind)
     img = bpy.data.images.get(name)
-    if img is None or img.source != 'FILE':
+    if img is not None and img.source == 'FILE' and bpy.path.abspath(img.filepath) == path:
+        img.reload()
+    else:
         if img is not None:
             img.name = name + "_stale"
         img = bpy.data.images.load(path, check_existing=False)
@@ -149,16 +188,34 @@ def ensure(obj, kind, scene, px=None):
     engine.link_file(img, path)
     img[VERSION_KEY] = VERSION
     setattr(obj.multicamproject_bake, POINTER[kind], img)
+    return img
+
+
+def _create(obj, kind, scene, px):
+    """A new 1K PNG in the bake folder holding px, obj's `kind` from now on."""
+    import os
+    from ..baking import engine
+    name = image_name(obj, kind)
+    path = _path(obj, kind, scene)
+    engine._check_length(path)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = bpy.data.images.new(name + "_MCP_TMP", SIZE, SIZE, alpha=True)
+    tmp.pixels.foreach_set(np.ascontiguousarray(px, np.float32).ravel())
+    tmp.filepath_raw = path
+    tmp.file_format = 'PNG'
+    tmp.save(filepath=path)
+    bpy.data.images.remove(tmp)
+    img = _load(obj, kind, path)
     from ..baking import owned
     owned.add(scene, [path])
-    return img, True
+    return img
 
 
-def layer_pixels(obj, kind, previous=None, keep_alpha=False):
+def layer_pixels(obj, kind, previous=None):
     """(SIZE*SIZE, 4) pixels of VCMix (CMX1) / VCMix2 (CMX2) as MCP_ shows them now
     (`previous` 0: the cameras' own weights, Reset Camera Mix), rasterized on uv_normal and
-    grown into the free UV space. CMX2's alpha is 0 (the stroke marker) unless
-    `keep_alpha`."""
+    grown into the free UV space - as the layer holds them (cameras 1-3 on top, alpha =
+    its share of the mask)."""
     from . import core
     if obj.mode == 'EDIT':
         obj.update_from_editmode()
@@ -184,23 +241,108 @@ def layer_pixels(obj, kind, previous=None, keep_alpha=False):
     me.loop_triangles.foreach_get("loops", loops)
     tris = mesh_triangles(me)
     px, cov = raster_colors(tris, col[loops].reshape(t, 3, 4))
-    px = grow(px, cov)
-    if kind == "CMX2" and not keep_alpha:
-        px[:, 3] = 0.0
-    return px
+    return grow(px, cov)
+
+
+# ---------------------------------------------------------------- the formats
+
+def _capped(c):
+    """Weights summing to 1 at most - MCP_ clamps the sum and normalises the colors, so
+    nothing changes on screen."""
+    c = np.clip(c, 0.0, None)
+    return c / np.maximum(c.sum(axis=1), 1.0)[:, None]
+
+
+def _sums(c):
+    return np.clip(c.sum(axis=1), 0.0, 1.0)
+
+
+def _ratios(c):
+    s = c.sum(axis=1)
+    return np.where(s[:, None] > 1e-6, c / np.maximum(s, 1e-6)[:, None], 0.0)
+
+
+def from_layers(c1, c2, mask):
+    """The layers' form - c1, c2 (R, G, B (n, 3); c2 None with 3 slots) with cameras 1-3 on
+    top (w1 = s1, w2 = s2 x (1 - s1)), mask (n,) 1 = projected - as version 5 holds it, the
+    same look: both groups' weights sum to (w1 + w2) x HEAD (their own ratios), MSK_ G =
+    w2 / (w1 + w2), R = 1 - mask. Returns {'CMX1', ('CMX2',) 'MSK'} (n, 4)."""
+    n = len(c1)
+    c1 = _capped(c1)
+    w1 = _sums(c1)
+    w2 = np.zeros(n, np.float32)
+    if c2 is not None:
+        c2 = _capped(c2)
+        w2 = _sums(c2) * (1.0 - w1)
+    tot = w1 + w2
+    g = np.where(tot > 1e-6, w2 / np.maximum(tot, 1e-6), 0.0)
+    out = {}
+    for kind, c in (("CMX1", c1), ("CMX2", c2)):
+        if c is None:
+            continue
+        px = np.ones((n, 4), np.float32)
+        px[:, :3] = _ratios(c) * (tot * HEAD)[:, None]
+        out[kind] = px
+    m = np.ones((n, 4), np.float32)
+    m[:, 0] = 1.0 - np.clip(mask, 0.0, 1.0)
+    m[:, 1] = g
+    m[:, 2] = SIG
+    out["MSK"] = m
+    return out
+
+
+def to_layers(px):
+    """from_layers back: {'CMX1', ('CMX2',) 'MSK'} -> (c1, c2 or None, mask), cameras 1-3 on
+    top - the groups' shares (1 - G) x s1 : G x s2 of the cover max(s1, s2)."""
+    m = px["MSK"]
+    g = np.clip(m[:, 1], 0.0, 1.0)
+    c1 = px["CMX1"][:, :3]
+    s1 = np.clip(c1.sum(axis=1) / HEAD, 0.0, 1.0)
+    if "CMX2" not in px:
+        return _ratios(c1) * s1[:, None], None, 1.0 - np.clip(m[:, 0], 0.0, 1.0)
+    c2 = px["CMX2"][:, :3]
+    s2 = np.clip(c2.sum(axis=1) / HEAD, 0.0, 1.0)
+    a, b = (1.0 - g) * s1, g * s2
+    cover = np.maximum(s1, s2)
+    tot = a + b
+    a = np.where(tot > 1e-6, a / np.maximum(tot, 1e-6), 0.0) * cover
+    b = np.where(tot > 1e-6, b / np.maximum(tot, 1e-6), 0.0) * cover
+    v1 = _ratios(c1) * a[:, None]
+    v2 = _ratios(c2) * np.clip(b / np.maximum(1.0 - a, 1e-6), 0.0, 1.0)[:, None]
+    return v1, v2, 1.0 - np.clip(m[:, 0], 0.0, 1.0)
 
 
 def shown_pixels(obj):
-    """{'CMX1', 'CMX2' (4+ slots)}: what VCMix / VCMix2 show now, as the textures hold it -
-    CMX1_ alpha = the blend mask = VCMix alpha x VCMix2 alpha."""
-    from . import core
-    out = {"CMX1": layer_pixels(obj, "CMX1")}
-    if core.slot_count(core.data(obj)) > 3:
-        px2 = layer_pixels(obj, "CMX2", keep_alpha=True)
-        out["CMX1"][:, 3] *= px2[:, 3]
-        px2[:, 3] = 0.0                 # CMX2_ alpha: the stroke marker
-        out["CMX2"] = px2
-    return out
+    """What VCMix / VCMix2 show now, as version 5 holds it (from_layers). The mask =
+    VCMix alpha x VCMix2 alpha."""
+    c1 = layer_pixels(obj, "CMX1")
+    mask = c1[:, 3].copy()
+    c2 = None
+    if _two(obj):
+        c2 = layer_pixels(obj, "CMX2")
+        mask *= c2[:, 3]
+        c2 = c2[:, :3]
+    return from_layers(c1[:, :3], c2, mask)
+
+
+def primed(px):
+    """A camera texture's pixels with every weight sum brought down to HEAD (no change on
+    screen), or None when none is above it."""
+    s = px[:, :3].sum(axis=1)
+    over = s > HEAD + 0.5 / 255
+    if not over.any():
+        return None
+    px = px.copy()
+    px[over, :3] *= (HEAD / s[over])[:, None]
+    return px
+
+
+def prime(obj, kind):
+    """Before a camera brush paints `kind`: its weights under HEAD again (queued: after the
+    running operator, its own undo step), so every stroke shows its strength."""
+    img = get(obj, kind)
+    if img is not None and primed(read(img)) is not None:
+        queue(obj, kind, lambda px: primed(px) if primed(px) is not None else px)
 
 
 # ---------------------------------------------------------------- Paint switch: convert
@@ -240,10 +382,10 @@ def _changed_faces(obj):
 
 
 def to_textures(obj, scene):
-    """Paint -> Vertex -> Texture: CMX1_ / CMX2_ take what VCMix / VCMix2 show now on the
-    faces painted meanwhile; everywhere else the textures keep their own (finer) pixels.
-    Never converted before: the textures become all of it (made, or written as an undo step
-    after the running operator). Object Mode. Returns the names."""
+    """Paint -> Vertex -> Texture: CMX1_ / CMX2_ / MSK_ take what VCMix / VCMix2 show now
+    on the faces painted meanwhile; everywhere else the textures keep their own (finer)
+    pixels. Never converted before: the textures become all of it (made, or written as an
+    undo step after the running operator). Object Mode. Returns the names."""
     changed = _changed_faces(obj)
     if changed is not None and not changed.any():
         px, keep = {}, None                 # nothing painted as vertices: textures as they were
@@ -254,8 +396,10 @@ def to_textures(obj, scene):
             me = obj.data
             all_tris = mesh_triangles(me)
             keep = ~dilate(raster(mesh_triangles(me, changed)), ~raster(all_tris), px=DILATE)
+    if px and any(_version(obj, i) < VERSION for i in images(obj).values()):
+        migrate(obj, scene)
     done, made = [], False
-    for kind in ("CMX1", "CMX2"):
+    for kind in KINDS:
         img = get(obj, kind)
         arr = px.get(kind)
         if arr is None:
@@ -263,8 +407,8 @@ def to_textures(obj, scene):
                 done.append(img.name)
             continue
         if img is None:
-            img, new = ensure(obj, kind, scene, arr)
-            made |= new
+            img = _create(obj, kind, scene, arr)
+            made = True
         elif keep is None:
             queue(obj, kind, lambda _cur, arr=arr: arr)
         else:
@@ -293,9 +437,10 @@ def _sample(img, uv):
 
 
 def to_vertices(obj):
-    """Paint -> Vertex: VCMix / VCMix2 on the mesh become what CMX1_ / CMX2_ hold (sampled
-    at uv_normal; the blend mask split as VCMix a x VCMix2 a), Previous Bake 1 so they show
-    1:1. Without textures nothing is written. Object Mode. Returns the layers written."""
+    """Paint -> Vertex: VCMix / VCMix2 on the mesh become what CMX1_ / CMX2_ / MSK_ show
+    (sampled at uv_normal, to_layers: cameras 1-3 on top, the mask split as VCMix a x
+    VCMix2 a), Previous Bake 1 so they show 1:1. Without textures nothing is written.
+    Object Mode. Returns the layers written."""
     from . import core, gn_builder
     me = obj.data
     imgs = images(obj)
@@ -305,14 +450,21 @@ def to_vertices(obj):
         uv = np.empty(len(me.loops) * 2, np.float32)
         uvl.data.foreach_get("uv", uv)
         uv = uv.reshape(-1, 2)
-        two = core.slot_count(core.data(obj)) > 3
-        c1 = _sample(imgs["CMX1"], uv)
-        cols = {gn_builder.LAYERS[0]: c1}
+        two = _two(obj)
+        px = {"CMX1": _sample(imgs["CMX1"], uv)}
+        n = len(px["CMX1"])
+        if imgs.get("MSK") is not None:
+            px["MSK"] = _sample(imgs["MSK"], uv)
+        else:
+            px["MSK"] = np.zeros((n, 4), np.float32)
         if two:
-            mask = c1[:, 3].copy()
-            c2 = _sample(imgs["CMX2"], uv) if imgs.get("CMX2") is not None else np.zeros_like(c1)
-            c1[:, 3] = c2[:, 3] = np.sqrt(np.clip(mask, 0.0, 1.0))
-            cols[gn_builder.LAYERS[1]] = c2
+            px["CMX2"] = (_sample(imgs["CMX2"], uv) if imgs.get("CMX2") is not None
+                          else np.zeros((n, 4), np.float32))
+        v1, v2, mask = to_layers(px)
+        a = np.sqrt(mask) if two else mask
+        cols = {gn_builder.LAYERS[0]: np.c_[v1, a]}
+        if two:
+            cols[gn_builder.LAYERS[1]] = np.c_[v2, a]
         vi = np.empty(len(me.loops), np.int32)
         me.loops.foreach_get("vertex_index", vi)
         for name, col in cols.items():
@@ -347,37 +499,132 @@ def to_vertices(obj):
     return done
 
 
-def migrate(obj):
-    """CMX1_ / CMX2_ of v1 (alpha = painted here, MSK_ = the mask) -> v2 (alpha = the mask):
-    the vertex layers under the painted pixels, MSK_ into CMX1_'s alpha."""
-    msk = getattr(obj.multicamproject_bake, POINTER["MSK"], None)
-    done = False
-    for kind in KINDS:
+# ---------------------------------------------------------------- older versions
+
+def _version(obj, img):
+    """img's format (VERSION_KEY). Without the mark (loaded again without its ID
+    properties, e.g. received from another file): 2 - unless an unmarked MSK_ sits
+    beside a camera texture (version 1 always had one)."""
+    v = img.get(VERSION_KEY)
+    if v is not None:
+        return v
+    msk = get(obj, "MSK")
+    if img != msk and msk is not None and msk.get(VERSION_KEY) is None:
+        return 1
+    return 2
+
+
+def migrate(obj, scene=None):
+    """_migrate with the bake stamps kept (the look does not change)."""
+    from ... import module_manager
+    if not module_manager.is_loaded("baking"):
+        return _migrate(obj, scene)
+    from ..baking import fingerprint
+    return fingerprint.restamped(obj, lambda: _migrate(obj, scene))
+
+
+def _converted_elsewhere(obj, scene):
+    """Another Blender sharing the files (the work window, the main file) converted them to
+    5 and saved them: a v5 MSK_ file (B = SIG everywhere) beside a CMX1_ whose alpha is 1
+    everywhere. Then only the pointers and marks, never a second conversion."""
+    import os
+    c1 = get(obj, "CMX1")
+    if c1 is None or read(c1)[:, 3].min(initial=1.0) < 0.999:
+        return False
+    path = _path(obj, "MSK", scene)
+    if not os.path.isfile(path):
+        return False
+    tmp = bpy.data.images.load(path, check_existing=False)
+    try:
+        setup_image(tmp)
+        ok = tmp.size[0] > 0 and np.abs(read(tmp)[:, 2] - SIG).max(initial=1.0) < 1.5 / 255
+    finally:
+        bpy.data.images.remove(tmp)
+    if not ok:
+        return False
+    _load(obj, "MSK", path)
+    for k in CAM_KINDS:
+        if get(obj, k) is not None:
+            get(obj, k)[VERSION_KEY] = VERSION
+    return True
+
+
+def _migrate(obj, scene=None):
+    """Paint textures of an older version -> 5, the same look. First to the layers' form
+    (c1, c2, mask; cameras 1-3 on top):
+    1 (alpha = painted here, MSK_ = the mask): the vertex layers under the unpainted pixels,
+      MSK_ into the mask;
+    2 / 4: CMX1_ alpha = the mask;
+    3 (MSK_ grey = the mask, cameras 4-6 on top; never saved to a file): one_on_top.
+    Then from_layers; MSK_ is made (or written over) in the new format."""
+    from . import core
+    scene = scene or bpy.context.scene
+    msk = get(obj, "MSK")
+    cams = {k: get(obj, k) for k in CAM_KINDS}
+    vers = {k: _version(obj, img) for k, img in cams.items() if img is not None}
+    if not vers or min(vers.values()) >= VERSION:
+        return
+    if _converted_elsewhere(obj, scene):
+        print(f"[MultiCamProject] {obj.name}: paint textures already converted (MSK_ found)")
+        core.ensure_material(obj)
+        return
+    px = {k: read(img).copy() for k, img in cams.items() if img is not None}
+    if "CMX1" not in px:
+        px["CMX1"] = layer_pixels(obj, "CMX1")
+    two = _two(obj)
+    if two and "CMX2" not in px:
+        try:
+            px["CMX2"] = layer_pixels(obj, "CMX2")
+        except RuntimeError as e:
+            print(f"[MultiCamProject] {obj.name}: VCMix2 not read ({e}) - CMX2_ empty")
+            px["CMX2"] = np.zeros_like(px["CMX1"])
+    if any(v == 3 for v in vers.values()):
+        mask = read(msk)[:, 0] if msk is not None and msk.has_data else np.ones(len(px["CMX1"]))
+        if two:
+            px["CMX1"][:, :3], px["CMX2"][:, :3] = one_on_top(px["CMX1"][:, :3], px["CMX2"][:, :3])
+    else:
+        for kind, img in cams.items():
+            if img is not None and vers[kind] < 2:      # 1 -> 2
+                old = px[kind]
+                new = layer_pixels(obj, kind)
+                a = old[:, 3:4]
+                new[:, :3] = new[:, :3] * (1.0 - a) + old[:, :3] * a
+                if kind == "CMX1" and msk is not None and msk.has_data:
+                    m = read(msk)
+                    new[:, 3] = new[:, 3] * (1.0 - m[:, 3]) + m[:, 0] * m[:, 3]
+                px[kind] = new
+        mask = px["CMX1"][:, 3].copy()
+    out = from_layers(px["CMX1"][:, :3], px["CMX2"][:, :3] if two else None, mask)
+    for kind, arr in out.items():           # new files first: a failure changes nothing
+        if get(obj, kind) is None or kind == "MSK":
+            _create(obj, kind, scene, arr)
+    for kind in CAM_KINDS:
         img = get(obj, kind)
-        if img is None or img.get(VERSION_KEY, 1) >= VERSION:
-            continue
-        old = read(img)
-        new = layer_pixels(obj, kind)
-        a = old[:, 3:4]
-        new[:, :3] = new[:, :3] * (1.0 - a) + old[:, :3] * a
-        if kind == "CMX1" and msk is not None and msk.has_data:
-            m = read(msk)
-            new[:, 3] = new[:, 3] * (1.0 - m[:, 3]) + m[:, 0] * m[:, 3]
-        img.pixels.foreach_set(new.ravel())
-        img.update()
-        img[VERSION_KEY] = VERSION
-        bump(img)
-        done = True
-        print(f"[MultiCamProject] {img.name}: alpha is the blend mask now (converted)")
-    if done:
-        from . import core
-        core.ensure_material(obj)       # MCP_ reads the alpha as the mask
+        if img is not None and kind in out:
+            setup_image(img)
+            img.pixels.foreach_set(np.ascontiguousarray(out[kind], np.float32).ravel())
+            img.update()
+            img[VERSION_KEY] = VERSION
+            bump(img)
+    print(f"[MultiCamProject] {obj.name}: paint textures converted - MSK_ R = scan, "
+          "G = cameras 1-3 / 4-6, no alpha")
+    core.ensure_material(obj)
+
+
+def one_on_top(c1, c2):
+    """Camera weights (R, G, B (n, 3) each) with cameras 4-6 on top (w1 = s1 x (1 - s2),
+    w2 = s2; version 3) -> with cameras 1-3 on top (w1 = s1, w2 = s2 x (1 - s1)), the same
+    mix. Returns new (c1, c2)."""
+    c1, c2 = _capped(c1), _capped(c2)
+    c1 = c1 * (1.0 - _sums(c2))[:, None]
+    c2 = np.clip(c2 / np.maximum(1.0 - _sums(c1), 1e-6)[:, None], 0.0, 1.0)
+    return c1, c2
 
 
 def migrate_all():
     for obj in bpy.data.objects:
         if obj.type == 'MESH' and not obj.library and any(
-                img.get(VERSION_KEY, 1) < VERSION for img in images(obj).values()):
+                _version(obj, img) < VERSION for k, img in images(obj).items() if k != "MSK"):
             try:
                 migrate(obj)
             except Exception as e:
@@ -401,11 +648,6 @@ def read(img):
     return buf.reshape(-1, 4)
 
 
-def _digest(arr):
-    return hashlib.blake2b(np.round(arr * 255).astype(np.uint8).tobytes(), digest_size=16).digest()
-
-
-_redo = {}          # image name -> [(digest of the inverted state, pixels written)]
 _rev = {}           # image name -> change counter (fingerprint cache)
 
 
@@ -433,32 +675,31 @@ def _context(img):
 
 
 def write(img, arr):
-    """img's pixels = arr ((n, 4) float) as its own undo step (see the module doc)."""
+    """img's pixels = arr ((n, 4) float) as one undo step Blender records itself.
+
+    Blender's image undo takes a step's "before" from the previous image step when that
+    one holds the same image, and stores the image as it is when the step ends. So: an
+    Invert of no channel (a step that records the image as it is now), then the pixels
+    with red inverted, then Invert red - a step from "as it was" to arr. Ctrl+Z gives the
+    old image back, Redo gives arr, also across other undo steps (camera switches). The
+    first step changes nothing: one Ctrl+Z more. (Before 2026-10-19 a single Invert step
+    recorded the inverted image: undo after a camera switch brought it back.)"""
+    arr = np.ascontiguousarray(arr, np.float32)
     ctx = _context(img)
+    done = False
     if ctx is not None:
         with bpy.context.temp_override(**ctx):
             if bpy.ops.image.invert.poll():
-                bpy.ops.image.invert(invert_r=True)     # Blender keeps the image as it was
-        lst = _redo.setdefault(img.name, [])
-        lst.append((_digest(read(img)), arr.astype(np.float32)))
-        del lst[:-REDO_KEEP]
-    img.pixels.foreach_set(arr.astype(np.float32).ravel())
+                bpy.ops.image.invert()
+                inv = arr.copy()
+                inv[:, 0] = 1.0 - inv[:, 0]
+                img.pixels.foreach_set(inv.ravel())
+                bpy.ops.image.invert(invert_r=True)
+                done = True
+    if not done:
+        img.pixels.foreach_set(arr.ravel())
     img.update()
     bump(img)
-
-
-@persistent
-def _on_redo(*_):
-    for name, lst in list(_redo.items()):
-        img = bpy.data.images.get(name)
-        if img is None or not lst or not img.has_data:
-            continue
-        cur = _digest(read(img))
-        for key, arr in reversed(lst):
-            if key == cur:
-                img.pixels.foreach_set(arr.ravel())
-                img.update()
-                break
 
 
 @persistent
@@ -667,35 +908,40 @@ def coverage(obj, tris, all_tris=None):
     return dilate(cov, ~raster(all_tris))
 
 
-def fill_fn(cov, rgb, alpha=1.0):
-    """fn for queue(): `rgb` with `alpha` over the covered pixels (cov: bool or 0-1)."""
+def fill_fn(cov, rgb):
+    """fn for queue() on a camera texture: `rgb` over the covered pixels (cov: bool or
+    0-1)."""
     c = cov.astype(np.float32)[:, None]
 
     def fn(arr):
         arr[:, :3] = arr[:, :3] * (1.0 - c) + np.asarray(rgb, np.float32) * c
-        arr[:, 3:] = np.maximum(arr[:, 3:], c * alpha)
+        arr[:, 3] = 1.0
         return arr
     return fn
 
 
-def claim_fn(claim):
-    """fn for queue() / write() on CMX1: cameras 1-3 off where cameras 4-6 claimed."""
-    c = claim.astype(np.float32)
-
-    def fn(arr):
-        arr[:, :3] *= (1.0 - c)[:, None]
-        arr[:, 3] = np.maximum(arr[:, 3], c)
-        return arr
-    return fn
-
-
-def mask_fn(cov, value):
-    """fn for queue() on CMX1: the blend mask (alpha) = value over the covered pixels
-    (cov None: all of them)."""
+def mask_fn(cov, value, group=None):
+    """fn for queue() on MSK_: projected = `value` (1: R = 0, 0: R = 1, the scan) over the
+    covered pixels (cov None: all of them); `group` (0 / 1): G too (which cameras show)."""
     c = None if cov is None else cov.astype(np.float32)
 
     def fn(arr):
-        arr[:, 3] = value if c is None else arr[:, 3] * (1.0 - c) + value * c
+        k = 1.0 if c is None else c
+        arr[:, 0] = arr[:, 0] * (1.0 - k) + (1.0 - value) * k
+        if group is not None:
+            arr[:, 1] = arr[:, 1] * (1.0 - k) + group * k
+        arr[:, 2] = SIG
+        arr[:, 3] = 1.0
+        return arr
+    return fn
+
+
+def group_fn(g):
+    """fn for queue() on MSK_: G = g ((n,): which cameras show), R stays."""
+    def fn(arr):
+        arr[:, 1] = g
+        arr[:, 2] = SIG
+        arr[:, 3] = 1.0
         return arr
     return fn
 
@@ -821,14 +1067,13 @@ def _migrate_later():
 
 @persistent
 def _on_load(*_):
-    _redo.clear()
     _rev.clear()
     _queue.clear()
     bpy.app.timers.register(_migrate_later, first_interval=1.0)
 
 
 def register():
-    bpy.app.handlers.redo_post.append(_on_redo)
+    bpy.app.handlers.redo_post.append(_on_undo)
     bpy.app.handlers.undo_post.append(_on_undo)
     bpy.app.handlers.save_pre.append(_on_save_pre)
     bpy.app.handlers.load_post.append(_on_load)
@@ -836,7 +1081,7 @@ def register():
 
 
 def unregister():
-    for handlers, fn in ((bpy.app.handlers.redo_post, _on_redo),
+    for handlers, fn in ((bpy.app.handlers.redo_post, _on_undo),
                          (bpy.app.handlers.undo_post, _on_undo),
                          (bpy.app.handlers.save_pre, _on_save_pre),
                          (bpy.app.handlers.load_post, _on_load)):

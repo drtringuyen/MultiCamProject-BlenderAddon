@@ -21,13 +21,15 @@ back into VCMix2 alpha. A black brush claims nothing.
 Only faces turned toward the painted camera are claimed: a brush that reaches through the
 mesh (or around its silhouette) must not hand the far side to a camera that cannot see it.
 
-Paint Textures (paint_tex) work the same way in Texture Paint: a stroke into CMX2_ claims
-CMX1_ under it (cameras 1-3 painted to 0 there, its alpha up), pixel by pixel, only where
-the faces turn toward the painted camera. CMX2_'s alpha is the marker (the mask is CMX1_'s
-alpha alone): 0 between strokes, the brush raises it wherever it passes, so a stroke claims
-even where CMX2_ already had that color - and brings the projection back there. The
-marker goes back to 0 without an undo step (undoing the stroke restores 0 anyway). The
-clear is its own undo step (paint_tex.write).
+Paint Textures (paint_tex, version 5) in Texture Paint: a stroke paints one camera
+texture (CMX1_ / CMX2_), whose weights sit under paint_tex.HEAD between strokes, so the
+stroke raises the painted camera's weight by exactly the brush's strength - also where
+that camera already showed. After the stroke, that strength moves MSK_: G toward the
+stroke's cameras (1-3: 0, 4-6: 1), R toward the projection (0) - as softly as the brush,
+exactly where it painted (Blender's brush already stops at what the view sees). No alpha
+is read or written. The MSK_ write is its own undo step (paint_tex.write). (Until
+2026-10-19 a camera 4-6 stroke cleared CMX1_ through alpha markers: hard, stair-stepped
+edges.)
 """
 import bpy
 import numpy as np
@@ -43,8 +45,7 @@ CLAIM_MIN = 1e-4
 _snap = {}          # mesh pointer -> {layer: color array}
 _dirty = set()      # mesh pointers changed since the last sync
 _sessions = set()   # names of objects with VCMix2 alpha in _mcp_mask2 (camera 4-6 session)
-_tsnap = {}         # object name -> CMX2_ pixels before the next stroke (Texture Paint)
-_tfacing = {}       # (object, camera, faces) -> pixels whose faces turn toward the camera
+_tsnap = {}         # object name -> (canvas name, its pixels before the next stroke)
 _tstate = {"stroking": False, "dirty": False}
 
 
@@ -271,90 +272,68 @@ def sync(obj, push_undo=True):
     return changed
 
 
-# ---------------------------------------------------------------- Texture Paint (CMX2_)
+# ---------------------------------------------------------------- Texture Paint
 
 def _canvas():
     return bpy.context.scene.tool_settings.image_paint.canvas
 
 
-def _tex_qualifies(obj):
-    """Texture painting a set-up object's CMX2_ (cameras 4-6)."""
+def _painted_kind(obj):
+    """'CMX1' / 'CMX2' when obj is texture painted on that camera texture, else None."""
     if obj is None or obj.type != 'MESH' or obj.mode != 'TEXTURE_PAINT':
-        return False
-    tex = paint_tex.get(obj, "CMX2")
-    return tex is not None and _canvas() == tex and core.data(obj).is_setup
+        return None
+    canvas = _canvas()
+    if canvas is None or not core.data(obj).is_setup:
+        return None
+    return next((k for k in paint_tex.CAM_KINDS if paint_tex.get(obj, k) == canvas), None)
 
 
 def reset_texture(obj):
-    """Snapshot CMX2_: the next stroke is measured from here."""
+    """Snapshot the painted camera texture: the next stroke is measured from here."""
     _tsnap.pop(obj.name, None)
-    if _tex_qualifies(obj):
-        tex = paint_tex.get(obj, "CMX2")
-        cur = paint_tex.read(tex)
-        if cur[:, 3].max(initial=0.0) > 0.0:    # a marker an undo brought back: 0 again
-            cur[:, 3] = 0.0
-            tex.pixels.foreach_set(cur.ravel())
-            tex.update()
-        _tsnap[obj.name] = cur
+    kind = _painted_kind(obj)
+    if kind is not None:
+        tex = paint_tex.get(obj, kind)
+        _tsnap[obj.name] = (tex.name, paint_tex.read(tex))
 
 
-def _facing_pixels(obj, cam):
-    """Per pixel of uv_normal: does its face turn toward `cam`? (the same test as _facing,
-    per face)"""
-    me = obj.data
-    key = (obj.name, cam.name, len(me.polygons))
-    if key in _tfacing:
-        return _tfacing[key]
-    n = len(me.polygons)
-    nr = np.empty(n * 3, dtype=np.float32)
-    me.polygons.foreach_get("normal", nr)
-    om, cm = core.world_matrix(obj), core.world_matrix(cam)
-    nmat = np.array(om.to_3x3().inverted_safe().transposed(), dtype=np.float32)
-    nr = nr.reshape(n, 3) @ nmat.T
-    if cam.data.type == 'ORTHO':
-        facing = nr @ np.array(cm.to_3x3().col[2], dtype=np.float32) > 0.0
-    else:
-        co = np.empty(n * 3, dtype=np.float32)
-        me.polygons.foreach_get("center", co)
-        mw = np.array(om, dtype=np.float32)
-        co = co.reshape(n, 3) @ mw[:3, :3].T + mw[:3, 3]
-        facing = (nr * (np.array(cm.translation, dtype=np.float32) - co)).sum(axis=1) > 0.0
-    px = paint_tex.coverage(obj, paint_tex.mesh_triangles(me, facing))
-    _tfacing.clear()        # one camera at a time
-    _tfacing[key] = px
-    return px
+def stroke_strength(old, cur, ch):
+    """(n,) how strongly the last stroke(s) painted channel `ch` (0-2) toward 1:
+    (cur - old) / (1 - old), 0 where it was full already."""
+    o, c = old[:, ch], cur[:, ch]
+    room = 1.0 - o
+    s = np.where(room > 1.0 / 255, (c - o) / np.maximum(room, 1.0 / 255), 0.0)
+    return np.clip(s, 0.0, 1.0)
 
 
 def sync_texture(obj):
-    """Cameras 1-3 off in CMX1_ where the last stroke(s) painted cameras 4-6 into CMX2_."""
+    """MSK_ follows the last stroke(s) into a camera texture: G toward its cameras, R
+    toward the projection, by the brush's strength."""
     paint_tex.bump_canvas(obj, _canvas())
-    if not _tex_qualifies(obj):
+    kind = _painted_kind(obj)
+    if kind is None:
         _tsnap.pop(getattr(obj, "name", ""), None)
         return False
-    tex = paint_tex.get(obj, "CMX2")
+    tex = paint_tex.get(obj, kind)
     old = _tsnap.get(obj.name)
     cur = paint_tex.read(tex)
-    marked = cur[:, 3].copy()
-    if marked.max(initial=0.0) > 0.0:   # the marker back to 0 for the next stroke
-        cur[:, 3] = 0.0
-        tex.pixels.foreach_set(cur.ravel())
-        tex.update()
-    _tsnap[obj.name] = cur
-    if old is None or old.shape != cur.shape or _brush_is_black():
+    _tsnap[obj.name] = (tex.name, cur)
+    if old is None or old[0] != tex.name or old[1].shape != cur.shape or _brush_is_black():
         return False
-    claim = np.clip((cur[:, :3] - old[:, :3]).max(axis=1), 0.0, 1.0)
-    claim = np.maximum(claim, np.clip(marked - old[:, 3], 0.0, 1.0))
-    if claim.max(initial=0.0) <= CLAIM_MIN:
+    s = stroke_strength(old[1], cur, int(np.argmax(_brush_color())))
+    if s.max(initial=0.0) <= CLAIM_MIN:
         return False
-    cam = _painted_camera(obj, L2)
-    if cam is not None:
-        claim = claim * _facing_pixels(obj, cam)
-    if claim.max(initial=0.0) <= CLAIM_MIN:
-        return False
-    img, new = paint_tex.ensure(obj, "CMX1", bpy.context.scene)
+    img, new = paint_tex.ensure(obj, "MSK", bpy.context.scene)
     if new:
         core.ensure_material(obj)
-    paint_tex.write(img, paint_tex.claim_fn(claim)(paint_tex.read(img)))
+    m = paint_tex.read(img)
+    if len(m) != len(s):
+        return False
+    m[:, 1] += (paint_tex.GROUP[kind] - m[:, 1]) * s
+    m[:, 0] *= 1.0 - s
+    m[:, 2] = paint_tex.SIG
+    m[:, 3] = 1.0
+    paint_tex.write(img, m)
     obj.update_tag()
     return True
 
@@ -366,7 +345,7 @@ def _tick_texture(obj):
     if _tstate["stroking"] or _tstate.get("dirty"):
         _tstate["stroking"] = _tstate["dirty"] = False
         sync_texture(obj)
-    elif obj.name not in _tsnap and _tex_qualifies(obj):
+    elif obj.name not in _tsnap and _painted_kind(obj) is not None:
         reset_texture(obj)
     return 0.1
 
@@ -442,7 +421,6 @@ def _on_undo(*_):
     _dirty.clear()
     _sessions.clear()       # the stash is undone with the mesh; begin_session merges a leftover
     _tsnap.clear()
-    _tfacing.clear()
 
 
 def register():
@@ -466,4 +444,3 @@ def unregister():
     _snap.clear()
     _dirty.clear()
     _tsnap.clear()
-    _tfacing.clear()

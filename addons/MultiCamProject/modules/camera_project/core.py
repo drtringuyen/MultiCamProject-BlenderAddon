@@ -249,7 +249,7 @@ def scene_cameras(scene):
 
 MAT_TAG = "multicamproject_material"
 MAT_VERSION_KEY = "multicamproject_mat_version"
-MAT_VERSION = 10        # bump when the material's node setup changes
+MAT_VERSION = 12        # bump when the material's node setup changes
 LAYOUT_VERSION = 6      # from here on nodes have stable names: a rebuild keeps their spots
 PREFIX = "MCP_"
 OLD_PREFIX = "MAT_"                 # projection material before the 2026-09-25 rename
@@ -510,7 +510,8 @@ def _named_math(b, name, *args, **kw):
 
 
 def _paint_tex_node(b, f, obj, kind, loc):
-    """The object's CMX1_ / CMX2_ on uv_normal: (color, alpha), None without that image."""
+    """The object's CMX1_ / CMX2_ / MSK_ on uv_normal: (color, alpha), None without that
+    image."""
     from . import paint_tex
     img = paint_tex.get(obj, kind) if obj is not None else None
     if img is None:
@@ -539,8 +540,11 @@ def _build_projection(b, n, obj=None):
     (s1 x cams 1-3 + w2 x cams 4-6) / (s1 + w2) - no dark seams at soft edges. Blend
     mask = VCMix alpha x VCMix2 alpha x (s1 + w2): erasing either alpha, or no camera
     covering the face, shows the scan.
-    Paint Textures (paint_tex), the Paint Textures Value at 1: CMX1_ / CMX2_ replace VCMix /
-    VCMix2 R, G, B, and CMX1_ alpha the blend mask (CMX2_ alpha is a stroke marker).
+    Paint Textures (paint_tex, version 5), the Paint Textures Value at 1: CMX1_ / CMX2_
+    replace VCMix / VCMix2 R, G, B (their sums count / paint_tex.HEAD), MSK_ G picks between
+    the groups instead of "1-3 on top" (w1 = (1 - G) x s1, w2 = G x s2, the cover is
+    max(s1, s2): a stroke into a group that never covered there must not dip it) and
+    1 - MSK_ R is the blend mask instead of the alphas. No alpha is read.
     Returns (color, blend mask, camera cover)."""
     from . import paint_tex
     f = _named(b.frame("PROJECTION", (-1730, 1500)), "PROJECTION")
@@ -580,12 +584,29 @@ def _build_projection(b, n, obj=None):
             ws = routed
         col, _tot = _weighted(b, f, ws, cams, 700 + layer * 1000, name)
         layers.append((col, vc, ws, painted))
-    color, vc1, ws1, cmx1 = layers[0]
+    color, vc1, ws1, _cmx1 = layers[0]
     mask = vc1.outputs["Alpha"]
+    textured = any(lay[3] is not None for lay in layers)
+    msk = _paint_tex_node(b, f, obj, "MSK", (0, -2600)) if textured else None
+    msk_r = msk_g = None
+    if msk is not None:
+        sep = _named(b.n("ShaderNodeSeparateColor", (250, -2600), f), "MSK Separate")
+        b.link(msk[0], sep.inputs[0])
+        msk_r, msk_g = sep.outputs["Red"], sep.outputs["Green"]
+    # the textures' weights sum to HEAD where a camera fully shows: count them / HEAD
+    scale = None
+    if textured:
+        scale = _named_math(b, "Paint Weight Scale", "MULTIPLY_ADD", toggle,
+                            1.0 / paint_tex.HEAD - 1.0, (2550, -1700), "Paint Weight Scale", f)
+        scale.node.inputs[2].default_value = 1.0
 
     def layer_sum(ws, y, label):
         a = _named_math(b, f"{label} A", "ADD", ws[0], ws[1], (2700, y), parent=f)
-        t = _named_math(b, label, "ADD", a, ws[2], (2850, y), label, f)
+        if scale is None:
+            t = _named_math(b, label, "ADD", a, ws[2], (2850, y), label, f)
+        else:
+            t = _named_math(b, f"{label} Sum", "ADD", a, ws[2], (2850, y), parent=f)
+            t = _named_math(b, label, "MULTIPLY", t, scale, (2950, y), label, f)
         t.node.use_clamp = True
         return t
 
@@ -593,10 +614,12 @@ def _build_projection(b, n, obj=None):
     cover = s1                  # where the cameras see the face (From Projection's mask)
 
     def painted_mask(alpha, loc):
-        """CMX1_ alpha instead of the vertex alphas."""
-        if cmx1 is None:
+        """1 - MSK_ R instead of the vertex alphas."""
+        if msk_r is None:
             return alpha
-        return _toggled(b, f, toggle, alpha, cmx1[1], "FLOAT", "CMX1 Alpha or Vertex", loc)
+        inv = _named_math(b, "MSK Projected", "SUBTRACT", 1.0, msk_r, (loc[0] - 150, loc[1]),
+                          "1 - MSK R", f)
+        return _toggled(b, f, toggle, alpha, inv, "FLOAT", "MSK or Vertex", loc)
 
     if len(layers) > 1:
         col2, vc2, ws2, _cmx2 = layers[1]
@@ -604,9 +627,19 @@ def _build_projection(b, n, obj=None):
         free = _named_math(b, "1-3 Uncovered", "SUBTRACT", 1.0, s1, (3050, -1300), parent=f)
         w2 = _named_math(b, "4-6 Share", "MULTIPLY", s2, free, (3200, -1400),
                          "4-6 Share (1-3 on top)", f)
-        both = _named_math(b, "Cameras Cover", "ADD", s1, w2, (3350, -1300), "Cameras Cover", f)
+        w1 = s1
+        if msk_g is not None:   # the paint textures: MSK_ G picks the group
+            g_inv = _named_math(b, "MSK 1-3", "SUBTRACT", 1.0, msk_g, (3050, -1600), "1 - MSK G", f)
+            w1t = _named_math(b, "1-3 by MSK", "MULTIPLY", s1, g_inv, (3200, -1600), "1-3 by MSK G", f)
+            w2t = _named_math(b, "4-6 by MSK", "MULTIPLY", s2, msk_g, (3200, -1800), "4-6 by MSK G", f)
+            w1 = _toggled(b, f, toggle, s1, w1t, "FLOAT", "1-3 Weight", (3350, -1600))
+            w2 = _toggled(b, f, toggle, w2, w2t, "FLOAT", "4-6 Weight by Group", (3350, -1800))
+        both = _named_math(b, "Cameras Cover", "ADD", w1, w2, (3350, -1300), "Cameras Cover", f)
         both.node.use_clamp = True
         cover = both
+        if msk_g is not None:
+            top = _named_math(b, "Groups Cover", "MAXIMUM", s1, s2, (3350, -2000), "max(s1, s2)", f)
+            cover = _toggled(b, f, toggle, both, top, "FLOAT", "Cover by Group", (3500, -2000))
         safe = _named_math(b, "Cameras Cover Max", "MAXIMUM", both, 1e-6, (3500, -1300), parent=f)
         share = _named_math(b, "4-6 Fraction", "DIVIDE", w2, safe, (3650, -1300), "4-6 Fraction", f)
         mx = _named(b.n("ShaderNodeMix", (3800, -450), f, data_type="RGBA"), "VCMix on top")
@@ -619,7 +652,7 @@ def _build_projection(b, n, obj=None):
         alphas = _named_math(b, "Both Alphas", "MULTIPLY", mask, vc2.outputs["Alpha"],
                              (3650, -1100), "VCMix a x VCMix2 a", f)
         alphas = painted_mask(alphas, (3650, -1600))
-        mask = _named_math(b, "Blend Mask", "MULTIPLY", alphas, both, (3800, -1200), "Blend Mask", f)
+        mask = _named_math(b, "Blend Mask", "MULTIPLY", alphas, cover, (3800, -1200), "Blend Mask", f)
     else:
         mask = painted_mask(mask, (3650, -1600))
     return color, mask, cover
