@@ -907,6 +907,17 @@ def _save_albedo(obj, scene, tmp, path):
     d.alb_image = img
 
 
+def _save_paint(obj):
+    """The object's dirty paint textures into their files (a step for the status bar)."""
+    from ... import module_manager
+    if not module_manager.is_loaded("camera_project"):
+        return
+    from ..camera_project import paint_tex
+    if any(img.is_dirty for img in paint_tex.images(obj).values()):
+        yield jobs.Step("Saving the paint textures (CMX1_ / CMX2_ / MSK_)")
+        paint_tex.save_dirty([obj])
+
+
 def bake_albedo(context, obj):
     """bake_albedo_steps, blocking."""
     return jobs.run_sync(bake_albedo_steps(context, obj))
@@ -918,8 +929,10 @@ def bake_albedo_steps(context, obj):
         From Projection  a copy of BAp_ (rendered first when needed)
         Mixed            MCP_ (BAo_ and the projection by the VCMix mask) rendered by EEVEE
                          on uv_normal; BAp_ is rendered too (BNp_ is made from it)
-    Builds MAT_, stores the fingerprint; the object ends up in Final. A generator (jobs);
-    returns the seconds."""
+    The object's paint textures (CMX1_ / CMX2_ / MSK_) are written to their files too, so
+    the files hold the painting this ALB_ was baked from (else only a .blend save writes
+    them). Builds MAT_, stores the fingerprint; the object ends up in Final. A generator
+    (jobs); returns the seconds."""
     from . import route
     scene = context.scene
     d = common.data(obj)
@@ -957,6 +970,7 @@ def bake_albedo_steps(context, obj):
         finally:
             bpy.data.images.remove(tmp)
     d.alb_size = size
+    yield from _save_paint(obj)
     material.build(obj, scene)
     d.fingerprint = fingerprint.compute(obj)
     d.last_bake_seconds = time.perf_counter() - t0

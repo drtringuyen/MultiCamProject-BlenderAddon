@@ -1019,10 +1019,11 @@ def start_painting(context, obj, img):
         ip.use_stencil_layer = False
 
 
-def save_dirty():
-    """Every dirty paint texture into its file. Returns the names saved."""
+def save_dirty(objs=None):
+    """Every dirty paint texture (of `objs`, default: all objects) into its file. Returns
+    the names saved."""
     saved = []
-    for obj in bpy.data.objects:
+    for obj in (bpy.data.objects if objs is None else objs):
         for img in images(obj).values():
             if img.is_dirty and img.source == 'FILE' and img.filepath and not img.library:
                 try:
