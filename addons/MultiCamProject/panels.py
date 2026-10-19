@@ -58,8 +58,16 @@ class MULTICAMPROJECT_PT_Infos(bpy.types.Panel):
                          text_ctxt="extra-info-label")
 
 
+def object_ready(context):
+    """The panels work on the active object - only while it is selected too: the buttons
+    (05's bake and others) act on the selection, an active object alone is not part of it."""
+    obj = getattr(context, "active_object", None)
+    return obj is not None and obj.select_get()
+
+
 class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
-    """Main panel - modules register subpanels here via bl_parent_id"""
+    """Main panel - modules register subpanels here via bl_parent_id. Shown only while the
+    active object is selected (object_ready); its sub-panels go with it"""
     bl_label = "MultiCamProject"
     bl_idname = "MULTICAMPROJECT_PT_main"
     bl_space_type = 'VIEW_3D'
@@ -67,8 +75,39 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
     bl_category = "MultiCamProject"
     bl_order = 1
 
+    @classmethod
+    def poll(cls, context):
+        return object_ready(context)
+
     def draw(self, context):
         pass
+
+
+class MULTICAMPROJECT_PT_SelectHint(bpy.types.Panel):
+    """In place of the main panel while no object is both selected and active: a warning,
+    nothing else"""
+    bl_label = "MultiCamProject"
+    bl_idname = "MULTICAMPROJECT_PT_select_hint"
+    bl_space_type = 'VIEW_3D'
+    bl_region_type = 'UI'
+    bl_category = "MultiCamProject"
+    bl_order = 1
+
+    @classmethod
+    def poll(cls, context):
+        return not object_ready(context)
+
+    def draw(self, context):
+        col = self.layout.column(align=True)
+        col.alert = True
+        obj = getattr(context, "active_object", None)
+        if obj is not None:
+            col.label(text=f"'{obj.name}' is active but not selected", icon='ERROR')
+        else:
+            col.label(text="Nothing selected", icon='ERROR')
+        hint = self.layout.column(align=True)
+        hint.active = False
+        hint.label(text="Click one object to work on (selected and active)")
 
 
 NAME_UNITS = 5      # the New Object Name field at the start of 2B / 2C / 2D
@@ -280,6 +319,7 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_PT_Infos)
     bpy.utils.register_class(MULTICAMPROJECT_PT_MainPanel)
+    bpy.utils.register_class(MULTICAMPROJECT_PT_SelectHint)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Setup)
     bpy.utils.register_class(MULTICAMPROJECT_PT_MeshWorkflow)
 
@@ -287,5 +327,6 @@ def register():
 def unregister():
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_MeshWorkflow)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Setup)
+    bpy.utils.unregister_class(MULTICAMPROJECT_PT_SelectHint)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_MainPanel)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Infos)
