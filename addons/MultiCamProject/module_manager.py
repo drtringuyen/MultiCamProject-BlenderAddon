@@ -14,6 +14,7 @@ ALL_MODULES = [    {"name": "camera_project", "op": "multicamproject.toggle_came
     {"name": "image_editor", "op": "multicamproject.toggle_image_editor", "icon": "MOD_WARP"},
     {"name": "linking", "op": "multicamproject.toggle_linking", "icon": "LINKED"},
     {"name": "estimation", "op": "multicamproject.toggle_estimation", "icon": "MOD_DECIM"},
+    {"name": "uv_mesh", "op": "multicamproject.toggle_uv_mesh", "icon": "UV"},
 ]
 
 
