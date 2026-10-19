@@ -61,7 +61,20 @@ class MULTICAMPROJECT_InpaintSettings(bpy.types.PropertyGroup):
         items=[('BRUSH', "Brush", "Paint the selection over a spot (B). Alt / Ctrl: erase",
                 'BRUSH_DATA', 0),
                ('LASSO', "Lasso", "Drag a free lasso, or click points (L). Alt / Ctrl: "
-                                  "subtract", 'SELECT_SET', 1)])
+                                  "subtract", 'SELECT_SET', 1),
+               ('PATCH', "Patch", "Like Photoshop's Patch (P): lasso the spot, then drag it "
+                                  "onto a clean area - the spot takes that area's pixels, "
+                                  "matched to its edge. Continues a content edge, which a "
+                                  "fill smears. Shift: add to the selection, Alt / Ctrl: "
+                                  "subtract", 'MOD_MASK', 2)])
+    patch_match: BoolProperty(
+        name="Match Colour", default=True,
+        description="Patch: the copied pixels take the light and colour of the spot's edge "
+                    "(only their texture is copied). Off: a plain copy")
+    patch_feather: IntProperty(
+        name="Feather", default=2, min=0, max=32, subtype='PIXEL',
+        description="Patch: the copy fades into the image over this many pixels around "
+                    "the selection")
     size: IntProperty(
         name="Size", default=64, min=2, max=2048, subtype='PIXEL',
         description="Brush diameter in pixels of the ALB_ ([ and ] to change)")

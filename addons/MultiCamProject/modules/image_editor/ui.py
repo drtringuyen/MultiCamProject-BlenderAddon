@@ -243,11 +243,15 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         row = layout.row(align=True)
         row.prop(st, "mode", expand=True)
         col = layout.column(align=True)
-        if st.mode == 'BRUSH':
-            col.prop(st, "size")
-        col.prop(st, "grow")
-        col.prop(st, "grain", slider=True)
-        layout.prop(st, "auto_fill")
+        if st.mode == 'PATCH':          # lasso the spot, drag it onto a clean area
+            col.prop(st, "patch_feather")
+            layout.prop(st, "patch_match")
+        else:
+            if st.mode == 'BRUSH':
+                col.prop(st, "size")
+            col.prop(st, "grow")
+            col.prop(st, "grain", slider=True)
+            layout.prop(st, "auto_fill")
         row = layout.row(align=True)        # the UV overlay while Inpaint runs (off by default)
         row.prop(st, "show_uv", toggle=True, icon='UV')
         sub = row.row(align=True)

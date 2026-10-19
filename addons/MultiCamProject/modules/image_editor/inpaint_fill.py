@@ -8,7 +8,9 @@ fill() rebuilds the pixels under a hole mask from the pixels around it:
   3. grain: the fine detail (pixels minus their blur) of a nearby hole-shaped area of known
      pixels is copied on top, so the fill is not plastic-smooth next to the scan's noise
 `valid` limits the pixels the fill may learn from (the UV islands: the black outside them
-must never bleed in). Buffers are (h, w, 4) float32, rows bottom-up as Blender gives them.
+must never bleed in).
+patch() is the Patch tool: the hole takes the pixels of another area, its colour matched to
+the hole's edge - for a hole across a content edge, which a smooth fill can't continue. Buffers are (h, w, 4) float32, rows bottom-up as Blender gives them.
 Tested in tests/test_inpaint_fill.py.
 """
 
@@ -335,6 +337,65 @@ def fill(crop, hole, valid=None, grow: int = 0, grain: float = 1.0, grain_radius
     if not _fill_one(out, rgb, hole, valid & ~hole, grain, grain_radius):
         return out, np.zeros_like(hole)
     return out, hole
+
+
+# ── Patch ─────────────────────────────────────────────────────────────────────
+
+def feather_alpha(hole, feather: int):
+    """(h, w) float32 cover of a patch: 1 on the hole, falling to 0 over `feather` pixels
+    outside it."""
+    a = hole.astype(np.float32)
+    if feather <= 0:
+        return a
+    soft = box_blur(a[..., None], np.ones(hole.shape, np.float32), int(feather))[..., 0]
+    return np.maximum(a, np.clip(soft * 2.0, 0.0, 1.0))
+
+
+def _membrane(diff, region, known):
+    """diff (h, w, 3) known on `known` pixels -> smoothly spread over `region` (push-pull,
+    then Laplace steps): the colour offset that makes a patch meet its new edge."""
+    w = known.astype(np.float32)
+    mem = push_pull(diff * w[..., None], w)
+    bh = bbox(region)
+    steps = min(32, max(8, max(bh[2] - bh[0], bh[3] - bh[1]) // 2))
+    return relax(mem, region, steps=steps)
+
+
+def patch(dst, src, hole, match: bool = True, feather: int = 2, labels=None):
+    """Photoshop's Patch: the `hole` pixels of dst (h, w, 4) replaced by src (the same size,
+    cut from the area the patch was dragged to). Returns (out, used).
+    match: the patch keeps src's texture but takes dst's colour and light - the difference
+    along its edge is spread over it as a smooth membrane (gradient-domain blend), so a
+    patch from a darker spot of the same wall comes out as bright as the hole's edge.
+    feather: the patch fades into dst over this many pixels outside the hole.
+    labels (h, w) int: UV island per pixel - the patch is written on islands only (the black
+    around them stays) and each island matches to its own edge, never across a seam."""
+    dst = np.asarray(dst, dtype=np.float32)
+    src = np.asarray(src, dtype=np.float32)
+    hole = np.asarray(hole, dtype=bool)
+    alpha = feather_alpha(hole, feather)
+    region = alpha > 0.0
+    if labels is not None:
+        region &= labels > 0
+    out = dst.copy()
+    if not region.any():
+        return out, region
+    rgb = src[..., :3].copy()
+    if match:
+        diff = dst[..., :3] - src[..., :3]
+        ring = dilate(region, 1) & ~region
+        if labels is None:
+            if ring.any():
+                rgb += _membrane(diff, region, ring)
+        else:
+            for k in np.unique(labels[region]):
+                isl = labels == k
+                rk, kk = region & isl, ring & isl
+                if kk.any():
+                    rgb[rk] += _membrane(diff, rk, kk)[rk]
+    a = alpha[region][:, None]
+    out[..., :3][region] = np.clip(dst[..., :3][region] * (1.0 - a) + rgb[region] * a, 0.0, 1.0)
+    return out, region
 
 
 # ── UV islands ────────────────────────────────────────────────────────────────

@@ -134,6 +134,64 @@ def test_bbox_and_crop():
     assert ip.crop_rect((3, 2, 7, 5), 12, 10, 4) == (0, 0, 11, 9)
 
 
+def _edge_wall(w=120, h=120):
+    """A wall with a vertical content edge (dark | light) and a fine stripe texture."""
+    yy, xx = np.mgrid[0:h, 0:w].astype(np.float32)
+    buf = np.ones((h, w, 4), np.float32)
+    base = np.where(xx < 60, 0.2, 0.7).astype(np.float32)
+    tex = 0.05 * np.sin(yy * 1.3) * np.cos(xx * 0.9)
+    for c in range(3):
+        buf[..., c] = base + tex
+    return buf
+
+
+def test_patch_continues_a_content_edge():
+    clean = _edge_wall()
+    dirty = clean.copy()
+    dirty[20:44, 48:72, :3] = 0.95                     # a sticker across the edge
+    hole = np.zeros(clean.shape[:2], bool)
+    hole[18:46, 46:74] = True
+    # the patch dragged straight down the edge: the same edge, other rows
+    dy = 50
+    src = np.roll(dirty, -dy, axis=0)                  # src[y] = dirty[y + dy]
+    out, used = ip.patch(dirty, src, hole, match=True, feather=2)
+    assert used[hole].all()
+    # the edge goes on through the hole: dark left, light right
+    assert abs(out[30, 52, 0] - 0.2) < 0.08 and abs(out[30, 68, 0] - 0.7) < 0.08
+    assert np.abs(out[20:44, 48:72, :3] - clean[20:44, 48:72, :3]).max() < 0.12
+    # a smooth fill smears the edge (the reason for the Patch tool)
+    filled, _ = ip.fill(dirty, hole, grain=0.0)
+    assert abs(filled[30, 58, 0] - 0.45) < 0.15
+
+
+def test_patch_matches_the_light():
+    dst = np.full((60, 60, 4), 0.6, np.float32)
+    src = np.full((60, 60, 4), 0.3, np.float32)        # the same texture in the shade
+    yy, xx = np.mgrid[0:60, 0:60]
+    src[..., 0] += 0.05 * np.sin(xx * 1.7)
+    hole = np.zeros((60, 60), bool)
+    hole[20:40, 20:40] = True
+    out, _ = ip.patch(dst, src, hole, match=True)
+    assert abs(out[30, 30, 1] - 0.6) < 0.02            # the light of the hole's edge
+    assert np.std(out[25:35, 25:35, 0]) > 0.02         # the texture of the source
+    raw, _ = ip.patch(dst, src, hole, match=False, feather=0)
+    assert abs(raw[30, 30, 1] - 0.3) < 1e-6            # Match off: a plain copy
+    assert (raw[..., 3] == dst[..., 3]).all() and (out[~ip.dilate(hole, 2)] == dst[~ip.dilate(hole, 2)]).all()
+
+
+def test_patch_stays_on_its_island():
+    dst = np.full((40, 40, 4), 0.5, np.float32)
+    dst[:, 20:, :3] = 0.0                              # black outside the island
+    src = np.full((40, 40, 4), 0.4, np.float32)
+    labels = np.zeros((40, 40), np.int32)
+    labels[:, :20] = 1
+    hole = np.zeros((40, 40), bool)
+    hole[10:30, 10:30] = True                          # across the island's edge
+    out, used = ip.patch(dst, src, hole, labels=labels)
+    assert not used[:, 20:].any() and (out[:, 20:, :3] == 0.0).all()
+    assert abs(out[20, 15, 0] - 0.5) < 0.03            # matched to its island, not the black
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

@@ -8,6 +8,10 @@ image, never saved) and the editor shows it. Every edit goes into that copy only
   B  Brush   paint the selection (Alt / Ctrl: erase it)
   L  Lasso   drag a free lasso, or click points (click point 1 / double-click / Enter
              closes); Alt / Ctrl subtracts
+  P  Patch   like Photoshop's Patch: lasso the spot (Shift adds, Alt / Ctrl subtracts),
+             then drag the selection onto a clean area - on release the spot takes that
+             area's pixels, their colour matched to the spot's edge (inpaint_fill.patch).
+             For a spot across a content edge, which a fill smears
   F  Radius  drag the brush size (click / Enter keeps it, Esc / right-click puts it back)
   Enter      fill the selection (done on release when "Fill on Release" is on)
 Each fill is one step of the session's own undo (Ctrl+Z / Ctrl+Shift+Z, also in the panel):
@@ -234,6 +238,55 @@ class Session:
         after = out[uy0:uy1, ux0:ux1].copy()
         crop[uy0:uy1, ux0:ux1] = after
         self._record(cx0 + ux0, cy0 + uy0, before, after)
+        redraw()
+        return int(used.sum())
+
+    def patch_rect(self, st):
+        """Bounds the Patch writes (the selection plus its feather and a 1 px ring), or None."""
+        if self.sel_rect is None:
+            return None
+        x0, y0, x1, y1 = self.sel_rect
+        box = ipf.bbox(self.sel[y0:y1, x0:x1])
+        if box is None:
+            return None
+        return ipf.crop_rect((x0 + box[0], y0 + box[1], x0 + box[2], y0 + box[3]),
+                             self.w, self.h, st.patch_feather + 2)
+
+    def clamp_offset(self, rect, dx, dy):
+        """(dx, dy) keeping the patch's source - rect moved by it - inside the image."""
+        x0, y0, x1, y1 = rect
+        return (int(min(max(round(dx), -x0), self.w - x1)),
+                int(min(max(round(dy), -y0), self.h - y1)))
+
+    def patch(self, st, dx, dy):
+        """Patch: the selection takes the pixels at (dx, dy) from it, matched to its edge (or
+        copied as they are). One undo step. Returns the patched pixel count."""
+        rect = self.patch_rect(st)
+        if rect is None:
+            self.clear_selection()
+            return 0
+        dx, dy = self.clamp_offset(rect, dx, dy)
+        if dx == 0 and dy == 0:
+            return 0
+        x0, y0, x1, y1 = rect
+        dst = self.buf[y0:y1, x0:x1]
+        src = self.buf[y0 + dy:y1 + dy, x0 + dx:x1 + dx]
+        labels = None
+        if self.tris is not None:       # written on the islands only, matched per island
+            labels = ipf.rasterize_triangles(self.tris, x0, y0, x1 - x0, y1 - y0,
+                                             labels=self.islands)
+            labels = ipf.dilate_labels(labels, self.margin) if labels.any() else None
+        out, used = ipf.patch(dst, src, self.sel[y0:y1, x0:x1], match=st.patch_match,
+                              feather=st.patch_feather, labels=labels)
+        self.clear_selection()
+        ub = ipf.bbox(used)
+        if ub is None:
+            return 0
+        ux0, uy0, ux1, uy1 = ub
+        before = dst[uy0:uy1, ux0:ux1].copy()
+        after = out[uy0:uy1, ux0:ux1].copy()
+        dst[uy0:uy1, ux0:ux1] = after
+        self._record(x0 + ux0, y0 + uy0, before, after)
         redraw()
         return int(used.sum())
 
@@ -644,6 +697,8 @@ def _draw():
                 verts = [to_region(x0, y0), to_region(x1, y0), to_region(x1, y1),
                          to_region(x0, y1)]
                 lasso_draw._draw_tex_quad(shader, kind, tex, verts, (1.0, 1.0, 1.0, 1.0))
+        if op._patch is not None:
+            _draw_patch_preview(op, s, to_region, region)
         if op._points:
             pts = [to_region(*p) for p in op._points]
             if op._hover_px is not None and not op._dragging:
@@ -663,13 +718,61 @@ def _draw():
         gpu.state.blend_set('NONE')
 
 
+def _patch_preview(op, s):
+    """(texture, rect) of the source pixels under the selection at the drag's offset (the
+    plain copy, no colour match - that is done on release), rebuilt when the offset moved."""
+    dx, dy = op._patch[1]
+    pv = op._preview
+    if pv is not None and pv[0] == (dx, dy):
+        return pv[1], pv[2]
+    op._preview = None
+    st = props.inpaint_settings()
+    rect = s.patch_rect(st)
+    if rect is None or gpu is None:
+        return None
+    x0, y0, x1, y1 = rect
+    step = max(1, math.ceil(max(x1 - x0, y1 - y0) / OVERLAY_MAX))
+    m = ipf.feather_alpha(s.sel[y0:y1, x0:x1], st.patch_feather)[::step, ::step]
+    src = s.buf[y0 + dy:y1 + dy:step, x0 + dx:x1 + dx:step]
+    temp = s.temp
+    px = lasso_raster.to_display(src.copy(), temp is not None and temp.is_float)
+    px[..., 3] = m
+    try:
+        tex = lasso_raster.make_texture(np.ascontiguousarray(px, dtype=np.float32))
+    except Exception:
+        return None
+    r = (x0, y0, x0 + m.shape[1] * step, y0 + m.shape[0] * step)
+    op._preview = ((dx, dy), tex, r)
+    return tex, r
+
+
+def _draw_patch_preview(op, s, to_region, region):
+    """Patch drag: the selection shows the source's pixels; a frame marks the source."""
+    pv = _patch_preview(op, s)
+    if pv is None:
+        return
+    tex, (x0, y0, x1, y1) = pv
+    from . import lasso_draw
+    shader, kind = lasso_draw._get_image_shader()
+    if shader is not None:
+        verts = [to_region(x0, y0), to_region(x1, y0), to_region(x1, y1), to_region(x0, y1)]
+        lasso_draw._draw_tex_quad(shader, kind, tex, verts, (1.0, 1.0, 1.0, 1.0))
+    dx, dy = op._patch[1]
+    frame = [to_region(x0 + dx, y0 + dy), to_region(x1 + dx, y0 + dy),
+             to_region(x1 + dx, y1 + dy), to_region(x0 + dx, y1 + dy)]
+    _line(region, frame, (0.0, 0.0, 0.0, 0.6), 3.0, closed=True)
+    _line(region, frame, (0.3, 0.8, 1.0, 1.0), 1.2, closed=True)
+
+
 def _draw_status(op, s, region):
     if blf is None:
         return
     st = props.inpaint_settings()
-    tool_txt = ("Brush: paint · Alt/Ctrl erase · F / [ ] size" if st.mode == 'BRUSH' else
-                "Lasso: drag, or click points · Alt/Ctrl subtract")
-    text = (f"Inpaint {s.alb_name} — {tool_txt} · B/L tool · Enter fill · Alt+A deselect · "
+    tool_txt = {'BRUSH': "Brush: paint · Alt/Ctrl erase · F / [ ] size",
+                'LASSO': "Lasso: drag, or click points · Alt/Ctrl subtract",
+                'PATCH': "Patch: lasso the spot, drag it onto a clean area · Shift add · "
+                         "Alt/Ctrl subtract · Esc/right-click drops a drag"}[st.mode]
+    text = (f"Inpaint {s.alb_name} — {tool_txt} · B/L/P tool · Enter fill · Alt+A deselect · "
             f"Ctrl+Z / Ctrl+Shift+Z · Shift+Enter save · Esc cancel   ({len(s.undo)} fill(s))")
     y = region.height - 24
     sh = gpu.shader.from_builtin('UNIFORM_COLOR')
@@ -741,6 +844,9 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         self._hover_region = None
         self._last_click = (0.0, None)
         self._resize = None         # F: (centre region xy, size before, region px per image px)
+        self._add = False           # Patch: Shift adds the lasso to the selection
+        self._patch = None          # Patch drag: [press px, (dx, dy) to the source]
+        self._preview = None        # Patch drag: (offset, texture, rect) of the source pixels
         _op = self
         context.window_manager.modal_handler_add(self)
         redraw()
@@ -862,6 +968,9 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
 
         if self._resize is not None:            # F: the brush size follows the mouse
             return self._resizing(event, st)
+        if self._patch is not None and ev == 'PRESS' and et in {'ESC', 'RIGHTMOUSE'}:
+            self._end_patch(context)            # the drag is dropped, the selection stays
+            return {'RUNNING_MODAL'}
 
         if et in {'MOUSEMOVE', 'INBETWEEN_MOUSEMOVE'}:
             inside = self._in_region(event)
@@ -894,8 +1003,8 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         if et in {'RET', 'NUMPAD_ENTER'}:
             if event.shift:
                 return self._save(context)
-            if len(self._points) >= 3:
-                self._close_lasso(st, fill=True)
+            if len(self._points) >= 3:          # Patch: only closes (the drag patches)
+                self._close_lasso(st, fill=st.mode != 'PATCH')
             else:
                 self._fill(st)
             redraw()
@@ -911,6 +1020,8 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
             self._points = []
         elif et == 'L':
             st.mode = 'LASSO'
+        elif et == 'P':
+            st.mode = 'PATCH'
         elif et == 'F' and self._in_region(event):
             self._start_resize(event, st)
         elif et == 'A' and event.alt:
@@ -936,7 +1047,18 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
             self._s.touch(ipf.stamp_disc(self._s.sel, px[0], px[1], st.size * 0.5,
                                          value=self._stroke == 'PAINT'))
             return {'RUNNING_MODAL'}
+        s = self._s
+        if (st.mode == 'PATCH' and not self._points and not self._subtract and not event.shift
+                and s.sel_rect is not None):
+            ix, iy = int(math.floor(px[0])), int(math.floor(px[1]))
+            if 0 <= ix < s.w and 0 <= iy < s.h and s.sel[iy, ix]:
+                self._stroke = 'PATCH'          # inside the selection: drag it to a source
+                self._patch = [px, (0, 0)]
+                context.window.cursor_modal_set('SCROLL_XY')
+                return {'RUNNING_MODAL'}
         self._stroke = 'LASSO'
+        if not self._points:
+            self._add = event.shift
         if self._points:                        # click mode: next point, or close
             rx, ry = self._press_region
             now = time.monotonic()
@@ -965,6 +1087,11 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
                 s.touch(ipf.stamp_disc(s.sel, x0 + (px[0] - x0) * t, y0 + (px[1] - y0) * t,
                                        r, value=self._stroke == 'PAINT'))
             self._last_px = px
+        elif self._stroke == 'PATCH' and self._patch is not None:
+            (px0, py0), _old = self._patch
+            rect = s.patch_rect(st)
+            if rect is not None:
+                self._patch[1] = s.clamp_offset(rect, px[0] - px0, px[1] - py0)
         elif self._stroke == 'LASSO' and self._free:
             lx, ly = self._points[-1]
             if math.hypot(px[0] - lx, px[1] - ly) * self._px_scale() >= 3.0:
@@ -981,6 +1108,12 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         if stroke in {'PAINT', 'ERASE'}:
             if stroke == 'PAINT' and st.auto_fill:
                 self._fill(st)
+            return {'RUNNING_MODAL'}
+        if stroke == 'PATCH':
+            dx, dy = self._patch[1] if self._patch is not None else (0, 0)
+            self._end_patch(context)
+            if dx or dy:
+                self._apply_patch(st, dx, dy)
             return {'RUNNING_MODAL'}
         if stroke == 'LASSO' and self._free:
             rx, ry = self._region_xy(event)
@@ -1032,14 +1165,37 @@ class MULTICAMPROJECT_OT_inpaint(bpy.types.Operator):
         if x1 <= x0 or y1 <= y0:
             return
         m = lasso_raster.rasterize_polygon(pts, x0, y0, x1 - x0, y1 - y0)
+        patch = st.mode == 'PATCH'
         if self._subtract:
             s.sel[y0:y1, x0:x1] &= ~m
         else:
+            if patch and not self._add:         # Patch: a new lasso is a new selection
+                s.clear_selection()
             s.sel[y0:y1, x0:x1] |= m
         s.touch((x0, y0, x1, y1))
-        if (st.auto_fill or fill) and not self._subtract:
+        if ((st.auto_fill and not patch) or fill) and not self._subtract:
             self._fill(st)
         redraw()
+
+    def _end_patch(self, context):
+        self._patch = None
+        self._preview = None
+        self._stroke = None
+        self._dragging = False
+        try:
+            context.window.cursor_modal_restore()
+        except Exception:
+            pass
+        redraw()
+
+    def _apply_patch(self, st, dx, dy):
+        bpy.context.window.cursor_set('WAIT')
+        try:
+            n = self._s.patch(st, dx, dy)
+        finally:
+            bpy.context.window.cursor_set('DEFAULT')
+        if not n:
+            self.report({'INFO'}, "Patch: nothing patched (no selection on an island)")
 
     def _fill(self, st):
         bpy.context.window.cursor_set('WAIT')
