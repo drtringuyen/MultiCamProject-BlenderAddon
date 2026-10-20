@@ -862,6 +862,65 @@ def _in_work_window(scene, obj):
     return linking.is_work_window(scene) and linking.work_object(scene) == obj
 
 
+def lock_and_send(objs):
+    """After a final bake: each object Locked Finish (ALB_ / NOR_ into Export); in a work
+    window locked and sent back instead. Returns the report lines."""
+    lines = []
+    sc = bpy.context.scene
+    for obj in objs:
+        window = _in_work_window(sc, obj)
+        why = lock_final(obj, sc, copy=not window)
+        if why:
+            lines.append(('WARNING', f"{obj.name}: not locked - {why}"))
+            continue
+        if not window:
+            lines.append(('INFO', f"{obj.name}: Locked Finish"))
+            continue
+        from ..linking import core as linking
+        try:
+            linking.send_back(bpy.context)
+            lines.append(('INFO', f"{obj.name}: final sent back - Receive in the "
+                                  "main file locks it there"))
+        except Exception as e:
+            lines.append(('ERROR', f"{obj.name}: Send Back failed - {e}"))
+    return lines
+
+
+class MULTICAMPROJECT_OT_FinalInpaintDone(bpy.types.Operator):
+    """Inpaint Final saved: NOR_ made again from the inpainted ALB_, then Lock Finish again
+    (ALB_ inpaint + NOR_ into Export; a work window: sent back)"""
+    bl_idname = "multicamproject.final_inpaint_done"
+    bl_label = "Inpaint Final: Normal + Lock"
+    bl_options = {'INTERNAL'}
+
+    object_name: bpy.props.StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    def execute(self, context):
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return {'CANCELLED'}
+        if jobs.busy():         # stays locked: its NOR_ is made again by hand
+            self.report({'WARNING'}, f"{obj.name}: a job is running - 07 Generate Normal "
+                                     "and Lock by hand afterwards")
+            return {'CANCELLED'}
+        d = common.data(obj)
+        d.locked = False        # 07 runs on it; Lock Finish below locks it again
+        finish = _finisher("Normal map (Inpaint Final)", 1)
+
+        def final(result, error):
+            lines = finish(result, error)
+            if result is not None and result[0]:
+                lines += lock_and_send(result[0])
+            else:
+                lines.append(('WARNING', f"{obj.name}: left unlocked - 07 Generate Normal, "
+                                         "then lock it in 08"))
+            return lines
+        return jobs.start(self, context, "Inpaint Final", [obj.name],
+                          bake_objects_steps(context, [obj], False,
+                                             common.settings(context.scene).nor_source),
+                          final)
+
+
 class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
     """05+07 Bake Final: the Processing look as it is now is the final - ALB_ baked new (a
     saved ALB_ inpaint is dropped), NOR_ made from it, then Lock Finish. In a work window
@@ -899,25 +958,8 @@ class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
 
         def final(result, error):
             lines = [('INFO', t) for t in log] + finish(result, error)
-            if result is None:
-                return lines
-            sc = bpy.context.scene
-            for obj in result[0]:
-                window = _in_work_window(sc, obj)
-                why = lock_final(obj, sc, copy=not window)
-                if why:
-                    lines.append(('WARNING', f"{obj.name}: not locked - {why}"))
-                    continue
-                if not window:
-                    lines.append(('INFO', f"{obj.name}: Locked Finish"))
-                    continue
-                from ..linking import core as linking
-                try:
-                    linking.send_back(bpy.context)
-                    lines.append(('INFO', f"{obj.name}: final sent back - Receive in the "
-                                          "main file locks it there"))
-                except Exception as e:
-                    lines.append(('ERROR', f"{obj.name}: Send Back failed - {e}"))
+            if result is not None:
+                lines += lock_and_send(result[0])
             return lines
         return jobs.start(self, context, "Bake Final", [o.name for o in objs],
                           bake_objects_steps(context, objs, True, common.settings(scene).nor_source,
@@ -984,7 +1026,8 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
         return _start_bake(self, context, "Rebake", [obj], True, s.nor_source, "Rebaked")
 
 
-_classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_BakeFinal, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
+_classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_BakeFinal,
+            MULTICAMPROJECT_OT_FinalInpaintDone, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
             MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,

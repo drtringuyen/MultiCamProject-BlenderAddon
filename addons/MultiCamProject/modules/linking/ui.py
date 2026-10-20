@@ -59,6 +59,12 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
             layout.label(text="No object is linked to a work window", icon='INFO')
             return
         layout.label(text=f"Linked objects ({len(linked)})")
+        lost = sum(1 for o in linked if not core.saved_window(o))
+        if lost:
+            row = layout.row(align=True)
+            row.label(text=f"{lost} without a work file here", icon='ERROR')
+            row.operator(ops.MULTICAMPROJECT_OT_WorkFind.bl_idname, text="Find Work Files",
+                         icon='VIEWZOOM')
         for o in linked:
             box = layout.box().column(align=True)
             row = box.row(align=True)

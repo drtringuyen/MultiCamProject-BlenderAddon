@@ -260,6 +260,28 @@ class MULTICAMPROJECT_OT_WorkRelink(bpy.types.Operator, ImportHelper):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_WorkFind(bpy.types.Operator):
+    """Look in the Bake Folder for the work files (.blend) of linked objects whose file is not
+    found here (another computer, a moved project folder), and link objects that lost their
+    link to the work file made for them again"""
+    bl_idname = "multicamproject.work_find"
+    bl_label = "Find Work Files"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return not core.is_work_window(context.scene)
+
+    def execute(self, context):
+        found, relinked, lines = core.find_work_files(context.scene)
+        for ln in lines[:10]:
+            self.report({'INFO'}, ln)
+        self.report({'INFO'}, f"Work files: {found} found, {relinked} linked again")
+        for area in context.screen.areas if context.screen else ():
+            area.tag_redraw()
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_WorkSelect(bpy.types.Operator):
     """Select this object (and make it active)"""
     bl_idname = "multicamproject.work_select"
@@ -355,7 +377,8 @@ class MULTICAMPROJECT_OT_ReloadFolder(bpy.types.Operator):
             'OBJECTS': "Point every texture of the Objects' materials (not the bakes or camera "
                        "photos) at the file of the same name in Scan Textures, then reload them",
             'ORIGINALS': "Point every ALB_/NOR_ and work bake at the file of the same name in "
-                         "the Bake Folder, then reload them",
+                         "the Bake Folder, then reload them - and find the work files (.blend) "
+                         "of linked objects there",
             'EXPORT': "Reload the textures that come from the Export Folder",
             'CAMERAS': "Relink every camera's background photo from Camera Photos and reload "
                        "it; objects with Camera Projection use the folder and get a Reload All",
@@ -367,6 +390,11 @@ class MULTICAMPROJECT_OT_ReloadFolder(bpy.types.Operator):
 
     def execute(self, context):
         text, warnings = folders.reload(context.scene, context.view_layer, self.role)
+        if self.role == 'ORIGINALS' and not core.is_work_window(context.scene):
+            found, relinked, lines = core.find_work_files(context.scene)
+            if found or relinked:
+                text += f" · work files: {found} found, {relinked} linked again"
+            warnings += lines
         for w in warnings[:10]:
             self.report({'WARNING'}, w)
         self.report({'INFO'}, text)
@@ -639,6 +667,7 @@ class MULTICAMPROJECT_OT_WorkReopen(bpy.types.Operator):
 
 _CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkReopen, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
+            MULTICAMPROJECT_OT_WorkFind,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
             MULTICAMPROJECT_OT_WorkSendBack)
 

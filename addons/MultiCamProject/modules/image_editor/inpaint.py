@@ -65,6 +65,7 @@ DRAG_PX = 6.0               # region pixels a press has to move to be a free las
 OVERLAY_MAX = 512           # long side of the selection overlay texture
 
 _session = None
+_final = ""                 # the object an Inpaint Final starts on (its lock does not stop it)
 _op = None                  # the running modal (one at a time)
 _draw_handle = None
 _panel_handles = []         # draw handlers measuring the overlapping sidebars (_measure_panels)
@@ -108,6 +109,9 @@ class Session:
                                                 # this Inpaint - a 3D View again at the end
         act = bpy.context.view_layer.objects.active
         self.active_name = act.name if act is not None else ""     # the selection at Start
+        # Inpaint Final (05 row): the Finalized ALB_ of a locked object - Save makes NOR_
+        # from it again and locks it again (baking.operators.FinalInpaintDone)
+        self.final = src.kind == 'ALB' and _final == src.owner.name
 
     @property
     def temp(self):
@@ -375,8 +379,11 @@ def target(context):
 
 
 def locked(src):
-    """Why the source can't be inpainted now: its object is Locked Finish ('' = it can)."""
+    """Why the source can't be inpainted now: its object is Locked Finish ('' = it can) -
+    except the ALB_ an Inpaint Final opens (the final texture, before its NOR_)."""
     if src is None or src.kind == 'BG':
+        return ""
+    if src.kind == 'ALB' and _final and _final == src.owner.name:
         return ""
     d = getattr(src.owner, "multicamproject_bake", None)
     return "Locked Finish: unlock it in 08 first" if d is not None and d.locked else ""
@@ -555,6 +562,11 @@ def save():
     # the copy's pixels with every fill (they were only drawn so far), straight to the PNG
     img = sources.save_pixels(src, bpy.context.scene, s.buf, skip=temp)
     _end(img)
+    if s.final:             # the final ALB_ changed: NOR_ from it again, locked again
+        try:
+            bpy.ops.multicamproject.final_inpaint_done(object_name=s.obj_name)
+        except Exception as e:
+            print(f"[MultiCamProject] Inpaint Final: {e} - 07 + Lock by hand")
     return img
 
 
@@ -566,8 +578,9 @@ def discard():
 
 def _end(show):
     """Editors on the copy go back to `show`; the copy is removed."""
-    global _session
+    global _session, _final
     s, _session = _session, None
+    _final = ""
     if s is None:
         return
     s.tex.clear()
@@ -1433,19 +1446,36 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
     bl_label = "Inpaint"
     bl_options = {'REGISTER'}
 
-    __annotations__ = dict(_SRC_PROPS)
+    __annotations__ = dict(_SRC_PROPS, final=bpy.props.BoolProperty(
+        options={'HIDDEN', 'SKIP_SAVE'},
+        description="Inpaint Final: the Finalized ALB_ of a locked object"))
+
+    @classmethod
+    def description(cls, context, props):
+        if props.final:
+            return ("Inpaint Final: inpaint the final ALB_ (after Finalize). Save makes NOR_ "
+                    "from it again and locks the object again (a work window: sends it back)")
+        return cls.__doc__
 
     def execute(self, context):
+        global _final
         src = _op_source(self, context)
         if src is None:
             self.report({'ERROR'}, "Nothing to inpaint")
             return {'CANCELLED'}
+        if running() or active() is not None:
+            self.report({'WARNING'}, "An Inpaint is open - Save or Discard it first")
+            return {'CANCELLED'}
+        if self.final:
+            if src.kind != 'ALB' or not src.owner.multicamproject_bake.locked:
+                self.report({'WARNING'}, "Inpaint Final: Finalize the object first")
+                return {'CANCELLED'}
+            _final = src.owner.name     # its lock does not stop this Inpaint
+        else:
+            _final = ""
         why = locked(src)
         if why:
             self.report({'WARNING'}, why)
-            return {'CANCELLED'}
-        if running() or active() is not None:
-            self.report({'WARNING'}, "An Inpaint is open - Save or Discard it first")
             return {'CANCELLED'}
         if src.kind == 'BG' and context.active_object is not None:
             # a camera photo: painted through the projection - Processing, Preview

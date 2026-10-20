@@ -41,6 +41,7 @@ WORK_ID_KEY = "multicamproject_work_id"     # work window scene: the send-out id
 WORK_SAVE_AS_KEY = "multicamproject_work_save_as"   # work window scene: where Ctrl+S saves it
 WORK_BAKES_KEY = "multicamproject_work_bakes"   # work window scene: the main bake folder
 WINDOW_FILE = "window.json"     # the saved work file's path, written by the window
+FILE_FIELD = "file"     # OUT_KEY record: the work file, relative to the main .blend (remember_files)
 LAST_WINDOW_KEY = "multicamproject_out_last"    # main object: its work file after X
 WORK_TAKEN_KEY = "multicamproject_work_incoming"    # work window scene: last mesh taken (time)
 INCOMING_FILE = "incoming.blend"    # the main file's current mesh for an existing work file
@@ -58,7 +59,8 @@ TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
             ("bap_image", "bap_name", False), ("bnp_image", "bnp_name", True),
             ("bng_image", "bng_name", True), ("alb_image", "alb_name", False),
             ("nor_image", "nor_name", True), ("msk_image", "msk_name", True),
-            ("cmx1_image", "cmx1_name", True), ("cmx2_image", "cmx2_name", True))
+            ("cmx1_image", "cmx1_name", True), ("cmx2_image", "cmx2_name", True),
+            ("alb_inpaint", "alb_inpaint_name", False))     # an Inpaint Final made there
 # route first: Receive re-stamps ALB_ by it (a stamp by this file's route read outdated)
 META = ("route", "route_user", "route_prompt", "ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
         "last_ba_seconds", "last_bp_seconds", "last_bake_seconds", "last_nor_seconds",
@@ -163,12 +165,113 @@ def saved_window(obj):
 
 
 def _saved_window(rec):
+    """The record's own path first (saved in the .blend, relative: it works on every computer
+    and after the project folder moved), then this computer's window.json."""
+    path = _abs(rec.get(FILE_FIELD, ""))
+    if path and os.path.isfile(path):
+        return path
     try:
         with open(os.path.join(job_dir(rec["id"]), WINDOW_FILE), encoding="utf-8") as f:
             path = json.load(f).get("path", "")
     except (OSError, ValueError):
         return ""
     return path if path and os.path.isfile(path) else ""
+
+
+def _rel(path):
+    """`path` relative to the main .blend (//01.Bake/Coatrack.blend) - absolute when it can't be
+    (another drive, an unsaved file)."""
+    if not path or not bpy.data.filepath:
+        return path
+    try:
+        return bpy.path.relpath(path)
+    except ValueError:
+        return path
+
+
+def _abs(path):
+    return os.path.normpath(bpy.path.abspath(path)) if path else ""
+
+
+def _set_file(obj, path):
+    """Write the work file's path into obj's record (nothing else of it changes)."""
+    rec = out_record(obj)
+    if rec is None:
+        return False
+    rel = _rel(path)
+    if rec.get(FILE_FIELD) == rel:
+        return False
+    rec[FILE_FIELD] = rel
+    obj[OUT_KEY] = json.dumps(rec)
+    return True
+
+
+def remember_files():
+    """Every linked object of the main file keeps its work file's path in its record (at save:
+    window.json only lives in this computer's temp folder). Returns how many changed."""
+    n = 0
+    for o in linked_objects():
+        path = _saved_window(out_record(o))
+        if path and _set_file(o, path):
+            n += 1
+    last_paths = [o for o in bpy.data.objects if not o.library and o.get(LAST_WINDOW_KEY)]
+    for o in last_paths:        # the X'd ones too: relative, like the record
+        rel = _rel(_abs(o[LAST_WINDOW_KEY]))
+        if rel != o[LAST_WINDOW_KEY]:
+            o[LAST_WINDOW_KEY] = rel
+    return n
+
+
+def find_work_files(scene):
+    """Look through the Bake Folder's .blend files (not _previous) for the work windows of this
+    file's objects: a linked object whose file is not found gets it back (by the send-out id),
+    an object with no link at all (and no X) is linked again to the work file made for it
+    (by the object's name). Returns (found, relinked, report lines)."""
+    from ... import folders
+    top = folders.folder(scene, 'ORIGINALS')
+    if not top or not os.path.isdir(top):
+        return 0, 0, [f"Bake Folder not found: {top or '(empty)'}"]
+    from ... import steps
+    steps.forget()
+    linked = linked_objects()
+    by_id = {out_record(o)["id"]: o for o in linked}
+    paths = {o: _saved_window(out_record(o)) for o in linked}
+    known = {os.path.normcase(p) for p in paths.values() if p}
+    missing = [o for o in linked if not paths[o]]
+    unlinked = {o.name: o for o in bpy.data.objects
+                if not o.library and o.type == 'MESH' and out_record(o) is None
+                and not o.get(LAST_WINDOW_KEY)}
+    found = relinked = 0
+    lines = []
+    try:
+        names = sorted(n for n in os.listdir(top) if n.lower().endswith(".blend"))
+    except OSError as e:
+        return 0, 0, [f"Bake Folder not readable: {e}"]
+    for name in names:
+        if not missing and not unlinked:
+            break
+        path = os.path.join(top, name)
+        if os.path.normcase(path) in known:
+            continue
+        try:
+            job_id, work_name, _main = read_work_file(path)
+        except Exception as e:      # not a work window, or unreadable - next one
+            print(f"[MultiCamProject] {name} skipped: {e}")
+            continue
+        obj = by_id.get(job_id)
+        if obj is not None and obj in missing:
+            _set_file(obj, path)
+            missing.remove(obj)
+            found += 1
+            lines.append(f"{obj.name}: {name} found")
+        elif job_id not in by_id and work_name in unlinked:
+            obj = unlinked.pop(work_name)
+            relink(obj, path)
+            relinked += 1
+            lines.append(f"{obj.name}: linked again to {name}")
+    steps.forget()
+    lines += [f"{o.name}: no work file in the Bake Folder" for o in missing]
+    return found, relinked, lines
 
 
 def link_text(obj):
@@ -467,14 +570,14 @@ def cancel(obj):
     the last one (the row's Blender button sends the current mesh into it again)."""
     path = saved_window(obj)
     if path:
-        obj[LAST_WINDOW_KEY] = path
+        obj[LAST_WINDOW_KEY] = _rel(path)
     if OUT_KEY in obj:
         del obj[OUT_KEY]
 
 
 def last_window(obj):
     """The work file obj was linked to before its X ('' = none / gone)."""
-    path = obj.get(LAST_WINDOW_KEY, "") if obj is not None else ""
+    path = _abs(obj.get(LAST_WINDOW_KEY, "")) if obj is not None else ""
     return path if path and os.path.isfile(path) else ""
 
 
@@ -1010,7 +1113,7 @@ def _take_size(obj, scene, size, real=0):
 TAKEN_LABELS = {"ba_image": "BAo_", "bn_image": "BNo_", "bap_image": "BAp_",
                 "bnp_image": "BNp_", "bng_image": "BNoG_", "alb_image": "ALB_",
                 "nor_image": "NOR_", "msk_image": "MSK_", "cmx1_image": "CMX1_",
-                "cmx2_image": "CMX2_"}
+                "cmx2_image": "CMX2_", "alb_inpaint": "ALB_ inpaint"}
 
 
 def _status_text(obj, scene):
@@ -1145,9 +1248,11 @@ def receive(context, obj, action='REPLACE'):
     if final:       # the window's final replaces it: unlocked to take it, locked again below
         bake.locked = False
         # its new ALB_ is the final: this file's ALB_ inpaint goes before NOR_ is re-stamped
-        # (NOR_'s stamp names the ALB_ it was made from)
-        from ..baking import operators as bake_ops
-        bake_ops.drop_alb_inpaint(obj, scene)
+        # (NOR_'s stamp names the ALB_ it was made from) - unless the window sends its own
+        # (an Inpaint Final there): that one is taken below
+        if "alb_inpaint" not in man.get("textures", {}):
+            from ..baking import operators as bake_ops
+            bake_ops.drop_alb_inpaint(obj, scene)
     me = _load_mesh(rec["id"], man["mesh"])
     if action == 'ADD':
         tmp = bpy.data.objects.new(f"{obj.name}_work", me)     # world space, like the window
@@ -1249,6 +1354,11 @@ def _on_save_pre(*_args):
                 _move_bakes_for_save(scene)
     except Exception as e:  # never block a save
         print(f"[MultiCamProject] work window bakes not moved: {e}")
+    try:
+        if not any(is_work_window(s) for s in bpy.data.scenes):
+            remember_files()        # the main file: the work files' paths go into the .blend
+    except Exception as e:
+        print(f"[MultiCamProject] work file paths not recorded: {e}")
 
 
 @persistent
@@ -1302,9 +1412,12 @@ def relink(obj, path):
         man = sent_back(obj)        # what was sent before the relink counts as received
         if man is not None:
             _stamp_record(obj, received=man.get("time", 0))
+    _set_file(obj, os.path.abspath(path))
     os.makedirs(job_dir(job_id), exist_ok=True)
     with open(os.path.join(job_dir(job_id), WINDOW_FILE), "w", encoding="utf-8") as f:
         json.dump({"path": os.path.abspath(path), "time": time.time()}, f)
+    from ... import steps
+    steps.forget()
     return work_name
 
 

@@ -322,6 +322,13 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                            icon='EXPORT')
         else:
             right.operator("multicamproject.bake_final", text="Finalize + Lock", icon='LOCKED')
+        if d.alb_image is not None and module_manager.is_loaded("image_editor"):
+            from ..image_editor import sources
+            sub = right.row(align=True)     # Inpaint Final: the final ALB_, before its NOR_
+            sub.enabled = d.locked
+            op = sub.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER',
+                              depress=sources.has_inpaint(sources.Source('ALB', obj)))
+            op.kind, op.owner, op.final = 'ALB', obj.name, True
         if window:          # already final: just send it (Send Back Final, no new bake)
             right.operator("multicamproject.work_send_back", text="", icon='EXPORT')
         draw_green(right)
