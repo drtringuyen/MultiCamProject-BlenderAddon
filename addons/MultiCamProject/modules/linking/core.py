@@ -547,14 +547,21 @@ def paint_dir(scene):
 
 def _bakes_dest(scene):
     """The work window's bake folder - an older window's _work or _work/<object> moves up
-    to the main bake folder (a long object name twice went past Windows' 260 characters)."""
-    dest = os.path.normpath(scene.get(WORK_BAKES_KEY, "")) if scene.get(WORK_BAKES_KEY) else ""
-    if dest and os.path.basename(os.path.dirname(dest)) == WORK_SUBDIR:
-        dest = os.path.dirname(dest)
-    if dest and os.path.basename(dest) == WORK_SUBDIR:
-        dest = os.path.dirname(dest)
-    if dest and dest != scene.get(WORK_BAKES_KEY):
-        scene[WORK_BAKES_KEY] = dest
+    to the main bake folder (a long object name twice went past Windows' 260 characters).
+    Relative (//, the saved window sits in the bake folder) or, when the folder is not there
+    (another computer, a moved project), the saved window's own folder."""
+    stored = scene.get(WORK_BAKES_KEY, "")
+    dest = _abs(stored)
+    trimmed = dest
+    if trimmed and os.path.basename(os.path.dirname(trimmed)) == WORK_SUBDIR:
+        trimmed = os.path.dirname(trimmed)
+    if trimmed and os.path.basename(trimmed) == WORK_SUBDIR:
+        trimmed = os.path.dirname(trimmed)
+    if trimmed != dest:
+        scene[WORK_BAKES_KEY] = trimmed
+        dest = trimmed
+    if bpy.data.filepath and (not dest or not os.path.isdir(dest)):
+        dest = os.path.dirname(bpy.data.filepath)
     return dest
 
 
