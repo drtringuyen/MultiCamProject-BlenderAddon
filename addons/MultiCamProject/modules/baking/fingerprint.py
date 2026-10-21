@@ -18,16 +18,26 @@ from ..camera_project import gn_builder
 from . import cache, common
 
 _WEIGHTS = {}
-_LEGACY = []        # non-empty: hash raw img.filepath as before 2026-10-12 (paths migration)
+# the migrations hash paths the old way: 'RAW' img.filepath (before 2026-10-12), 'ABS' the
+# normalized absolute path (before 2026-10-21)
+_OLD = []
 
 
 def _path(img):
-    """An image's file as one string, whatever way it is written: '//..', absolute, another
-    case - a relink to the same file is no change. Raw filepath only for the migration."""
-    if _LEGACY:
+    """An image's file as one string: its folder's name and its own, case-folded - the same
+    on every computer (another Drive root), after a Save As and in a work window, and a
+    relink to the same file or a '//' <-> absolute flip is no change."""
+    old = _OLD[-1] if _OLD else ""
+    if old == 'RAW':
         return img.filepath
     f = common.image_file(img)
-    return os.path.normcase(f) if f else img.filepath
+    if not f:
+        return img.filepath
+    f = os.path.normcase(f)
+    if old == 'ABS':
+        return f
+    folder, name = os.path.split(f)
+    return f"{os.path.basename(folder)}/{name}"
 
 
 def _vec_checksum(attr, width):
@@ -311,16 +321,21 @@ def restamped(obj, change):
     return out
 
 
-PATHS_KEY = "paths_normalized"
+PATHS_KEY = "paths_normalized"     # 2026-10-12: raw -> absolute
+NAMES_KEY = "paths_by_name"         # 2026-10-21: absolute -> folder/file
 
 
 def migrate_paths():
-    """(2026-10-12) once per file: the stamps hashed raw file paths, so a '//' <-> absolute or
-    case flip read as a change. Stamps that matched with the raw paths are stored again with
-    the normalized ones - an up-to-date bake stays up to date."""
-    if not bpy.data.scenes or any(sc.multicamproject_bake_settings.get(PATHS_KEY)
-                                  for sc in bpy.data.scenes):
+    """Once per file: stamps that match with the paths hashed the old way are stored again
+    the current way (_path) - an up-to-date bake stays up to date. 2026-10-12: raw file paths
+    ('//' <-> absolute or a case flip read as a change). 2026-10-21: absolute paths (another
+    computer's Drive root read as a change: its bakes looked outdated and were rebaked)."""
+    if not bpy.data.scenes:
         return
+    sets = [sc.multicamproject_bake_settings for sc in bpy.data.scenes]
+    if any(s.get(NAMES_KEY) for s in sets):
+        return
+    how = 'ABS' if any(s.get(PATHS_KEY) for s in sets) else 'RAW'
     for obj in bpy.data.objects:
         if obj.type != 'MESH' or obj.library or not hasattr(obj, "multicamproject_bake"):
             continue
@@ -328,16 +343,16 @@ def migrate_paths():
         if not (d.fingerprint or d.bp_fingerprint):
             continue
         try:
-            _LEGACY.append(1)
+            _OLD.append(how)
             try:
                 old, old_p = compute(obj), projection_state(obj)
             finally:
-                _LEGACY.clear()
+                _OLD.clear()
             if d.fingerprint and d.fingerprint == old:
                 d.fingerprint = compute(obj)
             if d.bp_fingerprint and d.bp_fingerprint.split(":")[0] == old_p:
                 d.bp_fingerprint = projection_state(obj) + d.bp_fingerprint[len(old_p):]
         except Exception as e:      # never block a file load
             print(f"[MultiCamProject] stamp paths of {obj.name} skipped: {e}")
-    for sc in bpy.data.scenes:
-        sc.multicamproject_bake_settings[PATHS_KEY] = 1
+    for s in sets:
+        s[PATHS_KEY] = s[NAMES_KEY] = 1

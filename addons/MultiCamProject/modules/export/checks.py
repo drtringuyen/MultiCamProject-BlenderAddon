@@ -360,6 +360,8 @@ def check_state(obj):
     if live_decimate(obj):
         out.append(Issue(obj.name, 'DECIMATE', "Decimate not applied (03) - left out of the FBX",
                          ERROR))
+    if common.data(obj).locked:     # 08 Locked Finish: final as it is, never outdated
+        return out
     from ..baking import route
     why = route.problem(obj) if not common.data(obj).handmade else ""
     if why:

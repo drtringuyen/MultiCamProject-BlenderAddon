@@ -81,6 +81,10 @@ def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
             try:
                 if handmade.is_handmade(obj):
                     raise RuntimeError("handmade - baked by hand, not by the add-on")
+                # every bake passes here: a Locked Finish is never baked, whichever button
+                # asked (the rebakes meant for it - Unlock & Rebake, Bake Final - unlock first)
+                if common.data(obj).locked:
+                    raise RuntimeError("Locked Finish - unlock it in 08 first")
                 # an excluded / hidden collection bakes nothing: shown for the bake
                 with common.shown(context, [obj]):
                     yield from _bake_one(context, obj, albedo, nor_source,
@@ -503,7 +507,8 @@ class MULTICAMPROJECT_OT_Bake(bpy.types.Operator):
                 cls.poll_message_set(f"{o.name}: {why}")
                 return False
         for o in objs:
-            why = route.problem(o)
+            why = ("Locked Finish: unlock it in 08 first" if common.data(o).locked
+                   else route.problem(o))
             if why:
                 cls.poll_message_set(f"{o.name}: {why}")
                 return False

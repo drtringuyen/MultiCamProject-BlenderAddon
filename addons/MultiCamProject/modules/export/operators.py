@@ -193,6 +193,10 @@ def _rebake_steps(context, objs):
 
 
 def _rebake(op, context, objs, title):
+    locked = [o.name for o in objs if common.data(o).locked]
+    if locked:      # 08 Locked Finish: never rebaked from here - Unlock & Rebake in 08
+        op.report({'WARNING'}, f"Locked, left as they are: {', '.join(locked)}")
+        objs = [o for o in objs if not common.data(o).locked]
     if not objs:
         op.report({'INFO'}, "Nothing to bake")
         return {'CANCELLED'}
