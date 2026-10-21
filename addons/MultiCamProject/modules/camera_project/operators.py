@@ -77,6 +77,26 @@ def _route_after(obj):
         route.after_step(obj, 'PROJECTION')
 
 
+def _mixed_after_cameras(obj):
+    """The cameras were confirmed or resorted: the projection is wanted, so an open route
+    question (or a route never picked by hand, with both a Bake Source and a projection)
+    becomes Mixed. A route picked by hand stays. Returns True when it changed."""
+    try:
+        from ..baking import route
+    except ImportError:
+        return False
+    d = getattr(obj, "multicamproject_bake", None)
+    if d is None or d.handmade or d.locked:
+        return False
+    if not (d.route_prompt or (not d.route_user and route.has_projection(obj)
+                               and route.has_original(obj))):
+        return False
+    if d.route == route.MIXED and not d.route_prompt:
+        return False
+    route.set_route(obj, route.MIXED, user=True)
+    return True
+
+
 def _workflow_after(obj):
     """2D Only Project: the projection on the scan itself (a Remesh / Retopo copy keeps its
     own workflow)."""
@@ -143,7 +163,10 @@ class MULTICAMPROJECT_OT_ConfirmCameras(bpy.types.Operator):
         return _list_poll(context) and not core.data(context.active_object).resorted
 
     def execute(self, context):
-        core.data(context.active_object).resorted = True
+        obj = context.active_object
+        core.data(obj).resorted = True
+        if _mixed_after_cameras(obj):
+            self.report({'INFO'}, "Bake Route: Mixed")
         return {'FINISHED'}
 
 
@@ -163,6 +186,8 @@ class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
         obj = context.active_object
         warning = core.auto_pick(obj, context.scene)
         core.data(obj).resorted = True
+        if _mixed_after_cameras(obj):
+            self.report({'INFO'}, "Bake Route: Mixed")
         if warning:
             self.report({'WARNING'}, warning)
         names = [c.name if c else "-" for c in core.get_slots(core.data(obj))]
