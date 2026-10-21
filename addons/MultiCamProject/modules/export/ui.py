@@ -168,8 +168,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         self.layout.label(icon='EXPORT')
 
     def draw(self, context):
-        gate.lock(self.layout, context)     # greyed out until Setup File IO
-        layout = self.layout
+        layout = self.layout                # settings: set by hand before Setup File IO too
         if not module_manager.is_loaded("baking"):
             layout.label(text="Needs the Baking module", icon='ERROR')
             return
@@ -232,6 +231,8 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         row.scale_y = 1.5
         draw_resolution(row, common.settings(scene))
         row.separator(factor=0.5)
+        row = row.row(align=True)
+        gate.lock(row, context)             # the export itself: greyed until Setup File IO
         row.operator("multicamproject.export_fbx", icon='EXPORT',
                      text=(f"Fix {to_fix} + Export" if to_fix else "Export") + f"  ({files})")
         row.operator("multicamproject.export_clean_export_textures", text="", icon='TRASH')

@@ -39,12 +39,13 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
         self.layout.label(icon='LINKED')
 
     def draw(self, context):
-        gate.lock(self.layout, context)     # greyed out until Setup File IO
         layout = self.layout
         if core.is_work_window(context.scene):
             draw_work(layout, context)
             return
-        draw_roles(layout, context)
+        draw_roles(layout, context)     # file-wide, set by hand before Setup File IO too
+        layout = layout.column()
+        gate.lock(layout, context)      # the object's work window: greyed until Setup File IO
         obj = context.active_object
         if obj is not None and obj.type == 'MESH' and not obj.library and core.out_record(obj) is None:
             box = layout.box().column(align=True)
