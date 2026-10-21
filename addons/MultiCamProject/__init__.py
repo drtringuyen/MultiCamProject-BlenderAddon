@@ -1,6 +1,6 @@
 bl_info = {
     "name": "MultiCamProject",
-    "version": (0, 1, 0),
+    "version": (0, 1, 1),
     "blender": (5, 2, 0),
     "category": "Material",
     "description": "Project camera background photos onto meshes with blended UVs and vertex-colour weights",
