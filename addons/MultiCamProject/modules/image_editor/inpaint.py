@@ -1585,6 +1585,31 @@ class MULTICAMPROJECT_OT_inpaint_reload(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_reveal_file(bpy.types.Operator):
+    """Show this texture's file in its folder (Explorer, the file selected)"""
+    bl_idname = "multicamproject.reveal_file"
+    bl_label = "Show in Folder"
+    bl_options = {'INTERNAL'}
+
+    filepath: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return f"{props.filepath}\nShow it in its folder" if props.filepath else cls.__doc__
+
+    def execute(self, context):
+        import subprocess
+        path = os.path.normpath(self.filepath)
+        if os.path.isfile(path) and os.name == 'nt':
+            subprocess.Popen(["explorer", "/select,", path])
+        elif os.path.isdir(os.path.dirname(path)):
+            bpy.ops.wm.path_open(filepath=os.path.dirname(path))
+        else:
+            self.report({'WARNING'}, f"Not on disk: {path}")
+            return {'CANCELLED'}
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_inpaint_remove(bpy.types.Operator):
     """Remove the _inpaint: its file goes to the Recycle Bin and the materials show the
     original again. What was made from it goes back a step"""
@@ -1711,6 +1736,7 @@ CLASSES = (MULTICAMPROJECT_OT_inpaint,
            MULTICAMPROJECT_OT_inpaint_load,
            MULTICAMPROJECT_OT_inpaint_reload,
            MULTICAMPROJECT_OT_inpaint_remove,
+           MULTICAMPROJECT_OT_reveal_file,
            MULTICAMPROJECT_OT_inpaint_exit,
            MULTICAMPROJECT_OT_inpaint_save,
            MULTICAMPROJECT_OT_inpaint_discard,
