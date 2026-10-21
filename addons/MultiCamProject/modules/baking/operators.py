@@ -394,6 +394,44 @@ class MULTICAMPROJECT_OT_BakeNormal(bpy.types.Operator):
                           lambda r, e: [('INFO', t) for t in log] + finish(r, e))
 
 
+class MULTICAMPROJECT_OT_ReloadAlbedo(bpy.types.Operator):
+    """Reload ALB_ (and its inpaint) from disk - after editing the file outside Blender.
+    Blender keeps the pixels it loaded; 07 Generate Normal also reads the file again itself.
+    An ALB_ with unsaved changes in Blender is kept as it is"""
+    bl_idname = "multicamproject.reload_albedo"
+    bl_label = "Reload ALB_ from Disk"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return (obj is not None and obj.type == 'MESH' and not jobs.busy()
+                and bool(normal.alb_images(obj)))
+
+    def execute(self, context):
+        from ... import steps
+        from . import cache
+        objs = common.selected_meshes(context)
+        if context.active_object not in objs:
+            objs.append(context.active_object)
+        done, kept = [], []
+        for o in objs:
+            for img in normal.alb_images(o):
+                what = normal.reload_from_disk(img)
+                if what == "reloaded":
+                    done.append(img.name)
+                elif what == "unsaved":
+                    kept.append(img.name)
+        cache.clear()
+        steps.forget()
+        if kept:
+            self.report({'WARNING'}, f"Unsaved changes in Blender, not reloaded: "
+                                     f"{', '.join(kept)} (save or revert it first)")
+        self.report({'INFO'}, f"Reloaded from disk: {', '.join(done)}" if done
+                    else "Nothing loaded yet - the next use reads the file anyway")
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_BakeNormalMode(bpy.types.Operator):
     """Lite: normal map from the albedo's high-pass (seconds).
 AI: predicted from the albedo by an AI model (minutes at 8K on the CPU)"""
@@ -1034,7 +1072,8 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
 _classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_BakeFinal,
             MULTICAMPROJECT_OT_FinalInpaintDone, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
-            MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_BakeNormalMode,
+            MULTICAMPROJECT_OT_BakeNormal, MULTICAMPROJECT_OT_ReloadAlbedo,
+            MULTICAMPROJECT_OT_BakeNormalMode,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
             MULTICAMPROJECT_OT_MaterialRefresh, MULTICAMPROJECT_OT_HandmadeEditUV,
             MULTICAMPROJECT_OT_HandmadeRebake, MULTICAMPROJECT_OT_HandmadeFinishUV,

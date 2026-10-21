@@ -156,6 +156,24 @@ def times(d):
     return sorted(out, key=lambda t: (-t[1], t[0]))
 
 
+def reload_from_disk(img):
+    """Read a file image again when Blender holds its pixels: a file changed outside Blender
+    (Photoshop, Affinity) is otherwise never seen - Blender keeps what it loaded. 'reloaded',
+    'unsaved' (edited in Blender, kept: a reload would lose that) or '' (nothing to do)."""
+    if img is None or img.source != 'FILE' or img.packed_file or not img.has_data:
+        return ""       # not in memory: the next read loads the file anyway
+    if img.is_dirty:
+        return "unsaved"
+    img.reload()
+    return "reloaded"
+
+
+def alb_images(obj):
+    """ALB_ and its saved inpaint - what 07 may read."""
+    d = common.data(obj)
+    return [i for i in (d.alb_image, getattr(d, "alb_inpaint", None)) if i is not None]
+
+
 def generate(context, obj, source):
     """generate_steps, blocking."""
     return jobs.run_sync(generate_steps(context, obj, source))
@@ -204,6 +222,10 @@ def generate_steps(context, obj, source):
     t0 = time.perf_counter()
     name = common.nor_name(obj)
     path = common.texture_path(scene, name)
+    # the file as it is now: NOR_'s stamp is the file's date (state), so pixels Blender
+    # loaded before an outside edit would make an old NOR_ look current
+    yield jobs.Step(f"Normal: reading {alb.name} from disk")
+    reload_from_disk(alb)
     yield jobs.Step(f"Normal: {LABELS[source]} of {alb.name}")
     rgb = (ai.generate(alb, size) if source == 'AI' else highpass.generate(alb, size, s))
     if from_scan(obj):

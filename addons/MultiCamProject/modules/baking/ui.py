@@ -471,6 +471,8 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
         row.scale_y = 1.5
         draw_object_size(row, obj)
         row.separator(factor=0.5)
+        # ALB_ edited outside Blender: its new pixels (07 reads the file again itself too)
+        row.operator("multicamproject.reload_albedo", text="", icon='FILE_REFRESH')
         row.operator("multicamproject.bake_normal", text=f"07. Generate Normal ({mode})",
                      icon='NORMALS_FACE')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
