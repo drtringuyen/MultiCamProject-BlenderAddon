@@ -673,11 +673,11 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
                         "(about 15-25 s each); Keep Local ones stay here", icon='INFO')
         hint.label(text="Blender is locked meanwhile - Esc stops after the current object")
         s = _settings(context.scene)
-        size = self.layout.row(align=True)
-        size.label(text="Textures:")
-        size.prop(s, "auto_resolution", expand=True)
         after = self.layout.row(align=True)
         after.label(text="Then:")
+        size = after.row(align=True)
+        size.ui_units_x = 3
+        size.prop(s, "auto_resolution", text="")
         after.prop(s, "auto_fix", toggle=True, icon='MODIFIER')
         after.prop(s, "auto_export", toggle=True, icon='EXPORT')
 
