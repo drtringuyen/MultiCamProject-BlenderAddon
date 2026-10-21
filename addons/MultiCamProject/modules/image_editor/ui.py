@@ -261,21 +261,10 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
 
 def _draw_file(row, src):
     """The file a row uses: with an _inpaint a dropdown original / _inpaint (as Baked
-    Source's), else '<folder>/<file>' (red: not on disk); then Show in Folder."""
-    from ..baking import cache, common
-    img = sources.current(src)
-    path = common.image_file(img)
-    cell = row.row(align=True)
-    if sources.has_inpaint(src):
-        data, prop = sources.show_prop(src)
-        cell.prop(data, prop, text="")
-    else:
-        cell.alert = bool(path) and not cache.isfile(path)
-        cell.active = cell.alert
-        cell.label(text=common.file_label(img) if path else "(no file)")
-    btn = row.row(align=True)
-    btn.enabled = bool(path)
-    btn.operator("multicamproject.reveal_file", text="", icon='FILEBROWSER').filepath = path
+    Source's), else '<folder>/<file>'; then Show in Folder."""
+    from ..baking import ui as bake_ui
+    bake_ui.draw_file(row, sources.current(src),
+                      sources.show_prop(src) if sources.has_inpaint(src) else None)
 
 
 class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):

@@ -24,6 +24,23 @@ def draw_object_size(layout, obj):
     sizes.prop(common.data(obj), "tex_size", text="")
 
 
+def draw_file(row, img, show=None):
+    """Which texture file: '<folder>/<file>' (greyed, red: not on disk) - or `show` (data,
+    property): its original / _inpaint dropdown - then Show in Folder (06 Inpainting)."""
+    from . import cache
+    path = common.image_file(img)
+    cell = row.row(align=True)
+    if show is not None:
+        cell.prop(*show, text="")
+    else:
+        cell.alert = bool(path) and not cache.isfile(path)
+        cell.active = cell.alert
+        cell.label(text=common.file_label(img) if path else "(no file)")
+    btn = row.row(align=True)
+    btn.enabled = bool(path) and hasattr(bpy.types, "MULTICAMPROJECT_OT_reveal_file")
+    btn.operator("multicamproject.reveal_file", text="", icon='FILEBROWSER').filepath = path
+
+
 def draw_final_toggle(layout, data, prop):
     """[Preview / Final] Processing | Baked: the file's quality (an icon), then the view as
     a two-state toggle - the current state stays highlighted."""
@@ -448,17 +465,22 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
         info = layout.column(align=True)
         alb = common.alb_source(obj)
         if alb is not None:
-            sub = info.row()
+            split = info.split(factor=0.3, align=True)
+            sub = split.row()
             sub.active = False
-            sub.label(text=f"From {alb.name}", icon='IMAGE_RGB')
+            sub.label(text="From ALB_" + ("  ·  inpainted" if alb != d.alb_image else ""),
+                      icon='IMAGE_RGB')
+            draw_file(split.row(align=True), alb)
         if not steps.alb_fresh(obj):
             note = info.row()
             note.alert = True
             note.label(text="ALB_ outdated or missing - 07 bakes it first (05)", icon='INFO')
         if d.nor_size and d.nor_image is not None:
             label = normal.LABELS.get(d.nor_source_used, d.nor_source_used)
-            info.label(text=f"NOR {_res(d.nor_size)}  ·  {label}  ·  {d.last_nor_seconds:.1f} s",
-                       icon='NORMALS_FACE')
+            split = info.split(factor=0.3, align=True)
+            split.label(text=f"NOR {_res(d.nor_size)}  ·  {label}  ·  {d.last_nor_seconds:.1f} s",
+                        icon='NORMALS_FACE')
+            draw_file(split.row(align=True), d.nor_image)
             if normal.nor_outdated(obj, context.scene):
                 warn = info.row()
                 warn.alert = True
