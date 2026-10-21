@@ -487,6 +487,8 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
 
         scene.camera = cam
         space.camera = cam   # local view looks through the view's own camera
+        from . import camfit
+        camfit.fit(scene, cam)  # the frame = the photo (else the timer does it a moment later)
         context.window_manager[_CUR_KEY] = cam.name
         enter_camera_view(context, space)
         show_in_list(obj, cam)
