@@ -2,7 +2,8 @@
 
 Everything except `locked` is derived from what the object already holds (the workflow, its
 Decimate, uv_normal, the bake stamps), so a change that outdates a stamp sends the object back
-to that step on its own - no stored step to keep in sync, no timer.
+to that step on its own - no stored step to keep in sync, no timer. An outdated result only
+warns the steps after it (outdated_note); a missing one locks them.
 
   01 Setup            the file: Name Prefix + Setup File IO (gate.ready)
   02 Mesh Workflow    2B Remesh / 2C Retopo / 2D Only Project, Decimate applied, uv_normal
@@ -32,7 +33,9 @@ STEP_NAMES = {1: "01. Setup", 2: "02. Mesh Workflow", 3: "03. Mesh Editing",
               4: "04. Projection Painting", 5: "05. Bake Albedo", 6: "06. Inpainting",
               7: "07. Generate Normal", 8: "08. Lock Finish", 9: "09. Export"}
 
-State = namedtuple("State", "workflow done stage")
+# done: the step's result is there and current. made: it is there (maybe outdated) - what
+# the next steps wait for: a changed mesh / uv_normal warns (outdated_note), it locks nothing
+State = namedtuple("State", "workflow done stage made")
 
 
 def _bake(obj):
@@ -108,6 +111,17 @@ def alb_fresh(obj):
                 or fingerprint.projection_outdated(obj))
 
 
+def _file_there(img):
+    from .modules.baking import common
+    return img is not None and common.file_ok(img)
+
+
+def bao_made(obj):
+    """03 baked once: BAo_ on disk (outdated or not)."""
+    d = _bake(obj)
+    return d is not None and (d.handmade or _file_there(d.ba_image))
+
+
 def nor_fresh(obj):
     """07: NOR_ is on disk and made from the current ALB_ (its inpaint) and settings."""
     from .modules.baking import common, normal
@@ -159,15 +173,23 @@ def _state(obj, scene):
     if gate.ready(scene):
         done.add(1)
     if obj is None or obj.type != 'MESH' or d is None:
-        return State('NONE', done, 'RAW')
+        return State('NONE', done, 'RAW', set(done))
+    made = set(done)
     if mesh_done(obj):
         done.add(2)
+        made.add(2)
         if bao_fresh(obj):
             done.add(3)
             if alb_fresh(obj):
                 done.add(5)
                 if nor_fresh(obj):
                     done.add(7)
+        if bao_made(obj):
+            made.add(3)
+            if _file_there(d.alb_image):
+                made.add(5)
+                if _file_there(d.nor_image):
+                    made.add(7)
     if d.locked:
         stage = 'LOCKED'
     elif 7 in done:
@@ -176,7 +198,7 @@ def _state(obj, scene):
         stage = 'PROCESSED'
     else:
         stage = 'RAW'
-    return State(workflow(obj), done, stage)
+    return State(workflow(obj), done, stage, made)
 
 
 # what each step waits for: (the step that must be done, what to tell the user)
@@ -207,7 +229,27 @@ def why_locked(obj, step, scene=None):
         return "Select a mesh"
     st = state(obj, scene)
     need, text = _NEEDS[step]
-    return "" if need in st.done else text
+    return "" if need in st.made else text
+
+
+def outdated_note(obj, step, scene=None):
+    """'' or a warning for an open step whose earlier result is there but outdated (the mesh
+    or uv_normal changed since): the step works, its result follows the old bake."""
+    if step not in _NEEDS or obj is None or obj.type != 'MESH':
+        return ""
+    st = state(obj, scene)
+    need = _NEEDS[step][0]
+    if need not in st.made or need in st.done:
+        return ""
+    if need == 3:
+        from .modules.baking import fingerprint
+        why = fingerprint.ba_why(obj) or "BAo_ outdated"
+        if step in (5, 7):          # their bake makes BAo_ again first (needs_source_bake)
+            return f"03 outdated ({why}) - this bake redoes BAo_ first"
+        return f"03 outdated ({why}) - bake BAo_ again to update"
+    if need == 5:
+        return "05 is outdated - bake the Albedo again to update"
+    return "07 is outdated - generate the Normal again to update"
 
 
 def sent_out(obj, scene=None):

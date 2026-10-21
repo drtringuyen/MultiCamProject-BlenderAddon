@@ -57,6 +57,11 @@ def step_box(layout, context, step):
     else:
         why = steps.why_locked(context.active_object, step, context.scene)
     if not why:
+        note = steps.outdated_note(context.active_object, step, context.scene)
+        if note:            # a warning only: the step stays open
+            row = layout.row()
+            row.alert = True
+            row.label(text=note, icon='ERROR')
         return layout, True
     row = layout.row(align=True)
     row.alert = True
