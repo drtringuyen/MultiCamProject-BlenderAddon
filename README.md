@@ -4,15 +4,16 @@ Project camera background photos onto meshes with blended UVs and vertex-colour 
 
 ## Installation
 
-### Manual (ZIP)
-1. Download the latest `MultiCamProject.zip`
-2. Open Blender → `Edit > Preferences > Add-ons > Install`
-3. Select the ZIP file and enable the addon
+A Blender Extension (Blender 4.2+ extension format; `manifest.toml` sets the minimum version).
 
-### Blender Extension (Official)
-1. Visit [Blender Extensions](https://extensions.blender.org/)
-2. Search for "MultiCamProject"
-3. Install and enable
+### With automatic updates
+1. `Edit > Preferences > Get Extensions > Repositories > + > Add Remote Repository`
+2. URL: the repository's `index.json` (see Publishing), tick **Check for Updates on Startup**
+3. Install MultiCamProject from that repository
+
+### From a file
+1. Download `MultiCamProject-extension.zip`
+2. Drag it into Blender (or `Get Extensions > ⌄ > Install from Disk`)
 
 ## Getting Started
 
@@ -37,8 +38,7 @@ MultiCamProject/
 │   ├── module_*_ui.py           # Module UI
 │   └── module_*_utils.py        # Module utilities
 ├── manifest.toml                # Extension format metadata
-├── zip_addon.py                 # Build traditional ZIP
-├── build_extension.py           # Build Blender Extension
+├── build_extension.py           # Build the extension zip
 ├── install.py                   # Installation script
 ├── requirements.txt             # Python dependencies
 └── README.md                    # This file
@@ -73,18 +73,17 @@ context.scene.multicamproject_props.debug_mode
 
 ## Publishing
 
-### As Traditional ZIP
-```bash
-python zip_addon.py
-# Creates: MultiCamProject.zip
-```
-
-### As Blender Extension
+1. Raise `version` in `manifest.toml` - Blender only offers an update for a higher version
+2. Build the zip:
 ```bash
 python build_extension.py
 # Creates: MultiCamProject-extension.zip
-# Submit to: https://extensions.blender.org/
 ```
+3. Put it into the extension repository folder and regenerate its `index.json`:
+```bash
+blender --command extension server-generate --repo-dir=<repository folder>
+```
+4. Publish that folder (e.g. GitHub Pages); users' Blender finds the new version on startup
 
 ## Development Notes
 

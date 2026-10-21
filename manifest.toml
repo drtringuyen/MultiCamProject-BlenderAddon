@@ -1,7 +1,7 @@
 schema_version = "1.0.0"
 
 id = "multicamproject"
-version = "0.0.1"
+version = "0.1.0"
 name = "MultiCamProject"
 tagline = "Project camera photos onto scans, bake them and export to Unity"
 maintainer = "drtringuyen"
