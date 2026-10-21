@@ -993,7 +993,9 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         # the face selection mask never stays on while the camera brush paints: it hides
         # the colors (Fill needed it for its selection - read above, so off after it too)
         obj.data.use_paint_mask = False
-        paint_tex.start_painting(context, obj, img)
+        if paint_tex.start_painting(context, obj, img):
+            self.report({'INFO'}, f"{obj.name} is an open mesh: Backface Culling off "
+                                  "(its back side gets paint too)")
         if self.mode == 'ERASE':
             color = paint_tex.ERASE_COLOR
             paint_tex.set_brush(context, color, 'SUB' if self.shift else 'ADD')

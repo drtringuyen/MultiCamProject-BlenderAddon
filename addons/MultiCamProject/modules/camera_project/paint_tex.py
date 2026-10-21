@@ -1003,10 +1003,23 @@ def set_brush(context, color, blend='MIX', force=False):
         ip.unified_paint_settings.color = color
 
 
+def is_open(me):
+    """The mesh has an edge with only one face (a plane, a shell): its back side is a
+    surface a camera may look at."""
+    if not me.polygons:
+        return False
+    edges = np.empty(len(me.loops), dtype=np.int32)
+    me.loops.foreach_get("edge_index", edges)
+    return bool((np.bincount(edges, minlength=len(me.edges)) == 1).any())
+
+
 def start_painting(context, obj, img):
     """Texture Paint on `img` through uv_normal (Object Mode -> Texture Paint). The brush
-    always stops at the first surface under it (Occlude)."""
+    always stops at the first surface under it (Occlude); back faces are skipped on a
+    closed mesh only - an open one (the door plane) is painted from behind too. Returns
+    True when the mesh is open."""
     me = obj.data
+    open_mesh = is_open(me)
     me.uv_layers.active = me.uv_layers[UV_NORMAL]
     if obj.mode != 'TEXTURE_PAINT':
         bpy.ops.object.mode_set(mode='TEXTURE_PAINT')
@@ -1014,9 +1027,10 @@ def start_painting(context, obj, img):
     ip.mode = 'IMAGE'
     ip.canvas = img
     ip.use_occlude = True
-    ip.use_backface_culling = True
+    ip.use_backface_culling = not open_mesh
     if ip.use_stencil_layer:
         ip.use_stencil_layer = False
+    return open_mesh
 
 
 def save_dirty(objs=None):
