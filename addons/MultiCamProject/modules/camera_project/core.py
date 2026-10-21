@@ -13,7 +13,6 @@ from .gn_builder import B
 
 MOD_NAME = "GN-CameraProject"
 MODES = ("Sharp", "Smooth", "Combined")
-IMAGE_EXTS = (".jpg", ".jpeg", ".png", ".tif", ".tiff", ".exr", ".webp", ".bmp")
 # coverage filter of the camera list and the auto pick: (key, label, minimum coverage)
 COVERAGE_FILTERS = (('100', "100%", 0.999), ('80', ">80%", 0.8), ('50', ">50%", 0.5),
                     ('30', ">30%", 0.3), ('ALL', "All", 0.0))
@@ -94,12 +93,13 @@ def _folder_listing(folder):
 
 def _find_in_folder(folder, listing, cam):
     """Look for the camera's photo: first the current image's filename,
-    then <camera name>.<ext>."""
+    then the camera's name (00032.jpg) or <camera name>.<ext>."""
+    from ...folders import photo_names
     names = []
     img = cam_image(cam)
     if img and img.filepath:
         names.append(os.path.basename(bpy.path.abspath(img.filepath)))
-    names += [cam.name + ext for ext in IMAGE_EXTS]
+    names += photo_names(cam.name)
     for n in names:
         real = listing.get(n.lower())
         if real:

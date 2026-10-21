@@ -125,6 +125,27 @@ def _candidates(img):
     return names
 
 
+def photo_names(cam_name):
+    """File names a camera's photo may have: the camera's own name when it is one (cameras
+    named 00032.jpg), then <name>.<ext> - with and without Blender's .001 suffix."""
+    stems = [cam_name]
+    base, dot, tail = cam_name.rpartition(".")
+    if dot and tail.isdigit() and len(tail) == 3:
+        stems.append(base)
+    names = []
+    for stem in stems:
+        if os.path.splitext(stem)[1].lower() in IMAGE_EXTS:
+            names.append(stem)
+        names += [stem + ext for ext in IMAGE_EXTS]
+    return names
+
+
+def _photo_file(cam_name, listing):
+    """The camera's photo in a folder listing ({lower name: real name}), else None."""
+    return next((listing[n.lower()] for n in photo_names(cam_name) if n.lower() in listing),
+                None)
+
+
 def _rel(path):
     """Relative to the .blend when it is saved (and on the same drive)."""
     if not bpy.data.filepath:
@@ -314,8 +335,7 @@ def relink_photos(scene, view_layer, top):
         if img is not None:
             r, n, miss = relink([img], top, listing)
             if miss:        # the image's own name failed: try the camera's
-                real = next((listing[(cam.name + e).lower()] for e in IMAGE_EXTS
-                             if (cam.name + e).lower() in listing), None)
+                real = _photo_file(cam.name, listing)
                 if real is None:
                     missing.append(cam.name)
                 else:
@@ -324,8 +344,7 @@ def relink_photos(scene, view_layer, top):
                     r += 1
             relinked, reloaded = relinked + r, reloaded + n
             continue
-        real = next((listing[(cam.name + e).lower()] for e in IMAGE_EXTS
-                     if (cam.name + e).lower() in listing), None)
+        real = _photo_file(cam.name, listing)
         if real is None:
             missing.append(cam.name)
             continue
@@ -481,7 +500,7 @@ def _wanted(scene, view_layer, role):
             bgs = cam.data.background_images
             img = bgs[0].image if len(bgs) else None
             names = {n.lower() for n in _candidates(img)} if img is not None else set()
-            out.append(names | {(cam.name + e).lower() for e in IMAGE_EXTS})
+            out.append(names | {n.lower() for n in photo_names(cam.name)})
         return out
     return []
 
