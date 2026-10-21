@@ -54,9 +54,27 @@ def inpaint_image(src):
         cd = _cam_data(src.owner)
         if cd is None or cd.bg_original is None:
             return None
+        if cd.bg_inpaint_off is not None:       # the original shown, the inpaint parked
+            return cd.bg_inpaint_off
         return _cp().cam_image(src.owner)
     d = src.owner.multicamproject_bake
     return d.alb_inpaint if src.kind == 'ALB' else d.ba_inpaint
+
+
+def uses_inpaint(src):
+    """The source shows its _inpaint, not switched back to the original (06's dropdown)."""
+    if src.kind == 'BG':
+        cd = _cam_data(src.owner)
+        return cd is None or cd.bg_inpaint_off is None
+    d = src.owner.multicamproject_bake
+    return d.alb_use_inpaint if src.kind == 'ALB' else d.ba_use_inpaint
+
+
+def show_prop(src):
+    """(data, property) of the source's original / _inpaint dropdown."""
+    if src.kind == 'BG':
+        return _cam_data(src.owner), "bg_show"
+    return src.owner.multicamproject_bake, "alb_show" if src.kind == 'ALB' else "ba_show"
 
 
 def has_inpaint(src):
@@ -65,9 +83,9 @@ def has_inpaint(src):
 
 
 def current(src):
-    """What the source shows now: its _inpaint when there is one (BAo_: unless switched to
-    the original), else the original."""
-    if src.kind == 'BAO' and not src.owner.multicamproject_bake.ba_use_inpaint:
+    """What the source shows now: its _inpaint when there is one (unless switched to the
+    original in 06), else the original."""
+    if not uses_inpaint(src):
         return original(src)
     return inpaint_image(src) if has_inpaint(src) else original(src)
 
@@ -94,7 +112,8 @@ def classify(img):
         if cam.type != 'CAMERA':
             continue
         cd = _cam_data(cam)
-        if img == _cp().cam_image(cam) or (cd is not None and cd.bg_original == img):
+        if img == _cp().cam_image(cam) or (cd is not None and img in (cd.bg_original,
+                                                                      cd.bg_inpaint_off)):
             return Source('BG', cam)
     return None
 
@@ -154,6 +173,7 @@ def _point(src, img):
     if src.kind == 'BG':
         cam, cd = src.owner, _cam_data(src.owner)
         bg = _cp().bg_entry(cam, create=True)
+        cd.bg_inpaint_off = None    # a saved inpaint shows; a removed one: nothing parked
         if img is not None:
             if cd.bg_original is None:
                 cd.bg_original = bg.image
@@ -165,8 +185,8 @@ def _point(src, img):
         return
     d = src.owner.multicamproject_bake
     setattr(d, "alb_inpaint" if src.kind == 'ALB' else "ba_inpaint", img)
-    if src.kind == 'BAO':
-        d.ba_use_inpaint = True     # a saved inpaint is what shows (the switch back on)
+    # a saved inpaint is what shows (the switch back on)
+    setattr(d, "alb_use_inpaint" if src.kind == 'ALB' else "ba_use_inpaint", True)
 
 
 def _image_on(path, name, colorspace, skip=None):

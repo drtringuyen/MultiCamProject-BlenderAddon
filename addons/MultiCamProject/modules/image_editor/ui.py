@@ -1,5 +1,3 @@
-import os
-
 import bpy
 
 from ... import gate
@@ -261,15 +259,20 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
         sub.prop(st, "uv_opacity", text="Opacity", slider=True)
 
 
-def _draw_file(row, path):
-    """'<folder>/<file>' a row uses (red: not on disk), and its Show in Folder button."""
-    from ..baking import cache
-    text = (f"{os.path.basename(os.path.dirname(path))}/{os.path.basename(path)}" if path
-            else "(no file)")
+def _draw_file(row, src):
+    """The file a row uses: with an _inpaint a dropdown original / _inpaint (as Baked
+    Source's), else '<folder>/<file>' (red: not on disk); then Show in Folder."""
+    from ..baking import cache, common
+    img = sources.current(src)
+    path = common.image_file(img)
     cell = row.row(align=True)
-    cell.alert = bool(path) and not cache.isfile(path)
-    cell.active = cell.alert
-    cell.label(text=text)
+    if sources.has_inpaint(src):
+        data, prop = sources.show_prop(src)
+        cell.prop(data, prop, text="")
+    else:
+        cell.alert = bool(path) and not cache.isfile(path)
+        cell.active = cell.alert
+        cell.label(text=common.file_label(img) if path else "(no file)")
     btn = row.row(align=True)
     btn.enabled = bool(path)
     btn.operator("multicamproject.reveal_file", text="", icon='FILEBROWSER').filepath = path
@@ -308,7 +311,6 @@ class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
             return
         if inpaint.active() is not None:
             layout.label(text=f"Inpaint open on {inpaint.active().alb_name}", icon='PAUSE')
-        from ..baking import common
         col = layout.column(align=True)
         for src in sources.object_sources(obj):
             done = sources.has_inpaint(src)
@@ -318,7 +320,7 @@ class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
             split.label(text=name + ("  ·  inpainted" if done else ""),
                         icon='CHECKMARK' if done else 'IMAGE_DATA')
             row = split.row(align=True)
-            _draw_file(row, common.image_file(sources.current(src)))
+            _draw_file(row, src)
             sources.draw_button(row, src.kind, src.owner)
             if sources.inpaint_image(src) is not None:
                 for op_id, icon in (("multicamproject.inpaint_reload", 'FILE_REFRESH'),

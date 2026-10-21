@@ -229,10 +229,10 @@ def bao_source(obj):
 
 def alb_source(obj):
     """The ALB_ to export and to make NOR_ from: ALB_<name>_inpaint when the user inpainted
-    and saved it, else ALB_<name>."""
+    and saved it (and did not switch back to the original in 06), else ALB_<name>."""
     d = data(obj)
     ip = getattr(d, "alb_inpaint", None)
-    if ip is not None and file_ok(ip):
+    if ip is not None and getattr(d, "alb_use_inpaint", True) and file_ok(ip):
         return ip
     return d.alb_image
 
@@ -243,6 +243,15 @@ def image_file(img):
         return ""
     # normalized: a '//..\..' path can pass Windows' 260 characters while the file's own does not
     return os.path.normpath(bpy.path.abspath(img.filepath, library=img.library))
+
+
+def file_label(img):
+    """'<folder>/<file>' of an image's file - which texture it is, at a glance - else its
+    name."""
+    path = image_file(img)
+    if not path:
+        return img.name if img is not None else "(none)"
+    return f"{os.path.basename(os.path.dirname(path))}/{os.path.basename(path)}"
 
 
 def self_bake(obj):

@@ -169,6 +169,49 @@ def _on_global_shift(self, context):
     core.push_global_shift(self.id_data)
 
 
+_bg_items = []      # kept alive: Blender only borrows a dynamic enum's strings
+
+
+def _bg_show_items(cd, _context):
+    """The photo and its _inpaint (06), '<folder>/<file>' each."""
+    from ..baking import common
+    from . import core
+    cam = cd.id_data
+    shown = core.cam_image(cam)
+    orig = cd.bg_original if cd.bg_original is not None else shown
+    ip = cd.bg_inpaint_off if cd.bg_inpaint_off is not None else (
+        shown if cd.bg_original is not None else None)
+    _bg_items[:] = [('ORIGINAL', common.file_label(orig) if orig else "(no photo)",
+                     "The camera's photo", 'IMAGE_DATA', 0)]
+    if ip is not None:
+        _bg_items.append(('INPAINT', common.file_label(ip), "The photo's inpainted copy (06)",
+                          'BRUSH_DATA', 1))
+    return _bg_items
+
+
+def _get_bg_show(cd):
+    return 1 if cd.bg_original is not None and cd.bg_inpaint_off is None else 0
+
+
+def _set_bg_show(cd, value):
+    """The original: the photo back on the camera, the _inpaint parked (bg_inpaint_off) -
+    bg_original stays set, the inpaint is not lost. Back: the reverse."""
+    from . import core
+    if cd.bg_original is None or bool(value) == (cd.bg_inpaint_off is None):
+        return
+    cam = cd.id_data
+    bg = core.bg_entry(cam, create=True)
+    if value:
+        bg.image, cd.bg_inpaint_off = cd.bg_inpaint_off, None
+    else:
+        cd.bg_inpaint_off, bg.image = bg.image, cd.bg_original
+    try:            # every object this camera projects on takes it now
+        from ..image_editor import sources
+        sources.relink(sources.Source('BG', cam), bpy.context.scene)
+    except ImportError:
+        pass
+
+
 class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
     """Per-camera data (on the camera object, so it belongs to the file, not to a mesh).
     A global camera is shared by every object: one UV shift for all of them, and Reload
@@ -184,6 +227,14 @@ class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
         type=bpy.types.Image, name="Original Photo",
         description="06 Inpainting: the photo, while the background shows its _inpaint copy "
                     "(<bake folder>/_inpaint) - every object this camera projects on uses it")
+    bg_inpaint_off: PointerProperty(
+        type=bpy.types.Image, name="Inpaint Kept",
+        description="06: the photo's _inpaint while the original is shown instead (picked in "
+                    "06's dropdown) - set: the background is bg_original")
+    bg_show: EnumProperty(name="Photo used", items=_bg_show_items, get=_get_bg_show,
+                          set=_set_bg_show, options={'SKIP_SAVE'},
+                          description="Which photo this camera projects: the original or its "
+                                      "inpaint (both files stay)")
     shift: FloatVectorProperty(
         name="Shift", size=2, default=(0.0, 0.0), subtype='XYZ',
         min=-1.0, max=1.0, step=0.1, precision=5, update=_on_global_shift,

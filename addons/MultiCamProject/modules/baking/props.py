@@ -52,15 +52,42 @@ def _on_tex_size(data, context):
 
 
 _ba_items = []      # kept alive: Blender only borrows a dynamic enum's strings
+_alb_items = []
+
+
+def _show_items(keep, orig, ip, what):
+    """[original, its _inpaint] as dropdown items - '<folder>/<file>' each (06's rows)."""
+    from . import common
+    keep[:] = [('ORIGINAL', common.file_label(orig) if orig else f"(no {what})",
+                f"The {what} as baked", 'IMAGE_DATA', 0)]
+    if ip is not None:
+        keep.append(('INPAINT', common.file_label(ip), f"{what}'s inpainted copy (06)",
+                     'BRUSH_DATA', 1))
+    return keep
 
 
 def _ba_show_items(data, _context):
-    """BAo_'s file names: the original, and its _inpaint when there is one."""
-    ba, ip = data.ba_image, data.ba_inpaint
-    _ba_items[:] = [('ORIGINAL', ba.name if ba else "(no BAo_)", "The BAo_ as baked", 'IMAGE_DATA', 0)]
-    if ip is not None:
-        _ba_items.append(('INPAINT', ip.name, "BAo_'s inpainted copy (06)", 'BRUSH_DATA', 1))
-    return _ba_items
+    """BAo_'s files: the original, and its _inpaint when there is one."""
+    return _show_items(_ba_items, data.ba_image, data.ba_inpaint, "BAo_")
+
+
+def _alb_show_items(data, _context):
+    return _show_items(_alb_items, data.alb_image, data.alb_inpaint, "ALB_")
+
+
+def _get_alb_show(data):
+    return 1 if data.alb_inpaint is not None and data.alb_use_inpaint else 0
+
+
+def _set_alb_show(data, value):
+    if data.alb_use_inpaint == bool(value):
+        return
+    data.alb_use_inpaint = bool(value)
+    try:            # MAT_ (and Export, 07) take it now
+        from ..image_editor import sources
+        sources.relink(sources.Source('ALB', data.id_data), bpy.context.scene)
+    except ImportError:
+        pass
 
 
 def _get_ba_show(data):
@@ -100,6 +127,13 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
     alb_inpaint: PointerProperty(type=bpy.types.Image, name="Albedo Inpainted",
                                  description="ALB_<name>_inpaint: ALB_ inpainted - exported as "
                                              "ALB_ and NOR_ is made from it")
+    alb_use_inpaint: BoolProperty(default=True, description="MAT_, 07 and Export take ALB_'s "
+                                                            "_inpaint (off: the original, the "
+                                                            "inpaint kept)")
+    alb_show: EnumProperty(name="ALB_ used", items=_alb_show_items, get=_get_alb_show,
+                           set=_set_alb_show, options={'SKIP_SAVE'},
+                           description="Which ALB_ MAT_, 07 Generate Normal and Export take: the "
+                                       "original or its inpaint (both files stay)")
     ba_inpaint: PointerProperty(type=bpy.types.Image, name="Baked Albedo Inpainted",
                                 description="BAo_<name>_inpaint: BAo_ inpainted - MCP_ and "
                                             "05 Bake Albedo use it")
