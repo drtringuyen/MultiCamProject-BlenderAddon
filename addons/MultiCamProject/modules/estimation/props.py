@@ -109,6 +109,14 @@ class MULTICAMPROJECT_EstimationSettings(bpy.types.PropertyGroup):
         name="Export FBX", default=True,
         description="Then Fix + Export FBX, as the Export button (objects linked to a work "
                     "file are not fixed or baked here)")
+    auto_resolution: EnumProperty(
+        name="Textures", default='8192',
+        items=(('1024', "1K", "Every object Automate makes bakes at 1024 x 1024"),
+               ('2048', "2K", "Every object Automate makes bakes at 2048 x 2048"),
+               ('4096', "4K", "Every object Automate makes bakes at 4096 x 4096"),
+               ('8192', "8K", "Every object Automate makes bakes at 8192 x 8192")),
+        description="The texture size of every object Automate makes - its own size (as "
+                    "the EXPORT list's), so its work file, the Fix and the Export bake at it")
     color: FloatVectorProperty(
         size=3, subtype='COLOR_GAMMA', get=_total_color,
         description="Green: all the objects together are within the Budget · Orange: over it")

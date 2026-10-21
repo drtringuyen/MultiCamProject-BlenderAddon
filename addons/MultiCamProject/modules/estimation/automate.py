@@ -197,9 +197,10 @@ def task_of(context, name):
 FIX_ITEM = "Fix"           # the progress list's item of the Fix (export's own: "Write FBX")
 
 
-def run(ts, lines, fix=False, export=False):
-    """The job: each task in turn, then (`fix`) the Fix of the objects kept here and
-    (`export`) Fix + Export FBX (a generator for jobs.start)."""
+def run(ts, lines, fix=False, export=False, size=None):
+    """The job: each task in turn - `size` ('1024'-'8192') its objects' texture size -
+    then (`fix`) the Fix of the objects kept here and (`export`) Fix + Export FBX (a
+    generator for jobs.start)."""
     from ..baking import jobs
     local = []
     for t in ts:
@@ -208,7 +209,7 @@ def run(ts, lines, fix=False, export=False):
             return
         jobs.item_start(t.row)
         try:
-            name = yield from _one(t, lines)
+            name = yield from _one(t, lines, size)
         except Exception as e:
             jobs.item_end(t.row, str(e))
             lines.append(('ERROR', f"{t.row}: {e}"))
@@ -273,7 +274,7 @@ def _export(lines):
     lines.extend(eops._export_finish((log, files, missing), None))
 
 
-def _one(t, lines):
+def _one(t, lines, size=None):
     from ... import folders, steps
     from ..baking import jobs, naming
     from ..camera_project import core as cp, operators as cops
@@ -304,6 +305,8 @@ def _one(t, lines):
         target = obj
     for w in warnings:
         lines.append(('WARNING', f"{target.name}: {w}"))
+    if size:            # its own size: the work file (Send Out copies it), Fix and Export
+        target.multicamproject_bake.tex_size = size
     row = _settings(scene).rows.get(target.name)
     if row is not None:
         row.auto_step = 'SKIP'      # done: the row (it followed the copy) is no pick any more
@@ -670,6 +673,9 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
                         "(about 15-25 s each); Keep Local ones stay here", icon='INFO')
         hint.label(text="Blender is locked meanwhile - Esc stops after the current object")
         s = _settings(context.scene)
+        size = self.layout.row(align=True)
+        size.label(text="Textures:")
+        size.prop(s, "auto_resolution", expand=True)
         after = self.layout.row(align=True)
         after.label(text="Then:")
         after.prop(s, "auto_fix", toggle=True, icon='MODIFIER')
@@ -687,6 +693,7 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
 
         s = _settings(context.scene)
         fix, export = s.auto_fix, s.auto_export
+        size = s.auto_resolution
 
         def finish(result, error):
             ok = sum(1 for sev, t in lines if sev == 'INFO' and t.endswith(
@@ -694,7 +701,7 @@ class MULTICAMPROJECT_OT_EstimationAutomate(bpy.types.Operator):
             return lines + [('INFO', f"Automate: {ok} of {len(ts)} object(s) done")]
         from ..export import operators as eops
         names = [t.row for t in ts] + [FIX_ITEM] * fix + [eops.FBX_ITEM] * export
-        return jobs.start(self, context, "Automate", names, run(ts, lines, fix, export),
+        return jobs.start(self, context, "Automate", names, run(ts, lines, fix, export, size),
                           finish, block=True)
 
 
