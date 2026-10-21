@@ -125,6 +125,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     bl_parent_id = "MULTICAMPROJECT_PT_main"
     bl_order = 4
 
+    @classmethod
+    def poll(cls, context):
+        from ...panels import object_ready
+        return object_ready(context)
+
     def draw_header(self, context):
         self.layout.label(icon='RENDER_STILL')
 
@@ -419,8 +424,8 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return obj is not None and obj.type == 'MESH'
+        from ...panels import object_ready
+        return object_ready(context) and context.active_object.type == 'MESH'
 
     def draw_header(self, context):
         from ... import steps
@@ -488,8 +493,8 @@ class MULTICAMPROJECT_PT_LockFinish(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        obj = context.active_object
-        return obj is not None and obj.type == 'MESH'
+        from ...panels import object_ready
+        return object_ready(context) and context.active_object.type == 'MESH'
 
     def draw_header(self, context):
         locked = common.data(context.active_object).locked

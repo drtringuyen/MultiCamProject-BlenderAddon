@@ -101,7 +101,8 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return _shown(context.active_object)
+        from ...panels import object_ready
+        return object_ready(context) and _shown(context.active_object)
 
     def draw_header(self, context):
         from ... import steps

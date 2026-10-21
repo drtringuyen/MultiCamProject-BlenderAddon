@@ -25,7 +25,8 @@ class MULTICAMPROJECT_PT_uv_tube(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
-        return tube.session_object(context) is not None
+        from ...panels import object_ready
+        return object_ready(context) and tube.session_object(context) is not None
 
     def draw(self, context):
         obj = tube.session_object(context)

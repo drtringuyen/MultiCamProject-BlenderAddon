@@ -46,7 +46,8 @@ class MULTICAMPROJECT_PT_Linking(bpy.types.Panel):
         draw_roles(layout, context)     # file-wide, set by hand before Setup File IO too
         layout = layout.column()
         gate.lock(layout, context)      # the object's work window: greyed until Setup File IO
-        obj = context.active_object
+        from ...panels import object_ready
+        obj = context.active_object if object_ready(context) else None
         if obj is not None and obj.type == 'MESH' and not obj.library and core.out_record(obj) is None:
             box = layout.box().column(align=True)
             box.label(text=f"{obj.name}: not linked", icon='UNLINKED')

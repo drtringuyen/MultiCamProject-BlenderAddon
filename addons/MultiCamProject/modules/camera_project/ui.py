@@ -87,8 +87,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
+        from ...panels import object_ready
         obj = context.active_object
-        return obj is not None and obj.type == 'MESH' and core.data(obj).is_setup
+        return object_ready(context) and obj.type == 'MESH' and core.data(obj).is_setup
 
     def draw_header(self, context):
         self.layout.label(icon='BRUSH_DATA')

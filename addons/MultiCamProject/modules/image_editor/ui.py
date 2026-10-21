@@ -274,8 +274,10 @@ class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
 
     @classmethod
     def poll(cls, context):
+        from ...panels import object_ready
         obj = context.active_object
-        return obj is not None and obj.type == 'MESH' and hasattr(obj, "multicamproject_bake")
+        return (object_ready(context) and obj.type == 'MESH'
+                and hasattr(obj, "multicamproject_bake"))
 
     def draw_header(self, context):
         self.layout.label(icon='ANCHOR_CENTER')

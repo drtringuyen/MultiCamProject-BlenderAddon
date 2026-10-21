@@ -65,9 +65,19 @@ def object_ready(context):
     return obj is not None and obj.select_get()
 
 
+class ObjectPanel:
+    """Mixin of the per-object sub-panels (02-08...): hidden while no object is both
+    selected and active. A class's own poll calls super().poll() first"""
+
+    @classmethod
+    def poll(cls, context):
+        return object_ready(context)
+
+
 class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
-    """Main panel - modules register subpanels here via bl_parent_id. Shown only while the
-    active object is selected (object_ready); its sub-panels go with it"""
+    """Main panel - modules register subpanels here via bl_parent_id. The file-wide ones
+    (01 Setup, 09 Export, IO Folders) always show; the per-object ones (ObjectPanel) only
+    while the active object is selected - else a warning on top"""
     bl_label = "MultiCamProject"
     bl_idname = "MULTICAMPROJECT_PT_main"
     bl_space_type = 'VIEW_3D'
@@ -75,29 +85,9 @@ class MULTICAMPROJECT_PT_MainPanel(bpy.types.Panel):
     bl_category = "MultiCamProject"
     bl_order = 1
 
-    @classmethod
-    def poll(cls, context):
-        return object_ready(context)
-
     def draw(self, context):
-        pass
-
-
-class MULTICAMPROJECT_PT_SelectHint(bpy.types.Panel):
-    """In place of the main panel while no object is both selected and active: a warning,
-    nothing else"""
-    bl_label = "MultiCamProject"
-    bl_idname = "MULTICAMPROJECT_PT_select_hint"
-    bl_space_type = 'VIEW_3D'
-    bl_region_type = 'UI'
-    bl_category = "MultiCamProject"
-    bl_order = 1
-
-    @classmethod
-    def poll(cls, context):
-        return not object_ready(context)
-
-    def draw(self, context):
+        if object_ready(context):
+            return
         col = self.layout.column(align=True)
         col.alert = True
         obj = getattr(context, "active_object", None)
@@ -107,7 +97,7 @@ class MULTICAMPROJECT_PT_SelectHint(bpy.types.Panel):
             col.label(text="Nothing selected", icon='ERROR')
         hint = self.layout.column(align=True)
         hint.active = False
-        hint.label(text="Click one object to work on (selected and active)")
+        hint.label(text="Click one object to work on its steps (selected and active)")
 
 
 NAME_UNITS = 5      # the New Object Name field at the start of 2B / 2C / 2D
@@ -168,7 +158,7 @@ def _chosen(row, chosen, mine):
     return row
 
 
-class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
+class MULTICAMPROJECT_PT_MeshWorkflow(ObjectPanel, bpy.types.Panel):
     """02. Mesh Workflow: 2A Project from Sides (no cameras yet), then ONE of 2B Remesh /
     2C Retopo / 2D Only Project - here (Local) or in a work window (Send Out). The
     projection always comes along. Done when the Decimate is applied and uv_normal exists"""
@@ -319,7 +309,6 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_PT_Infos)
     bpy.utils.register_class(MULTICAMPROJECT_PT_MainPanel)
-    bpy.utils.register_class(MULTICAMPROJECT_PT_SelectHint)
     bpy.utils.register_class(MULTICAMPROJECT_PT_Setup)
     bpy.utils.register_class(MULTICAMPROJECT_PT_MeshWorkflow)
 
@@ -327,6 +316,5 @@ def register():
 def unregister():
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_MeshWorkflow)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Setup)
-    bpy.utils.unregister_class(MULTICAMPROJECT_PT_SelectHint)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_MainPanel)
     bpy.utils.unregister_class(MULTICAMPROJECT_PT_Infos)
