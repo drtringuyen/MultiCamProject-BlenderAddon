@@ -344,9 +344,10 @@ def enter_camera_view(context, space):
 # The view mode is one setting for every camera, kept on the window manager (an ID, so it
 # survives addon reloads; not saved with the file). The highlighted camera's eye cycles it,
 # another camera's eye starts over at Focus:
-#   FOCUS  camera  a brush / bucket / eraser solos its camera first, the view rotates
+#   FOCUS  camera  a brush / bucket solos its camera first, the view rotates
 #   LOCK   lock    as FOCUS, and a camera view never rotates (pan and zoom still work)
-#   FREE   eye     a brush / bucket / eraser leaves the view alone, the view rotates
+#   FREE   eye     a brush / bucket leaves the view alone, the view rotates
+# The eraser never moves the view (it erases every camera's projection at once)
 _MODE_KEY = "multicamproject_view_mode"
 VIEW_MODES = ('FOCUS', 'LOCK', 'FREE')
 VIEW_MODE_ICONS = {'FREE': 'HIDE_OFF', 'FOCUS': 'VIEW_CAMERA', 'LOCK': 'LOCKED'}
@@ -389,7 +390,7 @@ def _redraw_views(context):
 
 
 def focus_camera(context, cam):
-    """A brush / bucket / eraser of `cam`: it becomes the highlighted camera. Focus / Lock
+    """A brush / bucket of `cam`: it becomes the highlighted camera. Focus / Lock
     look through it first (solo); Freestyle, or already soloed: the view stays."""
     context.window_manager[_CUR_KEY] = cam.name
     _redraw_views(context)
@@ -918,7 +919,8 @@ class MULTICAMPROJECT_OT_CamPaint(bpy.types.Operator):
         if again:
             finish_painting(context, obj)       # the pressed button again: done (view kept)
             return {'FINISHED'}
-        focus_camera(context, cam)          # Focus / Lock: look through it first
+        if self.mode != 'ERASE':            # the eraser is no camera's: the view stays
+            focus_camera(context, cam)      # Focus / Lock: look through it first
         processing_preview(context, obj)
         if paint_tex.can_paint(obj, context.scene):
             return self._texture(context, obj, cam, slot)
