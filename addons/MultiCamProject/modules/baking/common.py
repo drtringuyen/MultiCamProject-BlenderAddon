@@ -217,6 +217,18 @@ def texture_path(scene, image_name):
     return os.path.join(output_dir(scene), image_name + ".png")
 
 
+def override_file(scene, image_name):
+    """<Texture Override folder>/<name>.png when the file is there (a finished ALB_ / NOR_
+    that replaces the bake), else ''."""
+    props = getattr(scene, "multicamproject_props", None)
+    top = getattr(props, "texture_override_folder", "")
+    if not top:
+        return ""
+    from . import cache
+    path = os.path.normpath(os.path.join(bpy.path.abspath(top), image_name + ".png"))
+    return path if cache.isfile(path) else ""
+
+
 def bao_source(obj):
     """The BAo_ MCP_ and 05 take: BAo_<name>_inpaint when the user inpainted and saved it,
     else BAo_<name>."""

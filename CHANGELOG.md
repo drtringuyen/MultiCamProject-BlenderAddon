@@ -2,6 +2,27 @@
 
 ## Unreleased
 
+### Project Setup: Collections + Folders, TEMPLATE (2026-10-22)
+
+- The popup opens with a **Collections + Folders** box: the four roles (Objects, Original
+  Mesh, Export, Cameras), each collection auto detected (picked, else found by its usual
+  name) or picked from a search field, and its folder (detected, or typed / browsed). Applied
+  on OK; replaces the "Fill the empty collection pickers" tick. "Set every role folder" is
+  now "Make missing bake / export folders" (the folders themselves come from the box).
+- **Rename to default** (A↓Z button): in the popup (on OK) and in IO Folders & Collections
+  next to the picker, renames the collection to OBJECTS / Original Mesh / EXPORT / CAMERAS.
+  Skipped with a warning when another collection already has that name.
+- **ROOM_Template is now TEMPLATE** (parts TEMPLATE.Ceiling, ...). Old files: ROOM_Template is
+  still found and renamed TEMPLATE by Project Setup's Create step; old part objects count as
+  there (no duplicates).
+- Create step: **TEMPLATE with the room meshes** on / off (remembered per file). Off: an
+  empty TEMPLATE collection. Both ticks now sit in the Collections + Folders box.
+- **Resolution** (1K / 2K / 4K / 8K) in the box: the global bake resolution (objects set to A).
+- **Texture Override** folder (popup + IO Folders & Collections): an ALB_<name>.png /
+  NOR_<name>.png found there is not baked - 05 / 07 copy the file as the object's ALB_ / NOR_
+  (into the bake folder), and Export copies the override file into Export/Textures (also one
+  added after the bake). Empty = off.
+
 ### uvMesh module: uvTube, uvExtrude, Close Hole (2026-10-17)
 
 A new module (Infos row: Uv_mesh). Its row sits in 03. Mesh Editing, under the Decimate Brush.

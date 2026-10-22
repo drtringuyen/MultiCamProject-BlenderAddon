@@ -595,7 +595,7 @@ def _export_collection(scene):
 
 
 def retopo_content(context, obj):
-    """0D's start with its option on: the other selected meshes (e.g. ROOM_Template parts)."""
+    """0D's start with its option on: the other selected meshes (e.g. TEMPLATE parts)."""
     return [o for o in context.selected_objects
             if o != obj and o.type == 'MESH' and not o.library]
 
@@ -608,14 +608,14 @@ MATCH_DISTANCE = 0.10       # m: a sample this close to a part's faces lies on i
 
 
 def retopo_candidates(scene):
-    """The meshes a 2C retopo can start from: the ROOM_Template parts (the room box itself,
+    """The meshes a 2C retopo can start from: the TEMPLATE parts (the room box itself,
     the parent of the parts, has every wall in one mesh: never a start)."""
     from ... import roles, template_mesh
     coll = roles.find(scene, 'TEMPLATE')
     if coll is None:
         return []
     return [o for o in coll.all_objects if o.type == 'MESH' and not o.library
-            and o.name != template_mesh.NAME and not o.children]
+            and o.name not in (template_mesh.NAME, template_mesh.OLD_NAME) and not o.children]
 
 
 MATCH_AREA = 0.3           # and the scan is at least this much of the part's area
@@ -797,7 +797,7 @@ def make_copy(context, obj, retopo=False, decimate=True, content=None):
     copy.select_set(True)
     if context.view_layer.objects.get(obj.name) == obj:
         obj.hide_set(True)              # (not when "Original Mesh" is excluded)
-    for o in content:                   # the retopo's start (ROOM_Template parts): done
+    for o in content:                   # the retopo's start (TEMPLATE parts): done
         o.select_set(False)
         o.hide_set(True)
 

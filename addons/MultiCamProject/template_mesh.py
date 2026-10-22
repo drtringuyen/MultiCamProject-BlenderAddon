@@ -1,14 +1,17 @@
-"""Setup File IO makes the template collection ROOM_Template - its parts (ceiling, floor,
+"""Setup File IO makes the template collection TEMPLATE - its parts (ceiling, floor,
 walls A-D), each with its own origin, smooth, UVs + seams, copied from
 ENV_05_KR_Corridor2.blend (2026-10-15): the collection when the file has none, and each part
-when no object has its name."""
+when no object has its name. Project Setup can leave the parts out (an empty TEMPLATE).
+Files from before 2026-10-22 have ROOM_Template / ROOM_Template.<part>: still found, the
+collection renamed TEMPLATE by Project Setup."""
 
 import bpy
 
-NAME = "ROOM_Template"
+NAME = "TEMPLATE"
+OLD_NAME = "ROOM_Template"     # before 2026-10-22
 
 PARTS = {
-    "ROOM_Template.Ceiling": dict(
+    "TEMPLATE.Ceiling": dict(
         location=(0.0, 0.0, 3.10191),   # the origin; verts are local
         verts=(
             [-2.01163,2.22648,-0.00201], [-2.01163,-2.23554,-0.00201], [-1.62455,-2.23554,-0.00201],
@@ -26,7 +29,7 @@ PARTS = {
             [3,5], [4,5], [2,4], [1,2], [0,1], [0,7], [6,7], [3,6],
         ),
     ),
-    "ROOM_Template.Floor": dict(
+    "TEMPLATE.Floor": dict(
         location=(0.0, 0.0, 0.0),   # the origin; verts are local
         verts=(
             [-2.01163,-2.23554,0.01384], [2.14728,-2.23554,0.01384], [-2.01163,2.64327,0.01384],
@@ -48,7 +51,7 @@ PARTS = {
             [0,10], [0,4],
         ),
     ),
-    "ROOM_Template.Wall_A": dict(
+    "TEMPLATE.Wall_A": dict(
         location=(-2.01173, 0.84531, 0.0),   # the origin; verts are local
         verts=(
             [0.0001,-3.08085,0.01384], [0.0001,1.38117,3.0999], [0.0001,-3.08085,3.0999],
@@ -67,7 +70,7 @@ PARTS = {
             [6,3],
         ),
     ),
-    "ROOM_Template.Wall_B": dict(
+    "TEMPLATE.Wall_B": dict(
         location=(-0.77836, -2.32372, 0.0),   # the origin; verts are local
         verts=(
             [-1.23327,0.08818,0.01384], [-0.84619,0.08818,0.01384], [2.92564,-0.08817,0.01384],
@@ -89,7 +92,7 @@ PARTS = {
             [0,1], [0,10],
         ),
     ),
-    "ROOM_Template.Wall_C": dict(
+    "TEMPLATE.Wall_C": dict(
         location=(2.14728, 0.031, 0.0),   # the origin; verts are local
         verts=(
             [0.0,-2.26654,0.01384], [0.0,-2.44289,0.01384], [0.0,-2.26654,3.0999],
@@ -111,7 +114,7 @@ PARTS = {
             [9,10], [9,5], [8,11],
         ),
     ),
-    "ROOM_Template.Wall_D": dict(
+    "TEMPLATE.Wall_D": dict(
         location=(-0.4964, 2.38765, 0.0),   # the origin; verts are local
         verts=(
             [-1.51523,0.25562,0.01384], [2.64368,0.25562,0.01384], [-1.12815,0.25562,0.01384],
@@ -156,17 +159,25 @@ def _mesh(name, part):
     return me
 
 
-def ensure(scene):
-    """The ROOM_Template collection in the scene, with every part no object is named after.
-    Returns the names of the objects made."""
-    coll = bpy.data.collections.get(NAME)
+def find():
+    """The template collection: TEMPLATE, else an old file's ROOM_Template."""
+    return bpy.data.collections.get(NAME) or bpy.data.collections.get(OLD_NAME)
+
+
+def ensure(scene, meshes=True):
+    """The TEMPLATE collection in the scene (an old ROOM_Template renamed), with every part no
+    object is named after - none with meshes off. Returns the names of the objects made."""
+    coll = find()
     if coll is None:
         coll = bpy.data.collections.new(NAME)
+    elif coll.name == OLD_NAME and NAME not in bpy.data.collections:
+        coll.name = NAME
     if coll not in scene.collection.children_recursive:
         scene.collection.children.link(coll)
     made = []
-    for name, part in PARTS.items():
-        if name in bpy.data.objects:
+    for name, part in PARTS.items() if meshes else ():
+        old = name.replace(NAME + ".", OLD_NAME + ".", 1)
+        if name in bpy.data.objects or old in bpy.data.objects:
             continue
         obj = bpy.data.objects.new(name, _mesh(name, part))
         obj.location = part.get("location", (0.0, 0.0, 0.0))

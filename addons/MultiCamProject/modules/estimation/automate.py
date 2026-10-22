@@ -1,7 +1,7 @@
 """Automate (Polycount Estimation): 02 Mesh Workflow for every picked Raw row in one go.
 
 A Raw row's Stage cell opens a popup: Skip / 2B Remesh / 2C Retopo / 2D Only Project, the new
-object's Name, 2C's "From" mesh (the ROOM_Template part the scan lies on, matched once).
+object's Name, 2C's "From" mesh (the TEMPLATE part the scan lies on, matched once).
 Automate then runs the picked rows one after another as a blocking job:
 
   2B / 2C   the copy, named ENV_<prefix>.<next ##>_<Name>, into EXPORT, with the projection
@@ -25,7 +25,7 @@ from ... import module_manager
 NEEDS = ("remesh", "linking", "export", "baking", "camera_project")
 SHORT = {'SKIP': "Raw", 'REMESH': "2B Remesh", 'RETOPO': "2C Retopo",
          'PROJECT': "2D Project"}
-MATCH_MIN = 0.8         # a scan this much on a ROOM_Template part is a wall: 2C from it
+MATCH_MIN = 0.8         # a scan this much on a TEMPLATE part is a wall: 2C from it
 PREVIOUS_DIR = "_previous"
 
 
@@ -81,7 +81,7 @@ def made(obj):
 
 def fill_defaults(context, row, obj, force=False):
     """The popup's first open: the Name from the scan's name; a scan lying on a
-    ROOM_Template part is a wall - 2C from that part."""
+    TEMPLATE part is a wall - 2C from that part."""
     if row.auto_filled and not force:
         return
     from . import core
@@ -94,7 +94,7 @@ def fill_defaults(context, row, obj, force=False):
 
 
 def match(context, row, obj):
-    """2C's From: the ROOM_Template part the scan lies on (MATCH_MIN of its points), else
+    """2C's From: the TEMPLATE part the scan lies on (MATCH_MIN of its points), else
     none. An offloaded scan has no vertices to test: no match."""
     from ..remesh import workflow as wf
     part, share = wf.best_retopo_start(obj, wf.retopo_candidates(context.scene))
@@ -606,7 +606,7 @@ class MULTICAMPROJECT_OT_EstimationFromActive(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_EstimationAutoMatch(bpy.types.Operator):
-    """Guess 2C's start by area: the ROOM_Template part this scan lies on (most of its
+    """Guess 2C's start by area: the TEMPLATE part this scan lies on (most of its
     points within 10 cm) and covers at least 30% of. Nothing found: the pick stays"""
     bl_idname = "multicamproject.estimation_auto_match"
     bl_label = "Guess by Area"
@@ -623,7 +623,7 @@ class MULTICAMPROJECT_OT_EstimationAutoMatch(bpy.types.Operator):
         match(context, row, obj)
         if row.auto_from is None:
             row.auto_from, row.auto_share = before
-            self.report({'INFO'}, f"'{obj.name}' lies on no ROOM_Template part it is the "
+            self.report({'INFO'}, f"'{obj.name}' lies on no TEMPLATE part it is the "
                                   "size of - the pick stays")
         return {'FINISHED'}
 

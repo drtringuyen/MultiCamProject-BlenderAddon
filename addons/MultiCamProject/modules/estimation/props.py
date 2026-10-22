@@ -38,7 +38,7 @@ AUTO_STEPS = (
     ('SKIP', "Skip", "Not part of Automate - stays Raw"),
     ('REMESH', "2B Remesh", "A low poly copy of the scan (its Decimate is decided when you "
                             "open the work file), named ENV_<prefix>.<##>_<Name>"),
-    ('RETOPO', "2C Retopo", "A new object started from the 'From' mesh (a ROOM_Template "
+    ('RETOPO', "2C Retopo", "A new object started from the 'From' mesh (a TEMPLATE "
                             "part) - or empty - on the scan, named ENV_<prefix>.<##>_<Name>"),
     ('PROJECT', "2D Only Project", "The camera projection on the scan itself (it keeps its "
                                    "name)"),
@@ -73,7 +73,7 @@ class MULTICAMPROJECT_EstimationRow(bpy.types.PropertyGroup):
     auto_from: PointerProperty(
         name="From", type=bpy.types.Object, poll=_from_poll, update=_changed,
         description="2C starts from this mesh (copied in, its UV as uv_normal) - empty: an "
-                    "empty retopo. Picked from ROOM_Template by where the scan lies")
+                    "empty retopo. Picked from TEMPLATE by where the scan lies")
     auto_local: BoolProperty(
         name="Keep Local", default=False, update=_changed,
         description="Made here and worked on in this file: no work file is built or linked")

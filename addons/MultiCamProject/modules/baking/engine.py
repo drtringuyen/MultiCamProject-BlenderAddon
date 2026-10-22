@@ -296,10 +296,15 @@ def store_work(scene, tmp, old, name, normal=False):
 def copy_file(scene, src_img, dst_name, current, normal=False):
     """A final texture (ALB_ / NOR_) as a copy of a work texture's file (From Original /
     From Projection: no second bake). Returns the image, pointed at the copy."""
-    import shutil
     src = common.image_file(src_img)
     if not src or not os.path.isfile(src):
         raise RuntimeError(f"'{src_img.name}' has no file - bake it again")
+    return copy_path(scene, src, dst_name, current, normal)
+
+
+def copy_path(scene, src, dst_name, current, normal=False):
+    """copy_file from a file path (also a Texture Override file)."""
+    import shutil
     path = common.texture_path(scene, dst_name)
     _check_length(path)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -936,13 +941,23 @@ def bake_albedo_steps(context, obj):
     from . import route
     scene = context.scene
     d = common.data(obj)
-    why = route.problem(obj)
-    if why:
-        raise RuntimeError(why)
     size = common.resolution(obj, scene)
     t0 = time.perf_counter()
     name = common.alb_name(obj)
     path = common.texture_path(scene, name)
+    override = common.override_file(scene, name)
+    if override:        # Texture Override: the finished ALB_ is copied, nothing is baked
+        yield jobs.Step(f"Albedo: Texture Override {os.path.basename(override)}")
+        d.alb_image = copy_path(scene, override, name, d.alb_image)
+        d.alb_size = size
+        material.build(obj, scene)
+        d.fingerprint = fingerprint.compute(obj)
+        d.last_bake_seconds = time.perf_counter() - t0
+        gn_final.set_final(obj, scene, True)
+        return d.last_bake_seconds
+    why = route.problem(obj)
+    if why:
+        raise RuntimeError(why)
     r = route.get(obj)
     if needs_source_bake(obj):
         yield jobs.Step("Bake BAo_", 0.0)
