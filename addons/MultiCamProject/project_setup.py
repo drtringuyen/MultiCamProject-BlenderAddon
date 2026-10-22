@@ -187,7 +187,7 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
     dir_export: StringProperty(name="Export Folder", subtype='DIR_PATH', options=_REL)
     dir_cameras: StringProperty(name="Camera Photos", subtype='DIR_PATH', options=_REL)
     resolution: EnumProperty(
-        name="Bake Resolution", default='1024',
+        name="Bake Resolution", default='8192',
         items=tuple((str(n), f"{n // 1024}K", f"Bake at {n} x {n} px (every object set to A)")
                     for n in (1024, 2048, 4096, 8192)),
         description="The baking resolution of every object set to A (Auto) - the dropdown in "
@@ -219,7 +219,9 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
                 setattr(self, f"dir_{key}", value)
                 _FOUND[role] = f"{n}/{total} files" if total else ""
         bake = getattr(scene, "multicamproject_bake_settings", None)
-        if bake is not None and str(bake.resolution) in {"1024", "2048", "4096", "8192"}:
+        self.resolution = '8192'        # a file that never set its resolution: 8K
+        if bake is not None and bake.is_property_set("resolution") and \
+                str(bake.resolution) in {"1024", "2048", "4096", "8192"}:
             self.resolution = str(bake.resolution)
         self.dir_override = scene.multicamproject_props.texture_override_folder
         s = scene.multicamproject_setup
@@ -294,12 +296,12 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         split = row.split(factor=0.17, align=True)
         split.label(text="Resolution", icon='TEXTURE')
         split = split.split(factor=0.4, align=True)
-        cell = split.row(align=True)
+        mid = split.split(factor=0.45, align=True)
+        cell = mid.row(align=True)
         cell.enabled = hasattr(scene, "multicamproject_bake_settings")
         cell.prop(self, "resolution", text="")
-        right = split.split(factor=0.3, align=True)
-        right.label(text="Texture Override", icon='FILE_FOLDER')
-        cell = right.row(align=True)
+        mid.label(text="Texture Override", icon='FILE_FOLDER')
+        cell = split.row(align=True)        # lines up with the folders above
         cell.alert = bool(self.dir_override) and not folders.exists(
             os.path.normpath(bpy.path.abspath(self.dir_override)))
         cell.prop(self, "dir_override", text="")
