@@ -37,7 +37,8 @@ def draw_row(layout, obj, kind, text, icon, img):
     split = col.split(factor=0.3, align=True)
     split.label(text=text, icon=icon)
     right = split.row(align=True)
-    draw_switch(right, obj, kind, label=False)
+    sw = draw_switch(right, obj, kind, label=False)
+    sw.ui_units_x = 5           # the file path gets the rest
     right.separator(factor=0.5)
     if img is not None:
         bake_ui.draw_file(right, img)
