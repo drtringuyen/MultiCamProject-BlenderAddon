@@ -245,7 +245,7 @@ class MULTICAMPROJECT_PT_MeshWorkflow(bpy.types.Panel):
             if named:       # Retopo + Send Out in one click
                 icons.operator("multicamproject.work_remesh_out", text="",
                                icon='WINDOW').mode = 'RETOPO'
-            # from the selected mesh (ROOM_Template parts) or empty
+            # from the selected mesh (TEMPLATE parts) or empty
             icons.prop(context.scene, "multicamproject_retopo_plane", text="", icon='MESH_DATA')
             icons.prop(context.scene, "multicamproject_retopo_snap", text="", icon='SNAP_ON')
             if taken:

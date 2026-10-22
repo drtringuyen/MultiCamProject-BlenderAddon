@@ -422,6 +422,37 @@ class MULTICAMPROJECT_OT_CreateRoleCollection(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_RenameRoleCollection(bpy.types.Operator):
+    """Rename this collection to the add-on's own name for its role"""
+    bl_idname = "multicamproject.rename_role_collection"
+    bl_label = "Rename to Default"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    role: bpy.props.EnumProperty(
+        items=[(r, roles.ROLES[r][1], "") for r in roles.ORDER],
+        options={'HIDDEN', 'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return f"Rename the collection to {roles.default_name(props.role)} (the add-on's name)"
+
+    def execute(self, context):
+        scene = context.scene
+        colls = roles.collections(scene, context.view_layer, self.role)
+        if not colls:
+            return {'CANCELLED'}
+        coll = colls[0][0]
+        old = coll.name
+        why = roles.rename_to_default(self.role, coll)
+        if why:
+            self.report({'WARNING'}, f"{old} not renamed: {why}")
+            return {'CANCELLED'}
+        if roles.picked(scene, self.role) is None:      # keep it picked under its new name
+            setattr(scene.multicamproject_props, roles.ROLES[self.role][0], coll)
+        self.report({'INFO'}, f"Renamed {old} -> {coll.name}")
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
     """Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS), create
     Original Mesh / EXPORT when they are not in the scene, and set
@@ -665,7 +696,7 @@ class MULTICAMPROJECT_OT_WorkReopen(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkReopen, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkReopen, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_RenameRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkFind,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,

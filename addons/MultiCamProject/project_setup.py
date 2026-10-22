@@ -2,6 +2,11 @@
 confirmed with OK. Opened by Setup File IO (the start gate) and by the Project Setup button
 of Collections + Folders.
 
+Collections + Folders: the four roles of IO Folders & Collections, each collection auto
+detected (picked, else found by its usual name) or picked here, with a Rename to the add-on's
+own name (OBJECTS, Original Mesh, EXPORT, CAMERAS), and its folder (detected, or typed here).
+Applied on OK like the steps.
+
 File settings (B1-B3): autosave, undo steps and undo memory are Blender preferences (one
 value for every file). Here they belong to the file: the values are kept in the scene and
 set when the file opens; a file without them gets the user's own values back. Those are
@@ -13,9 +18,9 @@ import os
 
 import bpy
 from bpy.app.handlers import persistent
-from bpy.props import BoolProperty, IntProperty
+from bpy.props import BoolProperty, EnumProperty, IntProperty, StringProperty
 
-from . import gate
+from . import folders, gate, roles
 
 _PREFS = (("autosave_minutes", "filepaths", "auto_save_time"),
           ("undo_steps", "edit", "undo_steps"),
@@ -92,6 +97,10 @@ class MULTICAMPROJECT_PG_ProjectSetup(bpy.types.PropertyGroup):
     undo_steps: IntProperty(name="Undo Steps", default=64, min=1, max=256)
     undo_memory_mb: IntProperty(name="Undo Memory (MB)", default=8192, min=0, max=65536,
                                 description="0 = no limit")
+    template_meshes: BoolProperty(
+        name="Template Meshes", default=True,
+        description="TEMPLATE gets the room parts (ceiling, floor, walls A-D). Off: an empty "
+                    "TEMPLATE collection")
 
 
 # ---------------------------------------------------------------- the steps
@@ -107,10 +116,9 @@ def empty_libraries():
 
 
 STEPS = (
-    # key, group, label
-    ("pickers", 'A', "Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS)"),
-    ("create", 'A', "Create Original Mesh / EXPORT / ROOM_Template when missing"),
-    ("dirs", 'A', "Set every role folder, make missing bake / export folders"),
+    # key, group (R: the Collections + Folders box), label
+    ("create", 'R', "Create Original Mesh / EXPORT / TEMPLATE when missing"),
+    ("dirs", 'A', "Make missing bake / export folders"),
     ("wire", 'A', "Scan materials: image -> Principled BSDF (not Emission)"),
     ("relink", 'A', "Relink missing textures and photos"),
     ("preview", 'A', "Viewport quality Preview (flat color, no normal maps, textures max 2K)"),
@@ -124,6 +132,20 @@ STEPS = (
 )
 
 
+_KEYS = {'OBJECTS': "objects", 'ORIGINALS': "originals", 'EXPORT': "export",
+         'CAMERAS': "cameras"}
+_COLL_TIP = ("The collection of this role: auto detected (picked, else found by its usual "
+             "name), or pick another. Empty = found by its usual name later")
+_RENAME_TIP = "On OK, rename the collection to the add-on's own name for this role"
+_REL = {'PATH_SUPPORTS_BLEND_RELATIVE'}     # the folders are // paths
+_FOUND = {}     # role: "n/total files" of the folder detected when the popup opened
+
+
+def _role_collection(scene, view_layer, role):
+    """The collection the role has now: picked, else the one its usual name finds."""
+    return roles.picked(scene, role) or roles._found(scene, view_layer, role)
+
+
 class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
     """Project Setup: collections, folders, viewport speed and file settings - each step listed
     with a tick, nothing changes until OK. The first run unlocks the add-on"""
@@ -131,8 +153,11 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
     bl_label = "Project Setup"
     bl_options = {'REGISTER', 'UNDO'}
 
-    pickers: BoolProperty(name="Collection pickers", default=True)
     create: BoolProperty(name="Create collections", default=True)
+    template_meshes: BoolProperty(
+        name="Template Meshes", default=True,
+        description="TEMPLATE gets the room parts (ceiling, floor, walls A-D). Off: an empty "
+                    "TEMPLATE collection")
     dirs: BoolProperty(name="Folders", default=True)
     wire: BoolProperty(name="Wire scan materials", default=True)
     relink: BoolProperty(name="Relink missing", default=True)
@@ -148,6 +173,29 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
     undo_steps: IntProperty(name="Undo Steps", default=64, min=1, max=256)
     undo_memory_mb: IntProperty(name="Undo Memory (MB)", default=8192, min=0, max=65536,
                                 description="0 = no limit")
+    # the Collections + Folders section, one of each per role (_KEYS)
+    coll_objects: StringProperty(name="Objects", description=_COLL_TIP)
+    coll_originals: StringProperty(name="Original Mesh", description=_COLL_TIP)
+    coll_export: StringProperty(name="Export", description=_COLL_TIP)
+    coll_cameras: StringProperty(name="Cameras", description=_COLL_TIP)
+    rename_objects: BoolProperty(name="Rename", description=_RENAME_TIP)
+    rename_originals: BoolProperty(name="Rename", description=_RENAME_TIP)
+    rename_export: BoolProperty(name="Rename", description=_RENAME_TIP)
+    rename_cameras: BoolProperty(name="Rename", description=_RENAME_TIP)
+    dir_objects: StringProperty(name="Scan Textures", subtype='DIR_PATH', options=_REL)
+    dir_originals: StringProperty(name="Bake Folder", subtype='DIR_PATH', options=_REL)
+    dir_export: StringProperty(name="Export Folder", subtype='DIR_PATH', options=_REL)
+    dir_cameras: StringProperty(name="Camera Photos", subtype='DIR_PATH', options=_REL)
+    resolution: EnumProperty(
+        name="Bake Resolution", default='1024',
+        items=tuple((str(n), f"{n // 1024}K", f"Bake at {n} x {n} px (every object set to A)")
+                    for n in (1024, 2048, 4096, 8192)),
+        description="The baking resolution of every object set to A (Auto) - the dropdown in "
+                    "front of Export")
+    dir_override: StringProperty(
+        name="Texture Override", subtype='DIR_PATH', options=_REL,
+        description="Folder of finished ALB_<name>.png / NOR_<name>.png: those objects are not "
+                    "baked, the file is copied (and into Export/Textures). Empty = off")
 
     @classmethod
     def poll(cls, context):
@@ -160,12 +208,27 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         if not bpy.data.filepath:
             self.report({'WARNING'}, "Save the .blend first: the folders sit next to it")
             return {'CANCELLED'}
-        s = context.scene.multicamproject_setup
+        scene, vl = context.scene, context.view_layer
+        _FOUND.clear()
+        for role, key in _KEYS.items():
+            coll = _role_collection(scene, vl, role)
+            setattr(self, f"coll_{key}", coll.name if coll else "")
+            setattr(self, f"rename_{key}", False)
+            if folders.holder(scene, role)[0] is not None:
+                value, n, total = folders.detect(scene, vl, role)
+                setattr(self, f"dir_{key}", value)
+                _FOUND[role] = f"{n}/{total} files" if total else ""
+        bake = getattr(scene, "multicamproject_bake_settings", None)
+        if bake is not None and str(bake.resolution) in {"1024", "2048", "4096", "8192"}:
+            self.resolution = str(bake.resolution)
+        self.dir_override = scene.multicamproject_props.texture_override_folder
+        s = scene.multicamproject_setup
+        self.template_meshes = s.template_meshes
         if s.use_file_prefs:            # what the file has, else the defaults above
             self.autosave_minutes = s.autosave_minutes
             self.undo_steps = s.undo_steps
             self.undo_memory_mb = s.undo_memory_mb
-        return context.window_manager.invoke_props_dialog(self, width=560, confirm_text="OK")
+        return context.window_manager.invoke_props_dialog(self, width=640, confirm_text="OK")
 
     def _now(self, context, key):
         """The current value, shown after a step's label."""
@@ -184,8 +247,79 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
                     f"{f'{mem} MB' if mem else 'no limit'}")
         return ""
 
+    def _draw_roles(self, layout, scene):
+        """Collections + Folders: label | collection [rename] | folder, one row per role."""
+        box = layout.box().column(align=True)
+        box.label(text="Collections + Folders (auto detected - pick or type to change)")
+        for role, key in _KEYS.items():
+            label, icon = roles.ROLES[role][1:3]
+            row = box.row(align=True)
+            split = row.split(factor=0.17, align=True)
+            split.label(text=label, icon=icon)
+            split = split.split(factor=0.4, align=True)
+            cell = split.row(align=True)
+            cell.prop_search(self, f"coll_{key}", bpy.data, "collections", text="")
+            name = getattr(self, f"coll_{key}")
+            default = roles.default_name(role)
+            sub = cell.row(align=True)
+            sub.enabled = bool(name) and name != default
+            sub.prop(self, f"rename_{key}", text="", icon='SORTALPHA')
+            right = split.row(align=True)
+            pg, why = folders.holder(scene, role)
+            if pg is None:
+                right.active = False
+                right.label(text=f"{folders.LABELS[role]}: {why}", icon='INFO')
+            else:
+                path = getattr(self, f"dir_{key}")
+                right.alert = role not in folders.MADE and not folders.exists(
+                    os.path.normpath(bpy.path.abspath(path)) if path else "")
+                right.prop(self, f"dir_{key}", text="")
+            hint = box.row()
+            hint.active = False
+            sub = hint.split(factor=0.17)
+            sub.label(text="")
+            picked = roles.picked(scene, role)
+            if getattr(self, f"rename_{key}") and name and name != default:
+                text = f"renamed {name} -> {default} on OK"
+            elif not name:
+                text = ("none found - made on OK (Create step)" if role in roles.CREATABLE
+                        else "none found")
+            elif bpy.data.collections.get(name) is None:
+                text = f"no collection named {name}"
+            else:
+                text = "picked" if picked is not None and picked.name == name else "auto detected"
+            found = _FOUND.get(role)
+            sub.label(text=text + (f"  ·  folder: {found}" if found else ""))
+        row = box.row(align=True)       # the baking resolution + the Texture Override folder
+        split = row.split(factor=0.17, align=True)
+        split.label(text="Resolution", icon='TEXTURE')
+        split = split.split(factor=0.4, align=True)
+        cell = split.row(align=True)
+        cell.enabled = hasattr(scene, "multicamproject_bake_settings")
+        cell.prop(self, "resolution", text="")
+        right = split.split(factor=0.3, align=True)
+        right.label(text="Texture Override", icon='FILE_FOLDER')
+        cell = right.row(align=True)
+        cell.alert = bool(self.dir_override) and not folders.exists(
+            os.path.normpath(bpy.path.abspath(self.dir_override)))
+        cell.prop(self, "dir_override", text="")
+        hint = box.row()
+        hint.active = False
+        sub = hint.split(factor=0.17)
+        sub.label(text="")
+        sub.label(text="objects set to A bake at this size  ·  ALB_ / NOR_ found in Texture "
+                       "Override are copied, not baked")
+        box.separator()
+        box.prop(self, "create", text=next(t for k, _g, t in STEPS if k == "create"))
+        sub = box.row(align=True)
+        sub.enabled = self.create
+        sub.separator(factor=3)
+        sub.prop(self, "template_meshes",
+                 text="TEMPLATE with the room meshes (ceiling, floor, walls A-D), off: empty")
+
     def draw(self, context):
         layout = self.layout
+        self._draw_roles(layout, context.scene)
         missing = {"estimate": not _loaded("estimation"), "slim": not _loaded("remesh"),
                    "albedo": not _loaded("baking")}
         for group, title in (('A', "Collections, folders, viewport"), ('B', "Performance")):
@@ -216,13 +350,44 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         row.label(text=f"Save compression: {'on' if p.use_file_compression else 'off'} "
                        "(Blender preference, not changed)", icon='INFO')
 
+    def _apply_roles(self, scene):
+        """The popup's collections picked for their roles (empty: found by name later),
+        renamed to the add-on's names where asked. Returns report lines."""
+        lines = []
+        props = scene.multicamproject_props
+        for role, key in _KEYS.items():
+            attr = roles.ROLES[role][0]
+            name = getattr(self, f"coll_{key}")
+            coll = bpy.data.collections.get(name) if name else None
+            if name and coll is None:
+                self.report({'WARNING'}, f"{roles.ROLES[role][1]}: no collection named {name}")
+            if getattr(props, attr) != coll:
+                setattr(props, attr, coll)
+            if coll is not None and getattr(self, f"rename_{key}"):
+                old = coll.name
+                why = roles.rename_to_default(role, coll)
+                if why:
+                    self.report({'WARNING'}, f"{old} not renamed: {why}")
+                elif coll.name != old:
+                    lines.append(f"Renamed {old} -> {coll.name}")
+        return lines
+
     def execute(self, context):
         scene = context.scene
-        lines = []
-        if any((self.pickers, self.create, self.dirs, self.wire, self.relink)):
-            from . import folders
-            lines += folders.auto_fill(scene, context.view_layer, self.pickers, self.create,
-                                       self.dirs, self.wire, self.relink)
+        lines = self._apply_roles(scene)
+        scene.multicamproject_setup.template_meshes = self.template_meshes
+        bake = getattr(scene, "multicamproject_bake_settings", None)
+        if bake is not None and bake.resolution != int(self.resolution):
+            bake.resolution = int(self.resolution)
+            lines.append(f"Bake resolution: {int(self.resolution) // 1024}K")
+        props = scene.multicamproject_props
+        if props.texture_override_folder != self.dir_override:
+            props.texture_override_folder = self.dir_override
+            lines.append(f"Texture Override: {self.dir_override or 'off'}")
+        given = {role: getattr(self, f"dir_{key}") for role, key in _KEYS.items()}
+        lines += folders.auto_fill(scene, context.view_layer, True, self.create, True,
+                                   self.wire, self.relink, self.template_meshes, given,
+                                   make=self.dirs)
         scene.multicamproject_props.file_io_done = True     # the add-on unlocks
         e = scene.eevee
         if self.samples:

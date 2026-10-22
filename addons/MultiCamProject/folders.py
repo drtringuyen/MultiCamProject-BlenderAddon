@@ -566,11 +566,13 @@ def wire_scan_materials(scene, view_layer):
 
 
 def auto_fill(scene, view_layer, pickers=True, create=True, dirs=True, wire=True,
-              relink=True):
+              relink=True, template_meshes=None, given=None, make=True):
     """Auto Detect and Fill: empty collection pickers, Original Mesh / EXPORT and the template
-    collection ROOM_Template (template_mesh.py) made when they are not in the scene, then every
-    role's folder (missing bake / export folders are made). Each step can be left out (the
-    Project Setup popup). Returns report lines."""
+    collection TEMPLATE (template_mesh.py; its room parts unless template_meshes is off, None =
+    the Project Setup choice) made when they are not in the scene, then every role's folder -
+    `given` {role: folder} (the Project Setup popup), else detected - missing bake / export
+    folders made unless `make` is off. Each step can be left out (the Project Setup popup).
+    Returns report lines."""
     lines = []
     filled = roles.autofill(scene) if pickers else []
     if filled:
@@ -579,9 +581,14 @@ def auto_fill(scene, view_layer, pickers=True, create=True, dirs=True, wire=True
     for role in roles.CREATABLE if create else ():  # Original Mesh / EXPORT, when missing
         if not roles.collections(scene, view_layer, role):
             made.append(roles.ensure(scene, role).name)
-    room = template_mesh.ensure(scene) if create else None
-    if room:
-        made.append(f"{template_mesh.NAME} ({len(room)} objects)")
+    if create:
+        if template_meshes is None:
+            setup = getattr(scene, "multicamproject_setup", None)
+            template_meshes = setup is None or setup.template_meshes
+        had = template_mesh.find()
+        room = template_mesh.ensure(scene, template_meshes)
+        if room or had is None:
+            made.append(f"{template_mesh.NAME} ({len(room)} objects)")
     if made:
         lines.append("Added to the scene: " + ", ".join(made))
     for role in roles.ORDER if dirs else ():
@@ -589,10 +596,13 @@ def auto_fill(scene, view_layer, pickers=True, create=True, dirs=True, wire=True
         if pg is None:
             lines.append(f"{LABELS[role]}: {attr}")
             continue
-        value, n, total = detect(scene, view_layer, role)
+        if given and given.get(role):
+            value, n, total = given[role], 0, 0
+        else:
+            value, n, total = detect(scene, view_layer, role)
         if getattr(pg, attr) != value:
             setattr(pg, attr, value)
-        if role in MADE:
+        if make and role in MADE:
             make_dir(scene, role)
         found = f" ({n}/{total} files)" if total else ""
         lines.append(f"{LABELS[role]}: {value}{found}")

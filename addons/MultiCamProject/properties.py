@@ -97,6 +97,12 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
         description="Folder holding the original scan textures of the objects. Missing "
                     "textures are relinked from it on their own. Reload points "
                     "every texture of the objects' materials at the file of the same name here")
+    texture_override_folder: StringProperty(
+        name="Texture Override", default="", subtype='DIR_PATH',
+        options={'PATH_SUPPORTS_BLEND_RELATIVE'},
+        description="Folder of finished ALB_<name>.png / NOR_<name>.png. An object whose "
+                    "texture is here is not baked: the file is copied as its ALB_ / NOR_ and "
+                    "Export copies it into Export/Textures. Empty = off")
     photos_folder: StringProperty(
         name="Camera Photos", default="//00.Scan/00.Photos/", subtype='DIR_PATH',
         options={'PATH_SUPPORTS_BLEND_RELATIVE'},

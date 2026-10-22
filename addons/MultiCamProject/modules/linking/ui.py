@@ -113,6 +113,14 @@ def draw_roles(layout, context):
         if role != roles.ORDER[-1]:
             box.separator(factor=0.6)
     box.separator(factor=0.6)
+    row = box.row(align=True)       # finished ALB_ / NOR_ that replace the bakes
+    split = row.split(factor=0.38, align=True)
+    split.label(text="Texture Override", icon='FILE_FOLDER')
+    cell = split.row(align=True)
+    path = props.texture_override_folder
+    cell.alert = bool(path) and not folders.exists(os.path.normpath(bpy.path.abspath(path)))
+    cell.prop(props, "texture_override_folder", text="")
+    box.separator(factor=0.6)
     row = box.row(align=True)
     row.scale_y = 1.2
     split = row.split(factor=0.38, align=True)
@@ -125,11 +133,16 @@ def draw_roles(layout, context):
 
 
 def _draw_picker(row, scene, vl, props, role, attr):
-    """The collection field; + a create button when Original Mesh / EXPORT is not there."""
+    """The collection field; + a create button when Original Mesh / EXPORT is not there, a
+    rename one when its name is not the add-on's (OBJECTS, ...)."""
     row.prop(props, attr, text="")
-    if role in roles.CREATABLE and not roles.collections(scene, vl, role):
+    colls = roles.collections(scene, vl, role)
+    if role in roles.CREATABLE and not colls:
         row.operator(ops.MULTICAMPROJECT_OT_CreateRoleCollection.bl_idname, text="",
                      icon='FILE_REFRESH').role = role
+    elif colls and colls[0][0].name != roles.default_name(role):
+        row.operator(ops.MULTICAMPROJECT_OT_RenameRoleCollection.bl_idname, text="",
+                     icon='SORTALPHA').role = role
 
 
 def _draw_folder(row, scene, role, wide):

@@ -12,7 +12,7 @@ ROLES = {
     'EXPORT': ("export_collection", "Export", 'EXPORT', ("EXPORT",)),
     'CAMERAS': ("cameras_collection", "Cameras", 'OUTLINER_OB_CAMERA', ("CAMERAS",)),
     'ROOM': (None, "Room", 'HOME', ("ROOM",)),
-    'TEMPLATE': (None, "Room Template", 'SNAP_VOLUME', ("ROOM_Template",)),
+    'TEMPLATE': (None, "Template", 'SNAP_VOLUME', ("TEMPLATE", "ROOM_Template")),
 }
 ORDER = ('OBJECTS', 'ORIGINALS', 'EXPORT', 'CAMERAS')     # the Linking panel's pickers
 HEADER = ORDER + ('ROOM', 'TEMPLATE')                     # the EXPORT header's buttons
@@ -129,6 +129,26 @@ def ensure(scene, role):
     if props is not None:
         setattr(props, ROLES[role][0], coll)
     return coll
+
+
+def default_name(role):
+    """The add-on's own name for the role's collection (OBJECTS, Original Mesh, ...)."""
+    return ROLES[role][3][0]
+
+
+def rename_to_default(role, coll):
+    """Give `coll` the role's default name. Returns None when done (or already so), else why
+    not: another collection has the name (Blender would make it OBJECTS.001)."""
+    name = default_name(role)
+    if coll is None or coll.name == name:
+        return None
+    if coll.library:
+        return f"{coll.name} is linked from another file"
+    other = bpy.data.collections.get(name)
+    if other is not None and other != coll:
+        return f"another collection is already named {name}"
+    coll.name = name
+    return None
 
 
 def _found(scene, view_layer, role):

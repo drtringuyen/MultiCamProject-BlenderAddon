@@ -319,7 +319,7 @@ def focus_retopo(context, obj, report=None):
 
 class MULTICAMPROJECT_OT_RetopoEmpty(bpy.types.Operator):
     """2C Retopo: as 2B Remesh (name, EXPORT, MCP_ / MAT_ / ALB_ / NOR_, Bake Source),
-    but the new object starts as the other selected mesh (e.g. a ROOM_Template part, its UV
+    but the new object starts as the other selected mesh (e.g. a TEMPLATE part, its UV
     as uv_normal) - or empty, per the 0D option - to model by hand on the original.
     Then both in local view and Edit Mode on the new object"""
     bl_idname = "multicamproject.retopo_empty"
@@ -973,7 +973,7 @@ def register():
     bpy.types.Scene.multicamproject_retopo_plane = BoolProperty(
         name="Start from the Selected Mesh", default=True,
         description="2C: on - the retopo starts as a copy of the other selected mesh (e.g. "
-                    "a ROOM_Template part; select it, then the scan active), its UV map as "
+                    "a TEMPLATE part; select it, then the scan active), its UV map as "
                     "uv_normal; off - completely empty, model from nothing")
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.append(_face_menu)
     bpy.types.VIEW3D_MT_edit_mesh_faces.append(_face_menu)

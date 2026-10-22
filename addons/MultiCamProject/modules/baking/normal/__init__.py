@@ -197,13 +197,24 @@ def generate_steps(context, obj, source):
     scene = context.scene
     s = common.settings(scene)
     d = common.data(obj)
-    alb = common.alb_source(obj)
-    if alb is None or not common.file_ok(alb):
-        raise RuntimeError("No ALB_ - 05 Bake Albedo first")
     size = common.resolution(obj, scene)
     t0 = time.perf_counter()
     name = common.nor_name(obj)
     path = common.texture_path(scene, name)
+    override = common.override_file(scene, name)
+    if override:        # Texture Override: the finished NOR_ is copied, nothing is made
+        yield jobs.Step(f"Normal: Texture Override {os.path.basename(override)}")
+        d.nor_image = engine.copy_path(scene, override, name, d.nor_image, normal=True)
+        d.nor_size = size
+        d.nor_source_used = source
+        d.nor_fingerprint = state(obj, scene)
+        d.last_nor_seconds = time.perf_counter() - t0
+        material.build(obj, scene)
+        final.write_inputs(obj, scene)
+        return d.last_nor_seconds
+    alb = common.alb_source(obj)
+    if alb is None or not common.file_ok(alb):
+        raise RuntimeError("No ALB_ - 05 Bake Albedo first")
     yield jobs.Step(f"Normal: {LABELS[source]} of {alb.name}")
     rgb = (ai.generate(alb, size) if source == 'AI' else highpass.generate(alb, size, s))
     if from_scan(obj):
