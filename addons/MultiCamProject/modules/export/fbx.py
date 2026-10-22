@@ -40,9 +40,10 @@ def names_aside(ids):
 
 def copy_textures(objs, folder):
     """ALB_/NOR_ files into <folder>/Textures/ as ALB_<name>.png / NOR_<name>.png - the ALB_
-    as inpainted when it was (common.alb_source), a Texture Override file instead when there is
-    one. Skipped when size and time match.
-    Returns {MAT_'s image name: copied path}."""
+    as inpainted when it was (common.alb_source); a texture on Load (TexOverride) is its file
+    in 02.Overrides. Skipped when size and time match, and for a Locked object whose copy is
+    there (Lock Finish copied it: an override changed later is not taken until it is locked
+    again). Returns {MAT_'s image name: copied path}."""
     tex = os.path.join(folder, "Textures")
     os.makedirs(tex, exist_ok=True)
     out = {}
@@ -51,11 +52,13 @@ def copy_textures(objs, folder):
         for img, src_img in ((d.alb_image, common.alb_source(obj)), (d.nor_image, d.nor_image)):
             if img is None or src_img is None:
                 continue
-            # a Texture Override file wins over the bake (also one added after the bake)
-            src = common.override_file(bpy.context.scene, img.name) or common.image_file(src_img)
+            src = common.image_file(src_img)
+            dst = os.path.join(tex, img.name + ".png")
+            if d.locked and os.path.isfile(dst):        # copied when it was locked
+                out[img.name] = out[src_img.name] = dst
+                continue
             if not src or not os.path.isfile(src):
                 continue
-            dst = os.path.join(tex, img.name + ".png")
             st = os.stat(src)
             if (not os.path.isfile(dst) or os.path.getsize(dst) != st.st_size
                     or int(os.path.getmtime(dst)) != int(st.st_mtime)):

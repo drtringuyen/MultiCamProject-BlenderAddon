@@ -14,7 +14,8 @@ Issue = namedtuple("Issue", "obj code text severity")
 
 ERROR, WARNING, INFO = 'ERROR', 'WARNING', 'INFO'
 # warnings that do not stop an object from being ready: orange, never red
-SOFT = {'UV_BAD'}       # uv_normal overlapping / outside 0-1: often fine, the user decides
+SOFT = {'UV_BAD',       # uv_normal overlapping / outside 0-1: often fine, the user decides
+        'OVERRIDE'}     # a loaded file's size / bit depth (02.Overrides): the user's call
 
 
 def blocking(issue):
@@ -46,6 +47,10 @@ SUMMARY = {
     'DECIMATE': ("{n} with the Decimate not applied (03)", "multicamproject.export_apply_decimate",
                  "Apply + unwrap"),
     'HANDMADE': ("{n} handmade with problems", None, "see the object's notes"),
+    'OVERRIDE': ("{n} loaded texture(s) of another size / format", None,
+                 "fix the file in 02.Overrides"),
+    'OVERRIDE_FILE': ("{n} loaded texture(s) missing in 02.Overrides", None,
+                      "put the file back, or switch it to Bake (07)"),
 }
 
 DECIMATE = "Decimate"       # remesh.workflow.DECIMATE (export works without the module)
@@ -328,26 +333,32 @@ def check_textures(obj, scene):
     out = []
     if d.alb_image is None:
         return [Issue(obj.name, 'NOT_BAKED', "not baked", WARNING)] if common.has_uv_normal(obj) else []
+    from ..tex_override import core as tex
     for img, label, depth in ((d.alb_image, "ALB", 8), (d.nor_image, "NOR", 16)):
         if img is None:
             if label == "NOR":
                 out.append(Issue(obj.name, 'NOT_BAKED', "no normal map", WARNING))
             continue
+        # a loaded file (02.Overrides) is the user's: told, never baked over by a fix
+        loaded = tex.is_load(obj, label)
+        bad = 'OVERRIDE' if loaded else 'TEXTURE'
+        tag = f"{label} (02.Overrides)" if loaded else label
         path = common.image_file(img)
         exists, mtime = cache.file_state(path) if path else (False, 0.0)
         if not exists:
-            out.append(Issue(obj.name, 'FILE', f"{label} file missing: {path or img.name}", ERROR))
+            out.append(Issue(obj.name, 'OVERRIDE_FILE' if loaded else 'FILE',
+                             f"{tag} file missing: {path or img.name}", ERROR))
             continue
         hdr = cache.get(obj, f"png_{label}_{path}_{mtime}", lambda _o: png_header(path))
         if hdr is None:
-            out.append(Issue(obj.name, 'TEXTURE', f"{label} is not a PNG", WARNING))
+            out.append(Issue(obj.name, bad, f"{tag} is not a PNG", WARNING))
             continue
         w, h, dep, _ct = hdr
         res = common.resolution(obj, scene)
         if (w, h) != (res, res):
-            out.append(Issue(obj.name, 'TEXTURE', f"{label} is {w}x{h}, not {res}", WARNING))
+            out.append(Issue(obj.name, bad, f"{tag} is {w}x{h}, not {res}", WARNING))
         if dep != depth:
-            out.append(Issue(obj.name, 'TEXTURE', f"{label} is {dep}-bit, not {depth}-bit", WARNING))
+            out.append(Issue(obj.name, bad, f"{tag} is {dep}-bit, not {depth}-bit", WARNING))
     if d.nor_image is not None and d.nor_image.colorspace_settings.name != 'Non-Color':
         out.append(Issue(obj.name, 'TEXTURE', "NOR is not Non-Color", WARNING))
     if d.material is None:

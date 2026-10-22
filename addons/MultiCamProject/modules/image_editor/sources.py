@@ -294,6 +294,10 @@ def draw_button(layout, kind, owner):
     Image Editor and starts Inpaint there."""
     if owner is None:
         return
+    d = getattr(owner, "multicamproject_bake", None)
+    if kind == 'ALB' and d is not None and getattr(d, "alb_mode", 'BAKE') == 'LOAD':
+        layout = layout.row(align=True)     # loaded from 02.Overrides: edit that file itself
+        layout.enabled = False
     op = layout.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER',
                          depress=has_inpaint(Source(kind, owner)))
     op.kind, op.owner = kind, owner.name

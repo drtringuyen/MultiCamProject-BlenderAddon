@@ -39,7 +39,7 @@ def _draw_bake_row(context, layout, obj):
             layout.operator("multicamproject.bake_view_mix", text="Bake Camera Mixture",
                             icon='RENDER_STILL')
         return
-    bake_ui.draw_bake_box(context, layout, obj, route_rows=True)
+    bake_ui.draw_bake_box(context, layout, obj, route_rows=True, switches=True)
 
 
 def _inpaint_ready(obj):

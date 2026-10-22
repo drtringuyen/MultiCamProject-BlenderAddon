@@ -117,7 +117,7 @@ def draw_roles(layout, context):
     box.separator(factor=0.6)
     row = box.row(align=True)       # finished ALB_ / NOR_ that replace the bakes
     split = row.split(factor=0.38, align=True)
-    split.label(text="Texture Override", icon='FILE_FOLDER')
+    split.label(text="Overrides", icon='FILE_FOLDER')
     cell = split.row(align=True)
     path = props.texture_override_folder
     cell.alert = bool(path) and not folders.exists(os.path.normpath(bpy.path.abspath(path)))

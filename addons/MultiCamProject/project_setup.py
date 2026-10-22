@@ -193,9 +193,9 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         description="The baking resolution of every object set to A (Auto) - the dropdown in "
                     "front of Export")
     dir_override: StringProperty(
-        name="Texture Override", subtype='DIR_PATH', options=_REL,
-        description="Folder of finished ALB_<name>.png / NOR_<name>.png: those objects are not "
-                    "baked, the file is copied (and into Export/Textures). Empty = off")
+        name="Overrides", subtype='DIR_PATH', options=_REL,
+        description="02.Overrides: finished ALB_<name>.png / NOR_<name>.png. A texture set to "
+                    "Load (07) uses its file here instead of a bake")
 
     @classmethod
     def poll(cls, context):
@@ -300,7 +300,7 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         cell = mid.row(align=True)
         cell.enabled = hasattr(scene, "multicamproject_bake_settings")
         cell.prop(self, "resolution", text="")
-        mid.label(text="Texture Override", icon='FILE_FOLDER')
+        mid.label(text="Overrides", icon='FILE_FOLDER')
         cell = split.row(align=True)        # lines up with the folders above
         cell.alert = bool(self.dir_override) and not folders.exists(
             os.path.normpath(bpy.path.abspath(self.dir_override)))
@@ -309,8 +309,8 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         hint.active = False
         sub = hint.split(factor=0.17)
         sub.label(text="")
-        sub.label(text="objects set to A bake at this size  ·  ALB_ / NOR_ found in Texture "
-                       "Override are copied, not baked")
+        sub.label(text="objects set to A bake at this size  ·  ALB_ / NOR_ set to Load (07) "
+                       "use their file in Overrides")
         box.separator()
         box.prop(self, "create", text=next(t for k, _g, t in STEPS if k == "create"))
         sub = box.row(align=True)

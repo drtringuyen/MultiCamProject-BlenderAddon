@@ -123,6 +123,19 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                     "another size are listed to bake again")
     alb_image: PointerProperty(type=bpy.types.Image, name="Albedo")
     nor_image: PointerProperty(type=bpy.types.Image, name="Normal")
+    # TexOverride: each one baked here (01.Bake) or a finished file loaded (02.Overrides)
+    alb_mode: EnumProperty(
+        name="ALB_", default='BAKE',
+        items=(('BAKE', "Bake", "05 bakes ALB_ into the bake folder (01.Bake)", 0),
+               ('LOAD', "Load", "ALB_ is the finished file in the Overrides folder "
+                                "(02.Overrides) - nothing is baked", 1)),
+        description="Where ALB_ comes from: baked (05) or loaded from 02.Overrides")
+    nor_mode: EnumProperty(
+        name="NOR_", default='BAKE',
+        items=(('BAKE', "Bake", "07 generates NOR_ into the bake folder (01.Bake)", 0),
+               ('LOAD', "Load", "NOR_ is the finished file in the Overrides folder "
+                                "(02.Overrides) - nothing is generated", 1)),
+        description="Where NOR_ comes from: generated (07) or loaded from 02.Overrides")
     # 06 Inpainting: the saved copies (files next to the originals, which stay as baked)
     alb_inpaint: PointerProperty(type=bpy.types.Image, name="Albedo Inpainted",
                                  description="ALB_<name>_inpaint: ALB_ inpainted - exported as "

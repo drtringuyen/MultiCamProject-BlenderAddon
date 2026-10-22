@@ -19,7 +19,8 @@ from .. import common, engine, gn_final as final, jobs, material
 from . import ai, highpass, pngio
 
 LABELS = {'HIGHPASS': "High-pass", 'AI': "AI", 'ORIGINAL': "BNo_ copy",
-          'MESH': "Bake from mesh", 'BLEND': "Mesh + Albedo"}     # the last two: older runs
+          'MESH': "Bake from mesh", 'BLEND': "Mesh + Albedo",     # these two: older runs
+          'LOAD': "Loaded"}                                       # TexOverride Load
 
 
 def is_full():
@@ -42,8 +43,15 @@ def usable(source):
 
 def problem(obj, scene, source):
     """Why NOR_ cannot be made for `obj` ('' = it can). A missing / outdated ALB_ is baked
-    first by 07, so only the route can stop it."""
+    first by 07, so only the route can stop it - or, loaded (TexOverride), its file."""
     from .. import route
+    d = common.data(obj)
+    if d.nor_mode == 'LOAD':
+        from ...tex_override import core as tex
+        return tex.problem(scene, obj, 'NOR')
+    if d.alb_mode == 'LOAD':        # NOR_ from the loaded ALB_: no route behind it
+        from ...tex_override import core as tex
+        return tex.problem(scene, obj, 'ALB') or (route.problem(obj) if from_scan(obj) else "")
     return route.problem(obj)
 
 
@@ -202,8 +210,10 @@ def state(obj, scene=None):
 
 def nor_outdated(obj, scene=None):
     """NOR_ was made from another ALB_ / settings than now ('' stamp: older NOR_, left as it
-    was)."""
+    was). A loaded NOR_ (TexOverride) is never outdated."""
     d = common.data(obj)
+    if d.nor_mode == 'LOAD':
+        return False
     return bool(d.nor_fingerprint) and d.nor_fingerprint != state(obj, scene)
 
 
@@ -219,16 +229,11 @@ def generate_steps(context, obj, source):
     t0 = time.perf_counter()
     name = common.nor_name(obj)
     path = common.texture_path(scene, name)
-    override = common.override_file(scene, name)
-    if override:        # Texture Override: the finished NOR_ is copied, nothing is made
-        yield jobs.Step(f"Normal: Texture Override {os.path.basename(override)}")
-        d.nor_image = engine.copy_path(scene, override, name, d.nor_image, normal=True)
-        d.nor_size = size
-        d.nor_source_used = source
-        d.nor_fingerprint = state(obj, scene)
+    if d.nor_mode == 'LOAD':    # TexOverride Load: the finished file in 02.Overrides, as it is
+        from ...tex_override import core as tex
+        yield jobs.Step(f"Normal: Load {os.path.basename(tex.override_path(scene, obj, 'NOR'))}")
+        tex.link(scene, obj, 'NOR')
         d.last_nor_seconds = time.perf_counter() - t0
-        material.build(obj, scene)
-        final.write_inputs(obj, scene)
         return d.last_nor_seconds
     alb = common.alb_source(obj)
     if alb is None or not common.file_ok(alb):

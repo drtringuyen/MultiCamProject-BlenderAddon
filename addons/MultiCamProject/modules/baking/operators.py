@@ -64,11 +64,13 @@ def bake_objects(context, objs, albedo=True, nor_source=None, log=None):
     return jobs.run_sync(bake_objects_steps(context, objs, albedo, nor_source, log))
 
 
-def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
+def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None, only_stale=False):
     """Albedo and/or normal bake for `objs`, one object after the other (each one an item of
     the job's progress list; a stop request ends the run between objects). An object with a
     Bake Source but no current BA_ bakes from its source first; a normal map at another size
-    than the albedo remakes the albedo at that size too. A generator (jobs); returns
+    than the albedo remakes the albedo at that size too. A texture on Load (TexOverride) is
+    pointed at its file in 02.Overrides instead. `only_stale` (Finalize): a Bake texture
+    that is there and current is kept. A generator (jobs); returns
     (done, [(object name, error)])."""
     done, failed = [], []
     try:
@@ -88,7 +90,7 @@ def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
                 # an excluded / hidden collection bakes nothing: shown for the bake
                 with common.shown(context, [obj]):
                     yield from _bake_one(context, obj, albedo, nor_source,
-                                         common.resolution(obj, context.scene), log)
+                                         common.resolution(obj, context.scene), log, only_stale)
                 done.append(obj)
                 jobs.item_end(name)
             except Exception as e:      # one object failing must not stop the others
@@ -101,12 +103,22 @@ def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None):
     return done, failed
 
 
-def _bake_one(context, obj, albedo, nor_source, res, log):
+def _bake_one(context, obj, albedo, nor_source, res, log, only_stale=False):
     """bake_objects' work for one object (a generator)."""
-    # one resolution: a normal map alone at a new size remakes the albedo too
-    with_albedo = albedo or (nor_source is not None
-                             and common.data(obj).alb_size not in (0, res))
+    from ... import steps
+    d = common.data(obj)
+    alb_load = d.alb_mode == 'LOAD'
+    # one resolution: a normal map alone at a new size remakes the albedo too (a loaded
+    # ALB_ keeps its own size)
+    with_albedo = albedo or (nor_source is not None and not alb_load
+                             and d.alb_size not in (0, res))
     with_normal = nor_source is not None
+    if only_stale and with_albedo and not alb_load and steps.alb_fresh(obj):
+        with_albedo = False             # Finalize: a current ALB_ is kept
+    if with_albedo and alb_load:
+        yield jobs.Step("Albedo", 0.1)
+        yield from engine.bake_albedo_steps(context, obj)
+        with_albedo = False
     if with_albedo:
         if not common.has_uv_normal(obj):
             raise RuntimeError(f"no {common.UV_NORMAL}")
@@ -123,6 +135,12 @@ def _bake_one(context, obj, albedo, nor_source, res, log):
             log(f"{obj.name}: baked from {common.data(obj).bake_source.name} first")
         yield jobs.Step("Albedo", 0.1)
         yield from engine.bake_albedo_steps(context, obj)
+    if with_normal and only_stale and d.nor_mode != 'LOAD':
+        from . import cache
+        cache.clear()                   # the ALB_ above may be new (its file date)
+        steps.forget()
+        if steps.nor_fresh(obj):
+            with_normal = False         # Finalize: a NOR_ current with its ALB_ is kept
     if with_normal:
         why = normal.problem(obj, context.scene, nor_source)
         if why:
@@ -306,6 +324,14 @@ class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _alb_problem(obj, scene):
+    """Why ALB_ can't be made: the route - or, on Load (TexOverride), its file."""
+    if common.data(obj).alb_mode == 'LOAD':
+        from ..tex_override import core as tex
+        return tex.problem(scene, obj, 'ALB')
+    return route.problem(obj)
+
+
 class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
     """Bake the Processing material (BAo_ + projection, by the Bake Route) into ALB_<name> on uv_normal and
     build MAT_. Each object then switches to Baked"""
@@ -330,7 +356,7 @@ class MULTICAMPROJECT_OT_BakeAlbedo(bpy.types.Operator):
             return False
         for o in objs:
             why = ("Locked Finish: unlock it in 08 first" if common.data(o).locked
-                   else route.problem(o))
+                   else _alb_problem(o, context.scene))
             if why:
                 cls.poll_message_set(f"{o.name}: {why}")
                 return False
@@ -871,9 +897,11 @@ def lock_final(obj, scene, copy=True):
     """08 Lock Finish for `obj`: '' when locked, else why not. `copy`: ALB_ / NOR_ go into
     the Export folder (a work window leaves that to the main file's Receive)."""
     from ... import steps
+    from . import cache
+    cache.clear()
     steps.forget()
     if 7 not in steps.state(obj, scene, fresh=True).done:
-        return "Finish 07 first: ALB_ and NOR_ baked and current"
+        return "Finish 07 first: ALB_ and NOR_ baked and current (or loaded)"
     folder = common.export_textures_dir(scene) if copy else ""
     if folder:          # the Export folder holds them from now on
         from ..export import fbx
@@ -965,8 +993,9 @@ class MULTICAMPROJECT_OT_FinalInpaintDone(bpy.types.Operator):
 
 
 class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
-    """05+07 Bake Final: the Processing look as it is now is the final - ALB_ baked new (a
-    saved ALB_ inpaint is dropped), NOR_ made from it, then Lock Finish. In a work window
+    """05+07 Finalize: each ALB_ / NOR_ by its mode (TexOverride) - Load points it at its
+    file in 02.Overrides, Bake makes it when missing or outdated (a current one is kept; a
+    saved ALB_ inpaint goes when ALB_ is baked new) - then Lock Finish. In a work window
     the object is locked and sent back: Receive locks it in the main file"""
     bl_idname = "multicamproject.bake_final"
     bl_label = "Bake Final"
@@ -995,7 +1024,10 @@ class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
             if _in_work_window(scene, o):       # Receive centers the main file's too
                 from ..linking import core as linking
                 linking.center_origin_kept(o)
-        dropped = [o.name for o in objs if drop_alb_inpaint(o, scene)]
+        from ... import steps
+        steps.forget()
+        rebake = [o for o in objs if common.data(o).alb_mode != 'LOAD' and not steps.alb_fresh(o)]
+        dropped = [o.name for o in rebake if drop_alb_inpaint(o, scene)]
         log = [f"ALB_ inpaint dropped: {', '.join(dropped)}"] if dropped else []
         finish = _finisher("Baked Final", len(objs))
 
@@ -1006,7 +1038,7 @@ class MULTICAMPROJECT_OT_BakeFinal(bpy.types.Operator):
             return lines
         return jobs.start(self, context, "Bake Final", [o.name for o in objs],
                           bake_objects_steps(context, objs, True, common.settings(scene).nor_source,
-                                             log=lambda t: log.append(t)),
+                                             log=lambda t: log.append(t), only_stale=True),
                           final)
 
 

@@ -105,7 +105,7 @@ def alb_fresh(obj):
     d = _bake(obj)
     if d is None or d.alb_image is None or not common.file_ok(d.alb_image):
         return False
-    if d.handmade:
+    if d.handmade or d.alb_mode == 'LOAD':     # Load (TexOverride): its file is the result
         return True
     return not (fingerprint.is_outdated(obj) or fingerprint.original_outdated(obj)
                 or fingerprint.projection_outdated(obj))
@@ -128,7 +128,7 @@ def nor_fresh(obj):
     d = _bake(obj)
     if d is None or d.nor_image is None or not common.file_ok(d.nor_image):
         return False
-    if d.handmade:
+    if d.handmade or d.nor_mode == 'LOAD':     # Load (TexOverride): its file is the result
         return True
     return alb_fresh(obj) and not normal.nor_outdated(obj)
 
@@ -178,18 +178,19 @@ def _state(obj, scene):
     if mesh_done(obj):
         done.add(2)
         made.add(2)
+        loaded = d.alb_mode == 'LOAD'       # TexOverride: ALB_ needs no BAo_ behind it
         if bao_fresh(obj):
             done.add(3)
-            if alb_fresh(obj):
-                done.add(5)
-                if nor_fresh(obj):
-                    done.add(7)
+        if (3 in done or loaded) and alb_fresh(obj):
+            done.add(5)
+            if nor_fresh(obj):
+                done.add(7)
         if bao_made(obj):
             made.add(3)
-            if _file_there(d.alb_image):
-                made.add(5)
-                if _file_there(d.nor_image):
-                    made.add(7)
+        if (3 in made or loaded) and _file_there(d.alb_image):
+            made.add(5)
+            if _file_there(d.nor_image):
+                made.add(7)
     if d.locked:
         stage = 'LOCKED'
     elif 7 in done:
@@ -229,6 +230,8 @@ def why_locked(obj, step, scene=None):
         return "Select a mesh"
     st = state(obj, scene)
     need, text = _NEEDS[step]
+    if step == 7 and d is not None and d.alb_mode == 'LOAD':
+        need, text = 5, "ALB_ is on Load: its file in 02.Overrides is missing"
     return "" if need in st.made else text
 
 
@@ -239,6 +242,9 @@ def outdated_note(obj, step, scene=None):
         return ""
     st = state(obj, scene)
     need = _NEEDS[step][0]
+    d = _bake(obj)
+    if step == 7 and d is not None and d.alb_mode == 'LOAD':
+        return ""           # NOR_ from the loaded ALB_: 03 does not matter
     if need not in st.made or need in st.done:
         return ""
     if need == 3:

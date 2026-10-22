@@ -303,7 +303,7 @@ def copy_file(scene, src_img, dst_name, current, normal=False):
 
 
 def copy_path(scene, src, dst_name, current, normal=False):
-    """copy_file from a file path (also a Texture Override file)."""
+    """copy_file from a file path."""
     import shutil
     path = common.texture_path(scene, dst_name)
     _check_length(path)
@@ -945,15 +945,11 @@ def bake_albedo_steps(context, obj):
     t0 = time.perf_counter()
     name = common.alb_name(obj)
     path = common.texture_path(scene, name)
-    override = common.override_file(scene, name)
-    if override:        # Texture Override: the finished ALB_ is copied, nothing is baked
-        yield jobs.Step(f"Albedo: Texture Override {os.path.basename(override)}")
-        d.alb_image = copy_path(scene, override, name, d.alb_image)
-        d.alb_size = size
-        material.build(obj, scene)
-        d.fingerprint = fingerprint.compute(obj)
+    if d.alb_mode == 'LOAD':    # TexOverride Load: the finished file in 02.Overrides, as it is
+        from ..tex_override import core as tex
+        yield jobs.Step(f"Albedo: Load {os.path.basename(tex.override_path(scene, obj, 'ALB'))}")
+        tex.link(scene, obj, 'ALB')
         d.last_bake_seconds = time.perf_counter() - t0
-        gn_final.set_final(obj, scene, True)
         return d.last_bake_seconds
     why = route.problem(obj)
     if why:

@@ -98,11 +98,15 @@ class MULTICAMPROJECTProperties(bpy.types.PropertyGroup):
                     "textures are relinked from it on their own. Reload points "
                     "every texture of the objects' materials at the file of the same name here")
     texture_override_folder: StringProperty(
-        name="Texture Override", default="", subtype='DIR_PATH',
+        name="Texture Override", default="//02.Overrides/", subtype='DIR_PATH',
         options={'PATH_SUPPORTS_BLEND_RELATIVE'},
-        description="Folder of finished ALB_<name>.png / NOR_<name>.png. An object whose "
-                    "texture is here is not baked: the file is copied as its ALB_ / NOR_ and "
-                    "Export copies it into Export/Textures. Empty = off")
+        description="02.Overrides: finished ALB_<name>.png / NOR_<name>.png. A texture set to "
+                    "Load (07) uses its file here instead of a bake; Lock Finish copies it "
+                    "into Export/Textures")
+    tex_modes_migrated: BoolProperty(
+        default=False, options={'HIDDEN'},
+        description="TexOverride ran once on this file: objects with an override file were "
+                    "set to Load")
     photos_folder: StringProperty(
         name="Camera Photos", default="//00.Scan/00.Photos/", subtype='DIR_PATH',
         options={'PATH_SUPPORTS_BLEND_RELATIVE'},

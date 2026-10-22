@@ -2,6 +2,33 @@
 
 ## Unreleased
 
+### TexOverride module: ALB_ / NOR_ on Bake or Load (2026-10-22)
+
+A new module (Infos row: Tex_override). Each object's ALB_ and NOR_ has its own mode, saved
+on the object (survives Drive syncs, Send Out / Send Back):
+- **Bake**: 05 / 07 make it into 01.Bake, as before.
+- **Load**: the finished file in **02.Overrides** (next to 01.Bake, the new default folder)
+  is used as it is - the image points at it, nothing is baked or copied into 01.Bake.
+- **07 Generate Normal** shows an ALB_ row and a NOR_ row: [Bake|Load] (Load greyed while
+  02.Overrides has no file for it), the file it uses + Show in Folder, Refresh (read the
+  file again after editing it) and Delete Override (Recycle Bin, back to Bake). A Bake row
+  says when an override is found. NOR_ on Bake is generated from a loaded ALB_ (no BAo_
+  needed); NOR_ on Load turns 07's button into "Load NOR_".
+- **Cameras panel**: the 05. Bake Albedo button is replaced by the two switches; the 05
+  panel keeps its button.
+- **Finalize** follows the modes: Load points at the file (error when missing), Bake makes
+  it only when missing or outdated (a current one is kept; a saved ALB_ inpaint is dropped
+  only when ALB_ is baked new), then locks.
+- Lock Finish copies both into Export/Textures; a Locked object's copies are not taken again
+  from a changed override until it is locked again.
+- Switching Load -> Bake asks for a new bake. A loaded texture is never "outdated"; Export
+  reports its size / bit depth as a soft warning and never bakes over it.
+- Override files are never recycled with their object, never renamed: an object rename
+  copies the override to the new name (the old file stays for other .blend files).
+- ALB_ inpaint (06) and Inpaint Final are greyed while ALB_ is on Load.
+- Once per file: objects that already have an override file start on Load; an empty
+  override folder setting becomes //02.Overrides/. Replaces the Texture Override copy below.
+
 ### Project Setup: Collections + Folders, TEMPLATE (2026-10-22)
 
 - The popup opens with a **Collections + Folders** box: the four roles (Objects, Original

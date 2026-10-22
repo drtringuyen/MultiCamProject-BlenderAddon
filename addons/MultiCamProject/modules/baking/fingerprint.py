@@ -287,8 +287,15 @@ def current(obj):
     return compute(obj, cached=True)
 
 
+def _loaded(obj):
+    """ALB_ is loaded from 02.Overrides (TexOverride): no bake behind it to be outdated."""
+    return common.data(obj).alb_mode == 'LOAD'
+
+
 def is_outdated(obj):
     d = common.data(obj)
+    if _loaded(obj):
+        return False
     return bool(d.fingerprint) and d.fingerprint != current(obj)
 
 
@@ -296,14 +303,14 @@ def original_outdated(obj):
     """The route uses the Original and BAo_ is missing or outdated."""
     from . import route
     d = common.data(obj)
-    return (route.uses_original(obj) and route.has_original(obj)
+    return (not _loaded(obj) and route.uses_original(obj) and route.has_original(obj)
             and (d.ba_image is None or ba_outdated(obj)))
 
 
 def projection_outdated(obj):
     """The route uses the Projection and BAp_ is outdated (a missing BAp_ is just made)."""
     from . import route
-    return route.uses_projection(obj) and bp_outdated(obj)
+    return not _loaded(obj) and route.uses_projection(obj) and bp_outdated(obj)
 
 
 def restamped(obj, change):

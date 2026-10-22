@@ -80,11 +80,12 @@ def draw_fit_cage(layout, obj):
     row.operator("multicamproject.fit_cage", text=f"Fit Cage {d.ba_fit_cage:.3f}")
 
 
-def draw_bake_box(context, layout, obj, route_rows=False):
+def draw_bake_box(context, layout, obj, route_rows=False, switches=False):
     """One box, the same in 05 and 06: Processing | Final, Fit Cage (when needed), then the
     bake row ([Auto Resolution v] [Bake ...] [mixture] [gear]). `route_rows` (05): 06's
     route prompt under Processing | Final too, and a warning while From Original hides
-    the projection - painting would show nothing."""
+    the projection - painting would show nothing. `switches` (the Cameras panel): ALB_ /
+    NOR_ [Bake|Load] (TexOverride) in place of 05's button - Finalize follows them."""
     box = layout.box().column()
     draw_final_toggle(box, obj, "multicamproject_view")
     d = common.data(obj)
@@ -95,7 +96,8 @@ def draw_bake_box(context, layout, obj, route_rows=False):
             route.draw_prompt(box, obj, "Bake Route From Original: the projection and its "
                                         "paint do not show")
     draw_fit_cage(box, obj)
-    MULTICAMPROJECT_PT_Baking._draw_bake_button(box, common.settings(context.scene), obj)
+    MULTICAMPROJECT_PT_Baking._draw_bake_button(box, common.settings(context.scene), obj,
+                                                switches)
 
 
 LABEL_UNITS = 5.2      # the label column of the Baking panel's settings rows
@@ -197,7 +199,12 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         if d.tex_size == 'AUTO':
             info.label(text=f"Auto Resolution = {_res(res)} (the scene's, set in front of Export)",
                        icon='TEXTURE')
-        if d.alb_size and d.alb_size != res:
+        if d.alb_mode == 'LOAD':
+            note = info.row()
+            note.active = False
+            note.label(text="ALB_ is on Load (07): 05 uses its file in 02.Overrides",
+                       icon='IMAGE_REFERENCE')
+        elif d.alb_size and d.alb_size != res:
             info.label(text=f"Baked at {_res(d.alb_size)} - bake again for {_res(res)}",
                        icon='INFO')
         draw_bake_box(context, layout, obj)
@@ -316,10 +323,11 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
             layout.label(text=why, icon='ERROR')
 
     @staticmethod
-    def _draw_bake_button(layout, s, obj):
+    def _draw_bake_button(layout, s, obj, switches=False):
         """[A v] (the active object's own size), the green "05. Bake Albedo" (ALB_ only:
         NOR_ is 07's) + its inpaint | "Finalize + Lock" (ALB_ + NOR_ + Lock; a work window:
-        "Finalize + Send Back"), the bake settings' gear at its end."""
+        "Finalize + Send Back"), the bake settings' gear at its end. `switches`: ALB_ / NOR_
+        [Bake|Load] (TexOverride) in place of 05's button."""
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
@@ -327,14 +335,20 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         split = row.split(factor=0.55, align=True)     # 05 + its inpaint get the wider part
         left, right = split.row(align=True), split.row(align=True)
         draw_green(left)
-        left.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
-                      icon='RENDER_STILL')
-        d = common.data(obj)
         from ... import module_manager
+        if switches and module_manager.is_loaded("tex_override"):
+            from ..tex_override import ui as tex_ui
+            tex_ui.draw_switch(left, obj, 'ALB')
+            left.separator(factor=0.5)
+            tex_ui.draw_switch(left, obj, 'NOR')
+        else:
+            left.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
+                          icon='RENDER_STILL')
+        d = common.data(obj)
         if d.alb_image is not None and module_manager.is_loaded("image_editor"):
             from ..image_editor import sources
             if sources.draw_ready(obj):
-                sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (05's own result)
+                sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (greyed on Load)
         draw_green(left)
         # 08 at the middle pad: the object's lock (Lock Finish / Unlock)
         draw_lock(right, obj)
@@ -347,7 +361,7 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         if d.alb_image is not None and module_manager.is_loaded("image_editor"):
             from ..image_editor import sources
             sub = right.row(align=True)     # Inpaint Final: the final ALB_, before its NOR_
-            sub.enabled = d.locked
+            sub.enabled = d.locked and d.alb_mode != 'LOAD'     # Load: edit the file itself
             op = sub.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER',
                               depress=sources.has_inpaint(sources.Source('ALB', obj)))
             op.kind, op.owner, op.final = 'ALB', obj.name, True
@@ -464,6 +478,10 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
             return
         info = layout.column(align=True)
         alb = common.alb_source(obj)
+        from ... import module_manager
+        if module_manager.is_loaded("tex_override"):
+            self._draw_tex_rows(context, layout, info, obj, alb)
+            return
         if alb is not None:
             split = info.split(factor=0.3, align=True)
             sub = split.row()
@@ -497,6 +515,52 @@ class MULTICAMPROJECT_PT_GenerateNormal(bpy.types.Panel):
         row.operator("multicamproject.reload_albedo", text="", icon='FILE_REFRESH')
         row.operator("multicamproject.bake_normal", text=f"07. Generate Normal ({mode})",
                      icon='NORMALS_FACE')
+        row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
+        why = normal.problem(obj, context.scene, s.nor_source)
+        if why:
+            layout.label(text=why, icon='ERROR')
+
+    @staticmethod
+    def _draw_tex_rows(context, layout, info, obj, alb):
+        """TexOverride: ALB_ and NOR_ each [Bake|Load] [file] [refresh] [folder] [delete
+        override], then [Auto Resolution v] [07. Generate Normal / Load] [gear]."""
+        from ... import steps
+        from ..tex_override import ui as tex_ui
+        d = common.data(obj)
+        s = common.settings(context.scene)
+        alb_load, nor_load = d.alb_mode == 'LOAD', d.nor_mode == 'LOAD'
+        text = "ALB_" + ("  ·  inpainted" if alb is not None and alb != d.alb_image else "")
+        if d.alb_size and d.alb_image is not None:
+            text += f"  ·  {_res(d.alb_size)}"
+        tex_ui.draw_row(info, obj, 'ALB', text, 'IMAGE_RGB', alb)
+        if not alb_load and not steps.alb_fresh(obj):
+            note = info.row()
+            note.alert = True
+            note.label(text="ALB_ outdated or missing - 07 bakes it first (05)", icon='INFO')
+        if d.nor_size and d.nor_image is not None:
+            label = normal.LABELS.get(d.nor_source_used, d.nor_source_used)
+            text = f"NOR {_res(d.nor_size)}  ·  {label}"
+            if not nor_load:
+                text += f"  ·  {d.last_nor_seconds:.1f} s"
+        else:
+            text = "NOR_"
+        tex_ui.draw_row(info, obj, 'NOR', text, 'NORMALS_FACE', d.nor_image)
+        if not nor_load and d.nor_image is not None and normal.nor_outdated(obj, context.scene):
+            warn = info.row()
+            warn.alert = True
+            warn.label(text="ALB_ or the settings changed - generate again", icon='ERROR')
+        row = layout.row(align=True)
+        row.scale_y = 1.5
+        draw_object_size(row, obj)
+        row.separator(factor=0.5)
+        if nor_load:
+            row.operator("multicamproject.bake_normal", text="07. Load NOR_ (02.Overrides)",
+                         icon='IMAGE_REFERENCE')
+        else:
+            mode = ("Bake from Scan" if normal.from_scan(obj)
+                    else normal.LABELS.get(normal.usable(s.nor_source), "High-pass"))
+            row.operator("multicamproject.bake_normal", text=f"07. Generate Normal ({mode})",
+                         icon='NORMALS_FACE')
         row.popover(panel="MULTICAMPROJECT_PT_normal_settings", text="", icon='PREFERENCES')
         why = normal.problem(obj, context.scene, s.nor_source)
         if why:

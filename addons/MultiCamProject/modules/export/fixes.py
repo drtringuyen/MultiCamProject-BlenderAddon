@@ -95,10 +95,19 @@ def rename_object(obj, new, fresh=None, mcp=None):
     if d.material is not None and d.material.name != common.mat_name(obj):
         d.material.name = common.mat_name(obj)
     keep = d.handmade
-    if d.alb_image is not None:
-        _rename_file(d.alb_image, common.alb_name(obj), keep)
-    if d.nor_image is not None:
-        _rename_file(d.nor_image, common.nor_name(obj), keep)
+    from ..tex_override import core as tex
+    for kind, img, want in (('ALB', d.alb_image, common.alb_name(obj)),
+                            ('NOR', d.nor_image, common.nor_name(obj))):
+        if img is None:
+            continue
+        if tex.is_load(obj, kind) and tex.in_folder(common.image_file(img)):
+            # 02.Overrides: copied to the new name, the old file stays (other .blends)
+            old = os.path.splitext(os.path.basename(common.image_file(img)))[0]
+            if img.name != want:
+                img.name = want
+            tex.copy_to_new_name(bpy.context.scene, obj, kind, old)
+            continue
+        _rename_file(img, want, keep)
     # the route's work textures follow (files in the bake folder, this object's alone)
     for img, name in ((d.ba_image, common.ba_name(obj)), (d.bn_image, common.bn_name(obj)),
                       (d.bap_image, common.bap_name(obj)), (d.bnp_image, common.bnp_name(obj)),

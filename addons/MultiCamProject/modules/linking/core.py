@@ -64,7 +64,8 @@ TEXTURES = (("ba_image", "ba_name", False), ("bn_image", "bn_name", True),
 # route first: Receive re-stamps ALB_ by it (a stamp by this file's route read outdated)
 META = ("route", "route_user", "route_prompt", "ba_size", "bp_size", "alb_size", "nor_size", "nor_source_used", "nor_times",
         "last_ba_seconds", "last_bp_seconds", "last_bake_seconds", "last_nor_seconds",
-        "ba_far_share", "ba_far_max", "ba_fit_cage", "bn_stale")
+        "ba_far_share", "ba_far_max", "ba_fit_cage", "bn_stale",
+        "alb_mode", "nor_mode")     # TexOverride: Bake (01.Bake) or Load (02.Overrides)
 SCENE_GROUPS = ("multicamproject_bake_settings", "multicamproject_export",
                 "multicamproject_sides", "multicamproject_props")
 
@@ -1297,6 +1298,11 @@ def receive(context, obj, action='REPLACE'):
             cache.clear()
         except ImportError:
             pass
+        try:            # Load: the image at 02.Overrides (never sent, never copied to 01.Bake)
+            from ..tex_override import core as tex
+            tex.apply_modes(scene, obj)
+        except Exception as e:
+            print(f"[MultiCamProject] Receive {obj.name}: TexOverride - {e}")
         notes = [("Textures: " + ", ".join(TAKEN_LABELS.get(p, p) for p in taken)) if taken
                  else "No new textures"]
         if gone:

@@ -33,6 +33,12 @@ OWN_FILES = common.FINAL_PREFIXES
 OWN_WORK = common.WORK_PREFIXES + common.LEGACY_PREFIXES     # MCP_'s BAo_/BNo_/BAp_/BNp_
 
 
+def _in_overrides(path):
+    """`path` is a finished file in 02.Overrides (TexOverride Load) - never recycled."""
+    from ..tex_override import core as tex
+    return tex.in_folder(path)
+
+
 def _cp_on():
     return hasattr(bpy.types.Object, "multicamproject_cam")
 
@@ -286,7 +292,8 @@ def remove_orphans(everything=False):
         if img.users == 0 and img not in gone:
             path = common.image_file(img)
             if (files and path and os.path.basename(path).startswith(common.OWN_PREFIXES)
-                    and not common.is_work_window()):   # the main file's real bakes
+                    and not common.is_work_window()     # the main file's real bakes
+                    and not _in_overrides(path)):       # 02.Overrides: the user's files
                 _pending_files.add(os.path.normcase(os.path.abspath(path)))
             gone.append(img)
     _baseline.difference_update(removed)
