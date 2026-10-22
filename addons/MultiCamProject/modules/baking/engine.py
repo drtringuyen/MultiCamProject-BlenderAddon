@@ -945,8 +945,8 @@ def bake_albedo_steps(context, obj):
     t0 = time.perf_counter()
     name = common.alb_name(obj)
     path = common.texture_path(scene, name)
-    if d.alb_mode == 'LOAD':    # TexOverride Load: the finished file in 02.Overrides, as it is
-        from ..tex_override import core as tex
+    from ..tex_override import core as tex
+    if tex.loads(scene, obj, 'ALB'):    # TexOverride Load: the file in 02.Overrides, as it is
         yield jobs.Step(f"Albedo: Load {os.path.basename(tex.override_path(scene, obj, 'ALB'))}")
         tex.link(scene, obj, 'ALB')
         d.last_bake_seconds = time.perf_counter() - t0

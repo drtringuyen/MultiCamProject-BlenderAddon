@@ -106,8 +106,10 @@ def bake_objects_steps(context, objs, albedo=True, nor_source=None, log=None, on
 def _bake_one(context, obj, albedo, nor_source, res, log, only_stale=False):
     """bake_objects' work for one object (a generator)."""
     from ... import steps
+    from ..tex_override import core as tex
     d = common.data(obj)
-    alb_load = d.alb_mode == 'LOAD'
+    tex.loads(context.scene, obj, 'NOR')      # a Load whose file is gone: back to Bake
+    alb_load = tex.loads(context.scene, obj, 'ALB')
     # one resolution: a normal map alone at a new size remakes the albedo too (a loaded
     # ALB_ keeps its own size)
     with_albedo = albedo or (nor_source is not None and not alb_load
@@ -325,10 +327,11 @@ class MULTICAMPROJECT_OT_BakeSetFinal(bpy.types.Operator):
 
 
 def _alb_problem(obj, scene):
-    """Why ALB_ can't be made: the route - or, on Load (TexOverride), its file."""
-    if common.data(obj).alb_mode == 'LOAD':
-        from ..tex_override import core as tex
-        return tex.problem(scene, obj, 'ALB')
+    """Why ALB_ can't be made: the route - none when it is loaded (TexOverride; a Load
+    whose file is gone bakes)."""
+    from ..tex_override import core as tex
+    if tex.is_load(obj, 'ALB') and tex.available(scene, obj, 'ALB'):
+        return ""
     return route.problem(obj)
 
 

@@ -45,13 +45,11 @@ def problem(obj, scene, source):
     """Why NOR_ cannot be made for `obj` ('' = it can). A missing / outdated ALB_ is baked
     first by 07, so only the route can stop it - or, loaded (TexOverride), its file."""
     from .. import route
-    d = common.data(obj)
-    if d.nor_mode == 'LOAD':
-        from ...tex_override import core as tex
-        return tex.problem(scene, obj, 'NOR')
-    if d.alb_mode == 'LOAD':        # NOR_ from the loaded ALB_: no route behind it
-        from ...tex_override import core as tex
-        return tex.problem(scene, obj, 'ALB') or (route.problem(obj) if from_scan(obj) else "")
+    from ...tex_override import core as tex
+    if tex.is_load(obj, 'NOR') and tex.available(scene, obj, 'NOR'):
+        return ""
+    if tex.is_load(obj, 'ALB') and tex.available(scene, obj, 'ALB'):
+        return route.problem(obj) if from_scan(obj) else ""     # from the loaded ALB_
     return route.problem(obj)
 
 
@@ -229,8 +227,8 @@ def generate_steps(context, obj, source):
     t0 = time.perf_counter()
     name = common.nor_name(obj)
     path = common.texture_path(scene, name)
-    if d.nor_mode == 'LOAD':    # TexOverride Load: the finished file in 02.Overrides, as it is
-        from ...tex_override import core as tex
+    from ...tex_override import core as tex
+    if tex.loads(scene, obj, 'NOR'):    # TexOverride Load: the file in 02.Overrides, as it is
         yield jobs.Step(f"Normal: Load {os.path.basename(tex.override_path(scene, obj, 'NOR'))}")
         tex.link(scene, obj, 'NOR')
         d.last_nor_seconds = time.perf_counter() - t0

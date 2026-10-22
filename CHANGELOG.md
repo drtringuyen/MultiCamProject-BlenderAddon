@@ -9,14 +9,16 @@ on the object (survives Drive syncs, Send Out / Send Back):
 - **Bake**: 05 / 07 make it into 01.Bake, as before.
 - **Load**: the finished file in **02.Overrides** (next to 01.Bake, the new default folder)
   is used as it is - the image points at it, nothing is baked or copied into 01.Bake.
-- **07 Generate Normal** shows an ALB_ row and a NOR_ row: [Bake|Load] (Load greyed while
-  02.Overrides has no file for it), the file it uses + Show in Folder, Refresh (read the
-  file again after editing it) and Delete Override (Recycle Bin, back to Bake). A Bake row
+- **07 Generate Normal** shows an ALB_ row and a NOR_ row: a [Bake v] dropdown ("Load (not
+  found)" while 02.Overrides has no file for it - picking it stays on Bake), the file it
+  uses + Show in Folder, Refresh (read the file again after editing it) and Delete Override
+  (Recycle Bin, back to Bake). A Load whose file is gone goes back to Bake on Refresh or
+  the next bake / Finalize, which then bakes it. A Bake row
   says when an override is found. NOR_ on Bake is generated from a loaded ALB_ (no BAo_
   needed); NOR_ on Load turns 07's button into "Load NOR_".
-- **Cameras panel**: the 05. Bake Albedo button is replaced by the two switches; the 05
+- **Cameras panel**: the 05. Bake Albedo button is replaced by the two dropdowns; the 05
   panel keeps its button.
-- **Finalize** follows the modes: Load points at the file (error when missing), Bake makes
+- **Finalize** follows the modes: Load points at the file (missing: back to Bake), Bake makes
   it only when missing or outdated (a current one is kept; a saved ALB_ inpaint is dropped
   only when ALB_ is baked new), then locks.
 - Lock Finish copies both into Export/Textures; a Locked object's copies are not taken again

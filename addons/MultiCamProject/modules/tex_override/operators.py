@@ -85,7 +85,9 @@ class MULTICAMPROJECT_OT_TexRefresh(bpy.types.Operator):
             self.report({'WARNING'}, f"{obj.name}: {e}")
             return {'CANCELLED'}
         n = core.name(obj, self.kind)
-        if what == "unsaved":
+        if what == "bake":
+            self.report({'WARNING'}, f"{n}: not found in 02.Overrides - back to Bake")
+        elif what == "unsaved":
             self.report({'WARNING'}, f"{n}: unsaved changes in Blender, not reloaded")
         else:
             self.report({'INFO'}, f"{n}: read from disk" if what

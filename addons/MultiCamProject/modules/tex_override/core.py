@@ -183,6 +183,18 @@ def set_mode(scene, obj, kind, new):
     _forget()
 
 
+def loads(scene, obj, kind):
+    """A bake asks for `kind`: True when it is loaded (its file is there); a Load whose
+    file is gone goes back to Bake (False: bake it)."""
+    if not is_load(obj, kind):
+        return False
+    if available(scene, obj, kind):
+        return True
+    set_mode(scene, obj, kind, BAKE)
+    print(f"[MultiCamProject] {obj.name}: {name(obj, kind)} not found in 02.Overrides - back to Bake")
+    return False
+
+
 def apply_modes(scene, obj):
     """Each texture where its mode says (after Receive / a load): Load at the override,
     Bake never left pointing into the Overrides folder."""
@@ -205,6 +217,9 @@ def refresh(scene, obj, kind):
     'unsaved' (changed in Blender: kept) or ''."""
     from ..baking import cache
     from ..baking.normal import reload_from_disk
+    if is_load(obj, kind) and not available(scene, obj, kind):
+        set_mode(scene, obj, kind, BAKE)        # its file is gone: back to Bake
+        return "bake"
     if is_load(obj, kind) and available(scene, obj, kind):
         img = image(obj, kind)
         c = _common()

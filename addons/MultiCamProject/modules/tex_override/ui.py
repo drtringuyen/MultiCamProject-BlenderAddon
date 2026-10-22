@@ -10,21 +10,16 @@ def is_on():
 
 
 def draw_switch(layout, obj, kind, label=True):
-    """[ALB_] [Bake|Load]: Load greyed while 02.Overrides has no file for it."""
+    """[ALB_] [Bake v]: Bake / Load - "Load (not found)" without its file in 02.Overrides
+    (picking it stays on Bake)."""
     d = obj.multicamproject_bake
-    cur = core.mode(obj, kind)
     row = layout.row(align=True)
     row.enabled = not d.locked
     if label:
         tag = row.row(align=True)
         tag.ui_units_x = 2.2
         tag.label(text="ALB_" if kind == 'ALB' else "NOR_")
-    for m, text in ((core.BAKE, "Bake"), (core.LOAD, "Load")):
-        cell = row.row(align=True)
-        if m == core.LOAD and cur != core.LOAD:
-            cell.enabled = core.available(bpy.context.scene, obj, kind)
-        op = cell.operator("multicamproject.tex_mode", text=text, depress=cur == m)
-        op.kind, op.mode, op.object_name = kind, m, obj.name
+    row.prop(d, "alb_pick" if kind == 'ALB' else "nor_pick", text="")
     return row
 
 
@@ -51,11 +46,10 @@ def draw_row(layout, obj, kind, text, icon, img):
         b.enabled = not obj.multicamproject_bake.locked
         op = b.operator("multicamproject.tex_delete_override", text="", icon='TRASH')
         op.kind, op.object_name = kind, obj.name
-    why = core.problem(scene, obj, kind)
-    if why:
+    if core.is_load(obj, kind) and not core.available(scene, obj, kind):
         r = col.row()
         r.alert = True
-        r.label(text=why, icon='ERROR')
+        r.label(text="Override not found - the next bake goes back to Bake", icon='ERROR')
     elif not core.is_load(obj, kind) and core.available(scene, obj, kind):
         r = col.row()
         r.active = False

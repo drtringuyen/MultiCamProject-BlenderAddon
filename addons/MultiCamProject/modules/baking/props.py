@@ -90,6 +90,41 @@ def _set_alb_show(data, value):
         pass
 
 
+_mode_items = {'ALB': [], 'NOR': []}     # kept alive (dynamic enum strings)
+
+
+def _mode_items_for(kind, data):
+    """[Bake, Load] - "Load (not found)" while 02.Overrides has no file for it."""
+    from ..tex_override import core as tex
+    obj = data.id_data
+    found = tex.available(bpy.context.scene, obj, kind)
+    n = "ALB_" if kind == 'ALB' else "NOR_"
+    step = "05 bakes" if kind == 'ALB' else "07 generates"
+    keep = _mode_items[kind]
+    keep[:] = [('BAKE', "Bake", f"{step} {n} into 01.Bake", 'RENDER_STILL', 0),
+               ('LOAD', "Load" if found else "Load (not found)",
+                f"{n} is the finished file in 02.Overrides - nothing is baked" if found else
+                f"No {tex.name(obj, kind)}.png in 02.Overrides - stays on Bake",
+                'IMAGE_REFERENCE' if found else 'ERROR', 1)]
+    return keep
+
+
+def _get_mode(data, kind):
+    return 1 if getattr(data, "alb_mode" if kind == 'ALB' else "nor_mode") == 'LOAD' else 0
+
+
+def _set_mode(data, kind, value):
+    """Load without its file goes (back) to Bake."""
+    from ..tex_override import core as tex
+    obj = data.id_data
+    scene = bpy.context.scene
+    want = 'LOAD' if value == 1 and tex.available(scene, obj, kind) else 'BAKE'
+    try:
+        tex.set_mode(scene, obj, kind, want)
+    except RuntimeError as e:       # Locked Finish: the dropdown is greyed anyway
+        print(f"[MultiCamProject] {obj.name}: {e}")
+
+
 def _get_ba_show(data):
     return 1 if data.ba_inpaint is not None and data.ba_use_inpaint else 0
 
@@ -136,6 +171,17 @@ class MULTICAMPROJECT_BakeData(bpy.types.PropertyGroup):
                ('LOAD', "Load", "NOR_ is the finished file in the Overrides folder "
                                 "(02.Overrides) - nothing is generated", 1)),
         description="Where NOR_ comes from: generated (07) or loaded from 02.Overrides")
+    # the dropdowns of alb_mode / nor_mode: "Load (not found)" without the file, back to Bake
+    alb_pick: EnumProperty(
+        name="ALB_", items=lambda d, _c: _mode_items_for('ALB', d),
+        get=lambda d: _get_mode(d, 'ALB'), set=lambda d, v: _set_mode(d, 'ALB', v),
+        options={'SKIP_SAVE'},
+        description="Where ALB_ comes from: Bake (05, 01.Bake) or Load (02.Overrides)")
+    nor_pick: EnumProperty(
+        name="NOR_", items=lambda d, _c: _mode_items_for('NOR', d),
+        get=lambda d: _get_mode(d, 'NOR'), set=lambda d, v: _set_mode(d, 'NOR', v),
+        options={'SKIP_SAVE'},
+        description="Where NOR_ comes from: Bake (07, 01.Bake) or Load (02.Overrides)")
     # 06 Inpainting: the saved copies (files next to the originals, which stay as baked)
     alb_inpaint: PointerProperty(type=bpy.types.Image, name="Albedo Inpainted",
                                  description="ALB_<name>_inpaint: ALB_ inpainted - exported as "

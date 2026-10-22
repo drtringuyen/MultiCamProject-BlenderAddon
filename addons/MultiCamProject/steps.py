@@ -230,8 +230,8 @@ def why_locked(obj, step, scene=None):
         return "Select a mesh"
     st = state(obj, scene)
     need, text = _NEEDS[step]
-    if step == 7 and d is not None and d.alb_mode == 'LOAD':
-        need, text = 5, "ALB_ is on Load: its file in 02.Overrides is missing"
+    if step == 7 and d is not None and d.alb_mode == 'LOAD' and 5 in st.made:
+        return ""           # NOR_ from the loaded ALB_ (no file: 07 bakes ALB_, needs 03)
     return "" if need in st.made else text
 
 
