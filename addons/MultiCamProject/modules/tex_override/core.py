@@ -114,10 +114,12 @@ def _point(obj, kind, path):
         img = bpy.data.images.load(path, check_existing=False)
     if img.name != nm and not bpy.data.images.get(nm):
         img.name = nm
-    img.colorspace_settings.name = 'Non-Color' if normal else 'sRGB'
+    cs = 'Non-Color' if normal else 'sRGB'
+    if img.colorspace_settings.name != cs:
+        img.colorspace_settings.name = cs
+    # reloaded from the new file: an 8-bit PNG comes back as bytes. Never ask img.is_float
+    # here - it decodes the whole 8K file (~0.6 s) just to answer
     engine.link_file(img, path)
-    if img.is_float and not normal:
-        img.buffers_free()
     if normal:
         d.nor_image = img
     else:
@@ -125,8 +127,28 @@ def _point(obj, kind, path):
     return img
 
 
+def _material_current(obj):
+    """MAT_ already shows the object's ALB_ (its source) and NOR_ images: re-pointing an
+    image at another file needs no rebuild. A rebuild makes Material Preview compile the
+    shader again (seconds) and GN-Final evaluate the object again."""
+    from ..baking import common, material
+    d = common.data(obj)
+    mat = d.material
+    if mat is None or not mat.use_nodes or mat.node_tree is None:
+        return False
+    nodes = mat.node_tree.nodes
+    alb = nodes.get(material.P + "alb")
+    nor = nodes.get(material.P + "nor")
+    if alb is None or alb.image != common.alb_source(obj):
+        return False
+    if d.nor_image is None:
+        return nor is None
+    return nor is not None and nor.image == d.nor_image
+
+
 def link(scene, obj, kind):
-    """Load: the image at the override file, MAT_ rebuilt. Raises when the file is gone."""
+    """Load: the image at the override file, MAT_ rebuilt when it does not show it yet.
+    Raises when the file is gone."""
     why = problem(scene, obj, kind)
     if why:
         raise RuntimeError(why)
@@ -140,9 +162,10 @@ def link(scene, obj, kind):
     else:
         d.nor_size = size
         d.nor_source_used = LOAD
-    material.build(obj, scene)
-    gn_final.write_inputs(obj, scene)
-    if kind == 'ALB':
+    if not _material_current(obj):
+        material.build(obj, scene)
+        gn_final.write_inputs(obj, scene)
+    if kind == 'ALB' and not gn_final.is_final(obj):
         gn_final.set_final(obj, scene, True)
     cache.clear()
     return path
@@ -160,8 +183,9 @@ def unlink(scene, obj, kind):
         d.fingerprint = SWITCHED
     else:
         d.nor_fingerprint = SWITCHED
-    from ..baking import material
-    material.build(obj, scene)
+    if not _material_current(obj):
+        from ..baking import material
+        material.build(obj, scene)
 
 
 def set_mode(scene, obj, kind, new):
