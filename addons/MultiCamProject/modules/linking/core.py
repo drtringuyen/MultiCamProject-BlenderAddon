@@ -498,7 +498,7 @@ def _send_out(context, obj, start, save_as, main, headless=False):
                    scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
         "unit_system": scene.unit_settings.system,
         "unit_scale": scene.unit_settings.scale_length, "start": start, "save_as": save_as,
-        "target": _target(context, obj), "headless": headless}
+        "target": _target(context, obj), "headless": headless, "color": color_settings(scene)}
     settings_path = os.path.join(job_dir(job_id), SETTINGS_FILE)
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f)
@@ -518,6 +518,28 @@ def _send_out(context, obj, start, save_as, main, headless=False):
     else:
         subprocess.Popen([bpy.app.binary_path, "--python", script, "--", settings_path])
     return job_id
+
+
+def color_settings(scene):
+    """The main file's color management: a new window opens on Blender's default (AgX),
+    which shows the same textures flatter than the main file's Standard."""
+    v = scene.view_settings
+    return [scene.display_settings.display_device, v.view_transform, v.look, v.exposure,
+            v.gamma]
+
+
+def apply_color(scene, vals):
+    if not vals:                # older hand-offs: nothing sent
+        return
+    d = scene.display_settings
+    v = scene.view_settings
+    for owner, attr, val in ((d, "display_device", vals[0]), (v, "view_transform", vals[1]),
+                             (v, "look", vals[2]), (v, "exposure", vals[3]),
+                             (v, "gamma", vals[4])):
+        try:
+            setattr(owner, attr, val)
+        except (TypeError, ValueError) as e:    # a name this Blender doesn't have
+            print(f"[MultiCamProject] work window: color {attr} not set: {e}")
 
 
 def _target(context, obj):
@@ -607,7 +629,8 @@ def send_mesh(obj, path):
     bpy.data.libraries.write(lib, {obj.data}, path_remap='ABSOLUTE')
     applied = bool(obj.get(wf.APPLIED_KEY))
     info = {"time": time.time(), "mesh": obj.data.name, "matrix": _matrix_list(obj.matrix_world),
-            "decimate": not wf.is_retopo(obj) and not applied}
+            "decimate": not wf.is_retopo(obj) and not applied,
+            "color": color_settings(bpy.context.scene)}
     tmp = os.path.join(folder, INCOMING_JSON + ".tmp")
     with open(tmp, "w", encoding="utf-8") as f:
         json.dump(info, f)
@@ -707,6 +730,7 @@ def take_incoming(scene):
         if dec is not None:
             dec.show_viewport = True
         wf.set_gn(obj, False)           # decided again first (decimate_pending)
+    apply_color(scene, info.get("color"))   # an older window still on AgX
     scene[WORK_TAKEN_KEY] = info["time"]
     for f in (INCOMING_JSON, INCOMING_FILE):
         try:

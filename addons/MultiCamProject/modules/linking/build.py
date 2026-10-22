@@ -232,6 +232,8 @@ def _build():
     r.resolution_x, r.resolution_y, r.pixel_aspect_x, r.pixel_aspect_y = settings["render"]
     scene.unit_settings.system = settings["unit_system"]
     scene.unit_settings.scale_length = settings["unit_scale"]
+    importlib.import_module(f"{settings['addon']}.modules.linking.core").apply_color(
+        scene, settings.get("color"))     # the main file's view transform, not AgX
     s = getattr(scene, "multicamproject_bake_settings", None)
     if s is not None:           # every bake here goes to the hand-off folder, never the real one
         s.output_dir = os.path.join(settings["bakes"], "")
