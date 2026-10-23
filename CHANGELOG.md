@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Seam Fix module (2026-10-23, work in progress)
+
+A new module (Infos row: Seam_fix) to hide UV seams of a finished albedo. Panel: 3D view
+(MultiCamProject, last sub-panel) and Image / UV editor (MultiCamProject tab).
+- **Fix Seam**: overlapping islands are left out and selected; uv_new = uv_normal with islands
+  shrunk for room; uv_fixseam unfolds each seam's target side into its source's margin; a
+  blend mask fades it in. For hand-painted textures with paint past the island edges.
+- **Seam-leveling**: both sides of every seam meet at their average colour, faded into each
+  island - the one that helps scans and projection bakes.
+- **Bake** to `<image>_seamfix` on uv_new (albedo + alpha, normal map carried along).
+- **Original / Mask / Preview / Baked** view switch, **Reset**, **Apply to Files**
+  (destructive: originals backed up to `_seamfix_backup`, bakes written over them, uv_new
+  becomes the only uv_normal). Apply and Reset are not tested yet - see docs/PLAN_seam_fix.md.
+
 ### Project Setup: Collections + Folders, TEMPLATE (2026-10-22)
 
 - The popup opens with a **Collections + Folders** box: the four roles (Objects, Original
