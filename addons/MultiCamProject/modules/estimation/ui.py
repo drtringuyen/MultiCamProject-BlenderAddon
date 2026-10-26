@@ -80,6 +80,21 @@ def _export_status(context):
         return {}
 
 
+def _draw_export(row, context):
+    """09's Export (Fix n + Export) at the end of the Automate row: a quick export from here."""
+    from ... import gate
+    from ..baking import jobs
+    if not hasattr(bpy.types, "MULTICAMPROJECT_OT_export_fbx"):
+        return
+    per = _export_status(context)
+    to_fix = sum(st.stage not in {'READY', 'WARN'} for st in per.values())
+    sub = row.row(align=True)
+    # greyed until Setup File IO, like 09's, and while a job runs
+    sub.enabled = gate.lock(sub, context) and not jobs.busy()
+    sub.operator("multicamproject.export_fbx", icon='EXPORT',
+                 text=f"Fix {to_fix} + Export" if to_fix else "Export")
+
+
 def _draw_tail(cells, context, obj, st):
     """Stage, the EXPORT fix, the Linking buttons."""
     from ... import module_manager, steps
@@ -253,9 +268,11 @@ class MULTICAMPROJECT_PT_Estimation(bpy.types.Panel):
         from . import automate
         if module_manager.is_loaded("linking"):
             from ..linking import originals
-            automate.draw_button(originals.draw_all(box, context), context)
+            row = originals.draw_all(box, context)
         else:
-            automate.draw_button(box.row(align=True), context)
+            row = box.row(align=True)
+        automate.draw_button(row, context)
+        _draw_export(row, context)
         if budget > s.calculated_budget:
             box.label(text=f"Minimums alone exceed the budget ({core.short(budget)})",
                       icon='ERROR')
