@@ -1270,10 +1270,20 @@ def _keep_window_verdict(obj, man, taken):
 
 def _lock_received(obj, scene):
     """A Bake Final from the window: Lock Finish (receive dropped the ALB_ inpaint first).
-    Returns the note."""
+    Returns the note. Locked in the window = Locked here, always: the window decided."""
     from ..baking import operators as bake_ops
     why = bake_ops.lock_final(obj, scene)
-    return f"NOT locked: {why}" if why else "Locked Finish (final from the window)"
+    if not why:
+        return "Locked Finish (final from the window)"
+    from ... import steps
+    from ..baking import common
+    folder = common.export_textures_dir(scene)
+    if folder:          # what lock_final does, without its 07 check
+        from ..export import fbx
+        fbx.copy_textures([obj], os.path.dirname(folder))
+    common.data(obj).locked = True
+    steps.forget()
+    return f"Locked Finish (final from the window - here: {why})"
 
 
 def receive(context, obj, action='REPLACE'):
@@ -1354,12 +1364,12 @@ def receive(context, obj, action='REPLACE'):
             notes += _keep_window_verdict(obj, man, taken)
         except ImportError:
             pass
+        _stamp_record(obj, received=man["time"])   # received first: its bakes count as current
         if final:
             notes.append(_lock_received(obj, scene))
         stage = _status_text(obj, scene)
         if stage:
             notes.append(f"status: {stage}")
-        _stamp_record(obj, received=man["time"])
         return faces, notes
     _stamp_record(obj, received=man["time"])   # linked on: the next Send Back is new
     return faces, []
