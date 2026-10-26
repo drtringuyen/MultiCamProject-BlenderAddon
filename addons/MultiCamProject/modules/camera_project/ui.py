@@ -71,7 +71,7 @@ def _icon(icon):
 
 TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
 TOOL_WIDTH = 1.0     # units per tool button: narrow, the X / Y shift fields need the room
-THUMB_UNITS = 2.6    # the selected cameras' photo, in front of its field: as tall as two lines
+THUMB_UNITS = 1.25 * (1 + TOOL_SCALE)   # the selected cameras' photo: the box's two lines
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -311,7 +311,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift, flood):
         """One camera = one box. While a camera is soloed every other box is dimmed, so
         the soloed one stands out (Blender can only tint a whole block red). With its shift
-        line: [eye name / tools] [the photo, two lines tall] [photo field  slots / X Y]."""
+        line: [the photo, two lines tall] [eye name / tools] [photo field  slots / X Y]."""
         col = layout.box().column()
         col.scale_y = 1.25
         solo = item.camera == solo_cam
@@ -323,25 +323,27 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             self._draw_row(col, obj, item, debug, m, solo, inpaint=inpaint)
             return
         cam = item.camera
-        # fixed widths from the region's pixels (as _metrics): the names column, the photo and
+        # fixed widths from the region's pixels (as _metrics): the photo, the names column and
         # the slot buttons keep their size - the photo field and X / Y take the rest
         unit = 20 * context.preferences.system.ui_scale
         avail = max(1.0, context.region.width - 2.8 * unit)
-        left_w = (6.5 if debug else 5.5) * unit
         thumb_w = THUMB_UNITS * unit
-        rest_w = max(1.0, avail - left_w)
-        outer = col.split(factor=min(0.5, left_w / avail), align=True)
-        names = outer.column(align=True)
-        rest = outer.split(factor=min(0.5, thumb_w / rest_w), align=True)
-        pic = rest.column(align=True)
+        left_w = (6.5 if debug else 5.5) * unit
+        rest_w = max(1.0, avail - thumb_w)
+        # the photo first, as tall as the box's two lines (a preview is drawn square)
+        outer = col.split(factor=min(0.4, thumb_w / avail), align=True)
+        pic = outer.column(align=True)
+        pic.scale_y = 1.0 / col.scale_y
         pic.template_icon(icon_value=thumbs.icon(core.cam_image(cam))
                           or bpy.types.UILayout.icon('IMAGE_DATA'), scale=THUMB_UNITS)
+        rest = outer.split(factor=min(0.5, left_w / rest_w), align=True)
+        names = rest.column(align=True)
         fields = rest.column(align=True)
 
         self._draw_eye_name(names.row(align=True), cam, item, debug, solo)
         self._draw_tools(names.row(align=True), obj, cam, flood)
         split = fields.row().split(
-            factor=max(0.1, 1.0 - m[0] * avail / max(1.0, rest_w - thumb_w)), align=True)
+            factor=max(0.1, 1.0 - m[0] * avail / max(1.0, rest_w - left_w)), align=True)
         self._draw_photo(split.row(align=True), cam, solo, inpaint, thumb=False)
         self._draw_slots(split.row(align=True), obj, cam, False)
         self._draw_xy(fields.row(align=True), it, cam)
