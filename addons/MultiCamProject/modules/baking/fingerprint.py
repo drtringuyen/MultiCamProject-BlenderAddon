@@ -103,7 +103,7 @@ def ba_outdated(obj):
     """BA_ exists but the mesh, uv_normal or the source changed since, or it was baked at
     another resolution than the object's (one resolution for all its textures)."""
     d = common.data(obj)
-    if not d.ba_fingerprint:
+    if not d.ba_fingerprint or received(obj):
         return False
     if d.ba_size and d.ba_size != common.resolution(obj):
         return True
@@ -255,7 +255,7 @@ def stamp_projection(obj):
 def bp_outdated(obj):
     """BAp_ exists but the projection changed since, or it is at another resolution."""
     d = common.data(obj)
-    if not d.bp_fingerprint:
+    if not d.bp_fingerprint or received(obj):
         return False
     if d.bp_size and d.bp_size != common.resolution(obj):
         return True
@@ -287,6 +287,16 @@ def current(obj):
     return compute(obj, cached=True)
 
 
+def received(obj):
+    """Received from its work window, unchanged here since (linking): the window's bakes
+    are the result - nothing of it reads outdated in the main file."""
+    try:
+        from ..linking import core
+    except ImportError:
+        return False
+    return core.received_ok(obj)
+
+
 def _loaded(obj):
     """ALB_ is loaded from 02.Overrides (TexOverride): no bake behind it to be outdated."""
     return common.data(obj).alb_mode == 'LOAD'
@@ -294,7 +304,7 @@ def _loaded(obj):
 
 def is_outdated(obj):
     d = common.data(obj)
-    if _loaded(obj):
+    if _loaded(obj) or received(obj):
         return False
     return bool(d.fingerprint) and d.fingerprint != current(obj)
 
@@ -303,7 +313,7 @@ def original_outdated(obj):
     """The route uses the Original and BAo_ is missing or outdated."""
     from . import route
     d = common.data(obj)
-    return (not _loaded(obj) and route.uses_original(obj) and route.has_original(obj)
+    return (not _loaded(obj) and not received(obj) and route.uses_original(obj) and route.has_original(obj)
             and (d.ba_image is None or ba_outdated(obj)))
 
 

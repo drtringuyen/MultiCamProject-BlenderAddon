@@ -26,6 +26,7 @@ STAGES = {      # stage -> (label, icon)
     'RAW': ("Raw", 'STRIP_COLOR_09'),
     'PROCESSED': ("Processed", 'STRIP_COLOR_03'),
     'BAKED': ("Baked", 'STRIP_COLOR_04'),
+    'RECEIVED': ("Received", 'STRIP_COLOR_04'),     # Baked, from its work window
     'LOCKED': ("Locked", 'LOCKED'),
 }
 
@@ -93,7 +94,7 @@ def bao_fresh(obj):
     d = _bake(obj)
     if d is None:
         return False
-    if d.handmade:          # no scan behind it: its own textures are the start
+    if d.handmade or not _needs_bao(obj):   # no scan behind it / From Projection
         return True
     return (d.ba_image is not None and common.file_ok(d.ba_image)
             and not fingerprint.ba_outdated(obj))
@@ -111,6 +112,14 @@ def alb_fresh(obj):
                 or fingerprint.projection_outdated(obj))
 
 
+def _received(obj):
+    try:
+        from .modules.linking import core
+    except ImportError:
+        return False
+    return core.received_ok(obj)
+
+
 def _file_there(img):
     from .modules.baking import common
     return img is not None and common.file_ok(img)
@@ -119,7 +128,17 @@ def _file_there(img):
 def bao_made(obj):
     """03 baked once: BAo_ on disk (outdated or not)."""
     d = _bake(obj)
-    return d is not None and (d.handmade or _file_there(d.ba_image))
+    return d is not None and (d.handmade or not _needs_bao(obj) or _file_there(d.ba_image))
+
+
+def _needs_bao(obj):
+    """The Bake Route takes the Original (From Original / Mixed): From Projection needs no
+    BAo_ (nothing of the scan is used)."""
+    try:
+        from .modules.baking import route
+    except ImportError:
+        return True
+    return route.uses_original(obj)
 
 
 def nor_fresh(obj):
@@ -194,7 +213,7 @@ def _state(obj, scene):
     if d.locked:
         stage = 'LOCKED'
     elif 7 in done:
-        stage = 'BAKED'
+        stage = 'RECEIVED' if _received(obj) else 'BAKED'
     elif 3 in done:
         stage = 'PROCESSED'
     else:
@@ -281,11 +300,13 @@ def draw_stage(layout, context, obj, units=3.6):
     col.ui_units_x = units
     if stg == 'LOCKED' and locked_missing(obj, context.scene):
         col.alert = True
-    # the square is the lock toggle: green (Baked) locks, the lock unlocks; else a label
-    if stg in {'BAKED', 'LOCKED'} and hasattr(bpy.types, "MULTICAMPROJECT_OT_lock_finish"):
+    # the square is the lock toggle: green (Baked / Received) locks, the lock unlocks; else
+    # a label
+    if stg in {'BAKED', 'RECEIVED', 'LOCKED'} and hasattr(bpy.types,
+                                                         "MULTICAMPROJECT_OT_lock_finish"):
         op = col.operator("multicamproject.lock_finish", text="", emboss=False,
                           icon=STAGES[stg][1], depress=stg == 'LOCKED')
-        op.action = 'LOCK' if stg == 'BAKED' else 'UNLOCK'
+        op.action = 'UNLOCK' if stg == 'LOCKED' else 'LOCK'
         op.object_name = obj.name
     else:
         col.label(text="", icon=STAGES[stg][1])

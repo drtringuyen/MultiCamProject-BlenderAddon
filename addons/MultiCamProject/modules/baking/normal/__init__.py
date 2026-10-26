@@ -209,8 +209,9 @@ def state(obj, scene=None):
 def nor_outdated(obj, scene=None):
     """NOR_ was made from another ALB_ / settings than now ('' stamp: older NOR_, left as it
     was). A loaded NOR_ (TexOverride) is never outdated."""
+    from .. import fingerprint
     d = common.data(obj)
-    if d.nor_mode == 'LOAD':
+    if d.nor_mode == 'LOAD' or fingerprint.received(obj):
         return False
     return bool(d.nor_fingerprint) and d.nor_fingerprint != state(obj, scene)
 

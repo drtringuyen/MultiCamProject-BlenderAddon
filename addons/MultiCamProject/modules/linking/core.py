@@ -301,6 +301,20 @@ def _stamp_record(obj, **extra):
     obj[OUT_KEY] = json.dumps(rec)
 
 
+def received_ok(obj):
+    """Received from its work window and not changed here since: the window's bakes are the
+    object's result - the main file reads nothing of it outdated (the window decides)."""
+    if obj is None or obj.type != 'MESH':
+        return False
+    rec = out_record(obj)
+    if not rec or not rec.get("received") or not rec.get("sig"):
+        return False
+    if is_work_window(bpy.context.scene):
+        return False
+    from ..baking import cache
+    return cache.get(obj, "received_sig", mesh_signature) == rec["sig"]
+
+
 def mesh_signature(obj):
     """The mesh (shape, uv_normal) and its painted VCMix layers: edits in the main file
     while the object is out are noticed at Receive."""
