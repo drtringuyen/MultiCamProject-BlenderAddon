@@ -24,8 +24,8 @@ def draw_switch(layout, obj, kind, label=True):
 
 
 def draw_row(layout, obj, kind, text, icon, img):
-    """07: [label] [Bake|Load] [file] [refresh] [folder] [delete override] - and under it
-    an override found (Bake) or missing (Load)."""
+    """07: [label] [Bake|Load] [file] [export to Overrides] [folder] [refresh] [delete
+    override] - and under it an override found (Bake) or missing (Load)."""
     from ..baking import ui as bake_ui
     scene = bpy.context.scene
     col = layout.column(align=True)
@@ -36,7 +36,10 @@ def draw_row(layout, obj, kind, text, icon, img):
     sw.ui_units_x = 5           # the file path gets the rest
     right.separator(factor=0.5)
     if img is not None:
-        bake_ui.draw_file(right, img)
+        def export(row):
+            op = row.operator("multicamproject.tex_export_override", text="", icon='EXPORT')
+            op.kind, op.object_name = kind, obj.name
+        bake_ui.draw_file(right, img, extra=export)
     else:
         right.label(text="(none yet)")
     op = right.operator("multicamproject.tex_refresh", text="", icon='FILE_REFRESH')

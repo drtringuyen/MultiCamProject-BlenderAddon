@@ -61,6 +61,13 @@ on the object (survives Drive syncs, Send Out / Send Back):
 - Once per file: objects that already have an override file start on Load; an empty
   override folder setting becomes //02.Overrides/. Replaces the Texture Override copy below.
 
+### Export to 02.Overrides (2026-10-26)
+
+07's ALB_ and NOR_ rows have an Export button before Show in Folder: the texture's file is
+copied into 02.Overrides as its override, after a confirm (Overwrite when one is there -
+the old one goes to the Recycle Bin). Nothing switches: pick Load to use it. Greyed in the
+tooltip's words when there is no file yet, no Overrides folder, or the row is on Load.
+
 ### Image thumbnails (2026-10-26)
 
 Every image the panels show has a small thumbnail instead of the plain image icon: the

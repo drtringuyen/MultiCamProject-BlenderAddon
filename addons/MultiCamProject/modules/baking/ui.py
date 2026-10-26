@@ -24,9 +24,10 @@ def draw_object_size(layout, obj):
     sizes.prop(common.data(obj), "tex_size", text="")
 
 
-def draw_file(row, img, show=None):
+def draw_file(row, img, show=None, extra=None):
     """Which texture file: '<folder>/<file>' (greyed, red: not on disk) - or `show` (data,
-    property): its original / _inpaint dropdown - then Show in Folder (06 Inpainting)."""
+    property): its original / _inpaint dropdown - then `extra(row)` (more buttons), then
+    Show in Folder (06 Inpainting)."""
     from . import cache
     path = common.image_file(img)
     cell = row.row(align=True)
@@ -36,6 +37,8 @@ def draw_file(row, img, show=None):
         cell.alert = bool(path) and not cache.isfile(path)
         cell.active = cell.alert
         cell.label(text=common.file_label(img) if path else "(no file)")
+    if extra is not None:
+        extra(row)
     btn = row.row(align=True)
     btn.enabled = bool(path) and hasattr(bpy.types, "MULTICAMPROJECT_OT_reveal_file")
     btn.operator("multicamproject.reveal_file", text="", icon='FILEBROWSER').filepath = path
