@@ -106,6 +106,7 @@ class Item:
         self.job_id = (core.out_record(obj) or {}).get("id", "")
         self.work = ""          # the work file now ('' = none / not found)
         self.work_dst = ""      # where it belongs
+        self.lost = ""          # the broken link's old path (the file was found by its id)
         self.read = None        # check_work's read
         self.problems = []      # red lines Fix mends
         self.unfixable = []     # red lines it can't (a missing file, no work file)
@@ -131,9 +132,10 @@ class Report:
         self.errors = []        # Fix can't run (red)
         self.counts = []        # photos / scan textures (only counted)
         self.absolute = []      # this file's absolute paths Fix makes relative (labels)
+        self.orphans = []       # (path, its object, saved) - work files nothing here links
 
     def to_fix(self):
-        return bool(self.make or self.strays or self.absolute
+        return bool(self.make or self.strays or self.absolute or self.orphans
                     or any(i.needs_fix() for i in self.items))
 
 
@@ -414,9 +416,16 @@ def check_steps(context):
         if rec:
             jobs.item_start(o.name)
             it.work = core._saved_window(rec)
+            if not it.work:         # a broken link: the Bake Folder's file with its id
+                yield jobs.Step(f"{o.name}: looking for its work file")
+                it.work = work_ids(bake).get(it.job_id, "")
+                if it.work:
+                    it.lost = core._abs(rec.get(core.FILE_FIELD, "")) or "(no path)"
+                    it.problems.append(f"link broken ({_short(it.lost)} is gone) - "
+                                       f"{os.path.basename(it.work)} has its id: Fix relinks it")
             if not it.work:
-                it.unfixable.append("work file not found - Find Work Files in the Linking "
-                                    "panel")
+                it.unfixable.append("work file not found - no .blend in the Bake Folder has "
+                                    "its id")
             else:
                 it.work_dst = os.path.join(bake, os.path.basename(it.work))
                 res = yield from _read(it.work, it.job_id, f"reading {os.path.basename(it.work)}")
@@ -464,8 +473,64 @@ def check_steps(context):
     rep.strays = sorted((p for p in set(rep.strays) | set(_strays(rep, bake, export, overrides))
                          if in_room(p)), key=_n)
     rep.absolute = [label for label, _get, _set in main_paths(scene)]
+    yield jobs.Step("old work files")
+    rep.orphans = _orphans(bake, main)
     _sync_picks(context, rep)
     return rep
+
+
+_IDS = {}           # Bake Folder .blend: ((mtime, size), (id, its object, its main file))
+
+
+def _work_ids_full(bake):
+    """{path: (id, object, main file)} of the work windows at the top of the Bake Folder
+    (read_work_file links each one's scene for a moment; unchanged files are not read
+    again)."""
+    out = {}
+    try:
+        names = sorted(n for n in os.listdir(bake) if n.lower().endswith(".blend"))
+    except OSError:
+        return out
+    for name in names:
+        path = os.path.join(bake, name)
+        try:
+            st = os.stat(path)
+        except OSError:
+            continue
+        sig = (st.st_mtime, st.st_size)
+        hit = _IDS.get(_n(path))
+        if hit is None or hit[0] != sig:
+            try:
+                info = core.read_work_file(path)
+            except Exception as e:      # not a work window, or unreadable
+                print(f"[MultiCamProject] {name} skipped: {e}")
+                info = None
+            hit = _IDS[_n(path)] = (sig, info)
+        if hit[1] is not None:
+            out[path] = hit[1]
+    return out
+
+
+def work_ids(bake):
+    """{id: path} of the Bake Folder's work windows."""
+    return {info[0]: path for path, info in _work_ids_full(bake).items()}
+
+
+def _orphans(bake, main):
+    """The Bake Folder's work windows made for this file that no object here links (nor
+    keeps after X): an Automate / Send Out whose objects were never saved here. Fix sends
+    the ticked ones to the Recycle Bin, so Automate can make them new."""
+    linked = {(core.out_record(o) or {}).get("id") for o in bpy.data.objects if not o.library}
+    kept = {_n(core._abs(o[core.LAST_WINDOW_KEY])) for o in bpy.data.objects
+            if not o.library and o.get(core.LAST_WINDOW_KEY)}
+    out = []
+    for path, (job_id, work_name, of) in _work_ids_full(bake).items():
+        if job_id in linked or _n(path) in kept or not in_room(path):
+            continue
+        if of and not same_place(core._abs(of), main):
+            continue                # another main file's window (a shared Bake Folder)
+        out.append((path, work_name, _when(path)))
+    return sorted(out, key=lambda o: _n(o[0]))
 
 
 _KEY_LABELS = {core.WORK_KEY: "main file link", core.WORK_BAKES_KEY: "bake folder link",
@@ -491,8 +556,20 @@ class MULTICAMPROJECT_PG_CheckPick(bpy.types.PropertyGroup):
                        default='SOURCE')
 
 
+class MULTICAMPROJECT_PG_CheckOrphan(bpy.types.PropertyGroup):
+    path: StringProperty()
+    override: bpy.props.BoolProperty(
+        default=True, name="Override",
+        description="To the Recycle Bin when Fix is done - Automate can make this work file "
+                    "new (off: it stays)")
+
+
 def _picks(context):
     return context.window_manager.multicamproject_check_picks
+
+
+def _orphan_picks(context):
+    return context.window_manager.multicamproject_check_orphans
 
 
 def _sync_picks(context, rep):
@@ -506,6 +583,13 @@ def _sync_picks(context, rep):
                 p.key = t.key
                 # a Locked object's ALB_ / NOR_ is final: its Bake Folder copy stays
                 p.keep = old.get(t.key, 'TARGET' if t.locked else 'SOURCE')
+    orph = _orphan_picks(context)
+    was = {_n(p.path): p.override for p in orph}
+    orph.clear()
+    for path, _name, _when_ in rep.orphans:
+        p = orph.add()
+        p.path = path
+        p.override = was.get(_n(path), True)
 
 
 def pick_of(context, t):
@@ -600,7 +684,7 @@ def _fix_object(context, rep, it, bake):
         if it.read is not None and _n(core._saved_window(core.out_record(obj))) != _n(it.work_dst):
             raise RuntimeError(f"{it.name}: its work file is not found at {_short(it.work_dst)}")
         after = _state_text(obj)
-        if after != before:
+        if after != before and not it.lost:     # a broken link reads differently once found
             raise RuntimeError(f"{it.name}: link state changed ({before} -> {after})")
 
 
@@ -639,17 +723,24 @@ def fix_steps(context, rep):
     placed = {_n(t.target) for it in rep.items for t in it.tex}
     placed |= {_n(it.work_dst) for it in rep.items if it.work_dst}
     strays = [p for p in rep.strays if _n(p) not in placed]
+    ticked = {_n(p.path) for p in _orphan_picks(context) if p.override}
+    old = [path for path, _name, _when_ in rep.orphans
+           if _n(path) in ticked and _n(path) not in placed]
+    strays += old + [p + "1" for p in old if os.path.isfile(p + "1")]
     left = _recycle(strays)
     lines.append(f"{done} object(s) fixed, {len(strays) - len(left)} file(s) to the "
                  "Recycle Bin")
     if left:
         lines.append(f"kept (outside the project or locked): {', '.join(os.path.basename(p) for p in left)}")
+    if old:
+        lines.append(f"{len(old)} old work file(s) overridden (to the Recycle Bin)")
+    from ..tex_override import core as tov
+    keep = {_n(p) for p in (bake, folders.folder(scene, 'EXPORT'), tov.folder(scene),
+                            os.path.dirname(bpy.data.filepath)) if p}
     for d in sorted(set(rep.dirs), key=lambda p: -len(p)):     # the deepest first
-        if _remove_empty(d):
+        while in_room(d) and _n(d) not in keep and _remove_empty(d):
             lines.append(f"removed the empty {_short(d)}")
-            parent = os.path.dirname(d)
-            if os.path.basename(parent).lower() == "export" and _remove_empty(parent):
-                lines.append(f"removed the empty {_short(parent)}")
+            d = os.path.dirname(d)      # _work, then a renamed 01.Baking left empty
     bpy.ops.wm.save_mainfile()
     lines.append(f"{os.path.basename(bpy.data.filepath)} saved")
     return lines
@@ -801,6 +892,8 @@ class MULTICAMPROJECT_OT_CheckReport(bpy.types.Operator):
                 _line(box, _short(p), 'DOT', grey=True)
             if len(rep.strays) > 8:
                 _line(box, f"... {len(rep.strays) - 8} more", 'BLANK1', grey=True)
+        if rep.orphans:
+            self._draw_orphans(context, col, rep)
         if rep.to_fix():
             hint = col.column(align=True)
             hint.active = False
@@ -810,6 +903,27 @@ class MULTICAMPROJECT_OT_CheckReport(bpy.types.Operator):
             hint.label(text="One object at a time - the first failed check stops Fix, nothing "
                             "is removed then", icon='INFO')
             hint.label(text="This file is saved when Fix is done", icon='INFO')
+
+    def _draw_orphans(self, context, col, rep):
+        box = col.box().column(align=True)
+        picks = {_n(p.path): p for p in _orphan_picks(context)}
+        row = box.row(align=True)
+        row.label(text=f"Old work files ({len(rep.orphans)}) - not linked here",
+                  icon='FILE_BLEND')
+        for value, text in ((True, "Override All"), (False, "Keep All")):
+            op = row.operator("multicamproject.check_orphans_all", text=text)
+            op.value = value
+        _line(box, "Ticked ones go to the Recycle Bin when Fix is done - Automate / Send Out "
+                   "can make them new", 'INFO', grey=True)
+        for path, name, when in rep.orphans:
+            p = picks.get(_n(path))
+            r = box.row(align=True)
+            split = r.split(factor=0.62, align=True)
+            split.label(text=f"{os.path.basename(path)}  -  {name}", icon='DOT')
+            right = split.row(align=True)
+            right.label(text=f"saved {when}")
+            if p is not None:
+                right.prop(p, "override", text="Override")
 
     def _draw_item(self, context, col, it):
         box = col.box().column(align=True)
@@ -867,6 +981,20 @@ class MULTICAMPROJECT_OT_CheckReport(bpy.types.Operator):
                           block=True)
 
 
+class MULTICAMPROJECT_OT_CheckOrphansAll(bpy.types.Operator):
+    """Tick or untick every old work file of the report"""
+    bl_idname = "multicamproject.check_orphans_all"
+    bl_label = "Override All"
+    bl_options = {'INTERNAL'}
+
+    value: bpy.props.BoolProperty(default=True, options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        for p in _orphan_picks(context):
+            p.override = self.value
+        return {'FINISHED'}
+
+
 def _line(col, text, icon, alert=False, grey=False):
     row = col.row()
     row.alert = alert
@@ -874,8 +1002,9 @@ def _line(col, text, icon, alert=False, grey=False):
     row.label(text=text, icon=icon)
 
 
-_CLASSES = (MULTICAMPROJECT_PG_CheckPick, MULTICAMPROJECT_OT_CheckProject,
-            MULTICAMPROJECT_OT_CheckReport)
+_CLASSES = (MULTICAMPROJECT_PG_CheckPick, MULTICAMPROJECT_PG_CheckOrphan,
+            MULTICAMPROJECT_OT_CheckProject,
+            MULTICAMPROJECT_OT_CheckReport, MULTICAMPROJECT_OT_CheckOrphansAll)
 
 
 def register():
@@ -883,9 +1012,12 @@ def register():
         bpy.utils.register_class(c)
     bpy.types.WindowManager.multicamproject_check_picks = bpy.props.CollectionProperty(
         type=MULTICAMPROJECT_PG_CheckPick)
+    bpy.types.WindowManager.multicamproject_check_orphans = bpy.props.CollectionProperty(
+        type=MULTICAMPROJECT_PG_CheckOrphan)
 
 
 def unregister():
+    del bpy.types.WindowManager.multicamproject_check_orphans
     del bpy.types.WindowManager.multicamproject_check_picks
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

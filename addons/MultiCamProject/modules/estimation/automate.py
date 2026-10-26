@@ -183,7 +183,8 @@ def tasks(context):
                 t.problems.append(f"Same work file as {files[key]}")
             files.setdefault(key, row.name)
             if os.path.exists(t.path):
-                t.problems.append(f"{os.path.basename(t.path)} is in the Bake Folder already")
+                t.problems.append(f"{os.path.basename(t.path)} is in the Bake Folder already - "
+                                  "Fix Project can override an old one")
     return out, problems
 
 

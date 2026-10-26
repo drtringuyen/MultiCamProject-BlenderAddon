@@ -675,6 +675,8 @@ def _is_project(scene):
     file in 00.Scan)."""
     if in_scan_folder():
         return False
+    if scene.get("multicamproject_work_of"):    # a work window: its main file owns the folders
+        return False                            # (an old one names a renamed 01.Baking)
     return any(roles.find(scene, r) is not None for r in ('OBJECTS', 'EXPORT', 'ORIGINALS'))         or bool(photo_objects())
 
 
