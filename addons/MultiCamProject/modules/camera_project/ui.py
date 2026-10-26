@@ -187,9 +187,11 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         top, rest = core.display_order(obj)
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
-        header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
+        title = header.row()
+        title.alignment = 'LEFT'        # the modes right after the label, no gap
+        title.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
         # how the tools move the view: Freestyle / Focus / Lock - a group of its own
-        modes = header.row(align=True)
+        modes = title.row(align=True)
         current = view_mode(context)
         for mode in ('FREE', 'FOCUS', 'LOCK'):
             modes.operator("multicamproject.view_mode_set", text="", icon=VIEW_MODE_ICONS[mode],
@@ -202,9 +204,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         props = context.scene.multicamproject_props
         sub.prop(props, "solo_isolate", text="", toggle=True,
                  icon='SOLO_ON' if props.solo_isolate else 'SOLO_OFF')
+        sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
         # Clear All Projection: every camera's paint off the whole object (BAo_ shows)
         sub.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
-        sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
         # yellow: keep the cameras as picked - Resort no longer red
         sub.operator("multicamproject.confirm_cameras", text="", icon='CHECKMARK',
                      depress=d.resorted)
