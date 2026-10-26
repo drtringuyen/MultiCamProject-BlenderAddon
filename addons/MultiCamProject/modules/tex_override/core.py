@@ -207,6 +207,30 @@ def set_mode(scene, obj, kind, new):
     _forget()
 
 
+def bake_both(scene, obj):
+    """ALB_ and NOR_ back to Bake (a camera tool changes the projection they come from).
+    A Locked Finish keeps its textures."""
+    if _common().data(obj).locked:
+        return
+    for kind in ('ALB', 'NOR'):
+        if is_load(obj, kind):
+            set_mode(scene, obj, kind, BAKE)
+
+
+def warn(text):
+    """A warning the user sees (a dropdown's setter can't report): a small popup, and the
+    console."""
+    print(f"[MultiCamProject] {text}")
+
+    def show():
+        wm = bpy.context.window_manager
+        if wm is not None and wm.windows:
+            wm.popup_menu(lambda m, _c: m.layout.label(text=text), title="Overrides",
+                          icon='ERROR')
+        return None
+    bpy.app.timers.register(show, first_interval=0.05)
+
+
 def loads(scene, obj, kind):
     """A bake asks for `kind`: True when it is loaded (its file is there); a Load whose
     file is gone goes back to Bake (False: bake it)."""

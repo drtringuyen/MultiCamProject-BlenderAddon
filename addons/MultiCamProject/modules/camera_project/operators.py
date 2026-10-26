@@ -934,12 +934,19 @@ def finish_painting(context, obj):
 
 def processing_preview(context, obj):
     """A camera tool paints the projection: the object back on Processing (MCP_, not its
-    baked result) and the file on Preview."""
+    baked result) and the file on Preview, ALB_ / NOR_ back on Bake (a loaded override
+    would not show the new paint)."""
     from ... import module_manager
     if module_manager.is_loaded("baking"):
         from ..baking import gn_final
         if gn_final.is_final(obj):
             gn_final.set_final(obj, context.scene, False)
+    if module_manager.is_loaded("tex_override"):
+        from ..tex_override import core as tex
+        try:
+            tex.bake_both(context.scene, obj)
+        except RuntimeError as e:
+            print(f"[MultiCamProject] {obj.name}: {e}")
     props = context.scene.multicamproject_props
     if props.quality != 'PREVIEW':
         props.quality = 'PREVIEW'

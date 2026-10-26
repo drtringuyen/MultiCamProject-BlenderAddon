@@ -129,6 +129,13 @@ def _set_mode(data, kind, value):
     except RuntimeError as e:       # Locked Finish: the dropdown is greyed anyway
         print(f"[MultiCamProject] {obj.name}: {e}")
         return
+    if kind == 'NOR' and want == 'LOAD' and not tex.is_load(obj, 'ALB'):
+        # a loaded NOR_ goes with its loaded ALB_ (the finished pair from 02.Overrides)
+        if tex.available(scene, obj, 'ALB'):
+            tex.set_mode(scene, obj, 'ALB', 'LOAD')
+        else:
+            tex.warn(f"{obj.name}: NOR_ loaded, but there is no "
+                     f"{tex.name(obj, 'ALB')}.png in 02.Overrides - ALB_ stays on Bake")
     if gn_final.get_modifier(obj) is not None and not gn_final.is_final(obj):
         gn_final.set_final(obj, scene, True)
 
