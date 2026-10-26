@@ -195,6 +195,11 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         props = context.scene.multicamproject_props
         sub.prop(props, "solo_isolate", text="", toggle=True,
                  icon='SOLO_ON' if props.solo_isolate else 'SOLO_OFF')
+        modes = sub.row(align=True)     # how the tools move the view: Freestyle / Focus / Lock
+        current = view_mode(context)
+        for mode in ('FREE', 'FOCUS', 'LOCK'):
+            modes.operator("multicamproject.view_mode_set", text="", icon=VIEW_MODE_ICONS[mode],
+                           depress=current == mode).mode = mode
         sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
         # yellow: keep the cameras as picked - Resort no longer red
         sub.operator("multicamproject.confirm_cameras", text="", icon='CHECKMARK',
@@ -368,9 +373,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         """The solo eye - and the camera's name, unless item is None (the caller places it)."""
         eye = row.row(align=True)
         eye.active = True       # never dimmed: clicking another eye switches the solo camera
-        # highlighted: the view mode (one for all cameras): camera Focus, lock Lock, eye Freestyle
-        icon = VIEW_MODE_ICONS[view_mode(bpy.context)] if solo else 'HIDE_ON'
-        op = eye.operator("multicamproject.solo_camera", text="", icon=icon, depress=solo)
+        op = eye.operator("multicamproject.solo_camera", text="", depress=solo,
+                          icon='HIDE_OFF' if solo else 'HIDE_ON')
         op.camera = cam.name
         if item is not None:
             row.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug

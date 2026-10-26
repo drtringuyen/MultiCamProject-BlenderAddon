@@ -342,8 +342,8 @@ def enter_camera_view(context, space):
 
 
 # The view mode is one setting for every camera, kept on the window manager (an ID, so it
-# survives addon reloads; not saved with the file). The highlighted camera's eye cycles it,
-# another camera's eye starts over at Focus:
+# survives addon reloads; not saved with the file). Picked in the Selected Cameras header
+# (Freestyle / Focus / Lock); a camera's eye only looks through it:
 #   FOCUS  camera  a brush / bucket solos its camera first, the view rotates
 #   LOCK   lock    as FOCUS, and a camera view never rotates (pan and zoom still work)
 #   FREE   eye     a brush / bucket leaves the view alone, the view rotates
@@ -400,38 +400,49 @@ def focus_camera(context, cam):
         bpy.ops.multicamproject.solo_camera(camera=cam.name)
 
 
+VIEW_MODE_TEXT = {'FREE': "Freestyle: the tools keep the view",
+                  'FOCUS': "Focus: the tools look through their camera",
+                  'LOCK': "Lock: the tools look through their camera, no rotation"}
+
+
+class MULTICAMPROJECT_OT_ViewModeSet(bpy.types.Operator):
+    """How the camera tools move the view - one setting for every camera"""
+    bl_idname = "multicamproject.view_mode_set"
+    bl_label = "View Mode"
+
+    mode: EnumProperty(items=(('FREE', "Freestyle", ""), ('FOCUS', "Focus", ""),
+                              ('LOCK', "Lock", "")), options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        return VIEW_MODE_TEXT[props.mode]
+
+    def execute(self, context):
+        context.window_manager[_MODE_KEY] = self.mode
+        self.report({'INFO'}, VIEW_MODE_TEXT[self.mode])
+        _redraw_views(context)
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
-    """Solo the active object in local view and look through this camera (Focus).
-    Click again: Lock (no view rotation) > Freestyle (tools keep the view) > Focus (tools
-    look through their camera). Another camera's eye starts over at Focus. Ctrl+click:
-    leave solo"""
+    """Solo the active object in local view and look through this camera. The view mode
+    (Freestyle / Focus / Lock) is the Selected Cameras header's. Ctrl+click: leave solo"""
     bl_idname = "multicamproject.solo_camera"
     bl_label = "Solo Camera View"
 
     camera: StringProperty()
 
     def invoke(self, context, event):
-        # the highlighted camera's eye cycles the view mode, another eye starts at Focus;
-        # both look through the camera. Ctrl+click (and every script call, which runs
-        # execute) keeps the old click-again-to-leave
+        # a click looks through the camera (the mode stays as the header has it); Ctrl+click
+        # (and every script call, which runs execute) keeps the old click-again-to-leave
         cam = bpy.data.objects.get(self.camera)
         if cam is None or cam.type != 'CAMERA' or event.ctrl:
             return self.execute(context)
-        wm = context.window_manager
-        if cam == highlight_camera(context):
-            mode = VIEW_MODES[(VIEW_MODES.index(view_mode(context)) + 1) % len(VIEW_MODES)]
-        else:
-            mode = 'FOCUS'
-        wm[_MODE_KEY] = mode
         if not is_solo(context, cam):
             result = self.execute(context)
             if 'FINISHED' not in result:
                 return result
-        wm[_CUR_KEY] = cam.name
-        self.report({'INFO'}, {'FREE': "Freestyle: the tools keep the view",
-                               'FOCUS': "Focus: the tools look through their camera",
-                               'LOCK': "Lock: the tools look through their camera, "
-                                       "no rotation"}[mode])
+        context.window_manager[_CUR_KEY] = cam.name
         _redraw_views(context)
         return {'FINISHED'}
 
@@ -1462,6 +1473,7 @@ _classes = (
     MULTICAMPROJECT_OT_CamPaint,
     MULTICAMPROJECT_OT_CamPaintFinish,
     MULTICAMPROJECT_OT_BakeViewMix,
+    MULTICAMPROJECT_OT_ViewModeSet,
 )
 
 _keymaps = []
