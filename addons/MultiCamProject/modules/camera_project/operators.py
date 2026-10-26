@@ -319,6 +319,102 @@ class MULTICAMPROJECT_OT_ToggleGlobal(bpy.types.Operator):
         return {'FINISHED'}
 
 
+def _zoom_fac(zoom):
+    """Blender's camera view zoom -> the frame's scale (BKE_screen_view3d_zoom_to_fac)."""
+    return ((2 ** 0.5) + zoom / 50.0) ** 2 / 4.0
+
+
+def _view_region(space):
+    for area in bpy.context.screen.areas if bpy.context.screen else ():
+        if area.spaces.active == space:
+            return next((r for r in area.regions if r.type == 'WINDOW'), None)
+    return None
+
+
+def _px_per_meter(scene, cam, point, frame_w):
+    """How many screen pixels one meter at `point` takes, across the camera's frame of
+    `frame_w` pixels."""
+    from bpy_extras.object_utils import world_to_camera_view
+    step = 0.01
+    right = cam.matrix_world.to_3x3().col[0].normalized() * step
+    a = world_to_camera_view(scene, cam, point)
+    b = world_to_camera_view(scene, cam, point + right)
+    return abs(b.x - a.x) * frame_w / step
+
+
+def view_anchor(context, space, obj):
+    """Before a camera switch: the spot of `obj` nearest the middle of the camera view,
+    where it is on screen and how big it looks there (pixels per meter) - None when the
+    view is no camera view or the object is not near the middle. Kept by keep_anchor
+    after the switch, so the next photo shows the same spot, as big, at the same place on
+    screen (no jump while painting)."""
+    import math
+    from bpy_extras import view3d_utils
+    rv3d = space.region_3d
+    cam = space.camera
+    region = _view_region(space)
+    if (rv3d is None or rv3d.view_perspective != 'CAMERA' or cam is None
+            or cam.type != 'CAMERA' or region is None or obj is None or obj.type != 'MESH'):
+        return None
+    inv = obj.matrix_world.inverted()
+    depsgraph = context.evaluated_depsgraph_get()
+    w, h = region.width, region.height
+    # the middle first, then rings around it (out to half the view's longer side)
+    spots = [(w / 2.0, h / 2.0)]
+    for ring in range(1, 13):
+        r = ring / 12.0 * 0.5 * max(w, h)
+        spots += [(w / 2.0 + r * math.cos(a * math.pi / 8), h / 2.0 + r * math.sin(a * math.pi / 8))
+                  for a in range(16)]
+    for spot in spots:
+        origin = view3d_utils.region_2d_to_origin_3d(region, rv3d, spot)
+        direction = view3d_utils.region_2d_to_vector_3d(region, rv3d, spot)
+        try:
+            hit, loc, _n, _i = obj.ray_cast(inv @ origin,
+                                            (inv.to_3x3() @ direction).normalized(),
+                                            depsgraph=depsgraph)
+        except RuntimeError:
+            return None
+        if hit:
+            point = obj.matrix_world @ loc
+            frame_w = _zoom_fac(rv3d.view_camera_zoom) * w
+            return point, _px_per_meter(context.scene, cam, point, frame_w), spot
+    return None
+
+
+def keep_anchor(context, space, anchor):
+    """After a camera switch: zoom and pan the camera view so the anchor's spot is where it
+    was on screen, at the size it had. Camera view with Sensor Fit Horizontal (camfit):
+    the frame is fac(zoom) x region width wide, centred on the region's middle minus
+    2 x fac x offset x region size (measured in Blender 5.2)."""
+    from bpy_extras.object_utils import world_to_camera_view
+    rv3d = space.region_3d
+    cam = space.camera
+    region = _view_region(space)
+    if anchor is None or rv3d is None or cam is None or region is None:
+        return
+    point, want, (tx, ty) = anchor
+    scene = context.scene
+    co = world_to_camera_view(scene, cam, point)
+    if co.z <= 0.0 or not (-0.5 <= co.x <= 1.5 and -0.5 <= co.y <= 1.5):
+        return          # behind the new camera or far off its photo: leave the view
+    winx, winy = region.width, region.height
+    per_frame = _px_per_meter(scene, cam, point, 1.0)   # pixels per meter per frame pixel
+    if per_frame <= 0.0:
+        return
+    fac = want / per_frame / winx
+    zoom = max(-30.0, min(600.0, 50.0 * (2.0 * fac ** 0.5 - 2 ** 0.5)))
+    fac = _zoom_fac(zoom)
+    r = scene.render
+    aspect = (r.resolution_x * r.pixel_aspect_x) / max(1e-6, r.resolution_y * r.pixel_aspect_y)
+    frame_w = fac * winx
+    frame_h = frame_w / aspect
+    rv3d.view_camera_zoom = zoom
+    # the spot at frame_min + co x frame size = (tx, ty), frame_min = middle - 2 fac off win
+    # - frame / 2
+    rv3d.view_camera_offset = ((winx / 2.0 + (co.x - 0.5) * frame_w - tx) / (2.0 * fac * winx),
+                               (winy / 2.0 + (co.y - 0.5) * frame_h - ty) / (2.0 * fac * winy))
+
+
 def enter_camera_view(context, space):
     """Look through space.camera the way Blender's own View Camera does: setting
     view_perspective = 'CAMERA' directly skips Blender remembering the view it came from,
@@ -489,6 +585,9 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
             _save_state(context, key, None)
             return {'FINISHED'}
 
+        # switching camera inside solo: the spot in the middle stays there, as big
+        anchor = (view_anchor(context, space, obj)
+                  if space.local_view is not None and state and "cam" in state else None)
         if space.local_view is None:
             selected = list(context.selected_objects)
             for o in selected:
@@ -528,6 +627,7 @@ class MULTICAMPROJECT_OT_SoloCamera(bpy.types.Operator):
         camfit.fit(scene, cam)  # the frame = the photo (else the timer does it a moment later)
         context.window_manager[_CUR_KEY] = cam.name
         enter_camera_view(context, space)
+        keep_anchor(context, space, anchor)
         show_in_list(obj, cam)
         if not cam.visible_get():
             self.report({'WARNING'}, f"'{cam.name}' is in a hidden collection - "

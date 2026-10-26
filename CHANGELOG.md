@@ -61,6 +61,13 @@ on the object (survives Drive syncs, Send Out / Send Back):
 - Once per file: objects that already have an override file start on Load; an empty
   override folder setting becomes //02.Overrides/. Replaces the Texture Override copy below.
 
+### Camera switch keeps the spot you look at (2026-10-26)
+
+Switching camera inside solo (eye, photo, arrow keys, a brush in Focus / Lock) no longer
+jumps: the point of the object nearest the middle of the camera view stays where it was on
+screen, as big, in the next photo - zoom and pan are set from it. A point behind the new
+camera or far off its photo leaves the view as it was. Entering solo is unchanged.
+
 ### View mode buttons in the Selected Cameras header (2026-10-26)
 
 Freestyle / Focus / Lock are a group of their own right after the header's title, the
