@@ -446,7 +446,7 @@ def check_steps(context):
                             continue
                         t = tex.setdefault(fname, Tex(fname, os.path.join(bake, fname)))
                         t.work = path
-                    absolute = res.get("absolute", [])
+                    absolute = [_KEY_LABELS.get(a, a) for a in res.get("absolute", [])]
                     if absolute:
                         it.problems.append(f"{len(absolute)} absolute path(s) - made relative: "
                                            + ", ".join(absolute[:4])
@@ -466,6 +466,10 @@ def check_steps(context):
     rep.absolute = [label for label, _get, _set in main_paths(scene)]
     _sync_picks(context, rep)
     return rep
+
+
+_KEY_LABELS = {core.WORK_KEY: "main file link", core.WORK_BAKES_KEY: "bake folder link",
+               core.WORK_SAVE_AS_KEY: "save path"}
 
 
 def _short(path):
