@@ -93,6 +93,16 @@ def _draw_export(row, context):
     sub.enabled = gate.lock(sub, context) and not jobs.busy()
     sub.operator("multicamproject.export_fbx", icon='EXPORT',
                  text=f"Fix {to_fix} + Export" if to_fix else "Export")
+    # where it goes: 09's Export folder (the same setting), then open it in Explorer
+    import os
+    es = context.scene.multicamproject_export
+    path = row.row(align=True)
+    path.ui_units_x = 6
+    path.prop(es, "folder", text="")
+    folder = os.path.normpath(bpy.path.abspath(es.folder)) if es.folder else ""
+    opener = row.row(align=True)
+    opener.enabled = bool(folder) and os.path.isdir(folder)
+    opener.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = folder
 
 
 def _draw_tail(cells, context, obj, st):
