@@ -9,16 +9,12 @@ def is_on():
     return module_manager.is_loaded("tex_override")
 
 
-def draw_switch(layout, obj, kind, label=True):
-    """[ALB_] [Bake v]: Bake / Load - "Load (not found)" without its file in 02.Overrides
-    (picking it stays on Bake)."""
+def draw_switch(layout, obj, kind):
+    """[ALB_Bake v]: ALB_Bake / ALB_Load (NOR_) - "ALB_Load (not found)" without its file
+    in 02.Overrides (picking it stays on Bake)."""
     d = obj.multicamproject_bake
     row = layout.row(align=True)
     row.enabled = not d.locked
-    if label:
-        tag = row.row(align=True)
-        tag.ui_units_x = 2.2
-        tag.label(text="ALB_" if kind == 'ALB' else "NOR_")
     row.prop(d, "alb_pick" if kind == 'ALB' else "nor_pick", text="")
     return row
 
@@ -32,7 +28,7 @@ def draw_row(layout, obj, kind, text, icon, img):
     split = col.split(factor=0.3, align=True)
     split.label(text=text, icon=icon)
     right = split.row(align=True)
-    sw = draw_switch(right, obj, kind, label=False)
+    sw = draw_switch(right, obj, kind)
     sw.ui_units_x = 5           # the file path gets the rest
     right.separator(factor=0.5)
     if img is not None:

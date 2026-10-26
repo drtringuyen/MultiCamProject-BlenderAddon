@@ -95,18 +95,20 @@ _mode_items = {'ALB': [], 'NOR': []}     # kept alive (dynamic enum strings)
 
 
 def _mode_items_for(kind, data):
-    """[Bake, Load] - "Load (not found)" while 02.Overrides has no file for it."""
+    """[ALB_Bake, ALB_Load] (NOR_) - "ALB_Load (not found)" while 02.Overrides has no file
+    for it. The name is in the item: the dropdown needs no label (and no icon, the 05 row is
+    tight)."""
     from ..tex_override import core as tex
     obj = data.id_data
     found = tex.available(bpy.context.scene, obj, kind)
     n = "ALB_" if kind == 'ALB' else "NOR_"
     step = "05 bakes" if kind == 'ALB' else "07 generates"
     keep = _mode_items[kind]
-    keep[:] = [('BAKE', "Bake", f"{step} {n} into 01.Bake", 'RENDER_STILL', 0),
-               ('LOAD', "Load" if found else "Load (not found)",
+    keep[:] = [('BAKE', f"{n}Bake", f"{step} {n} into 01.Bake", 'NONE', 0),
+               ('LOAD', f"{n}Load" if found else f"{n}Load (not found)",
                 f"{n} is the finished file in 02.Overrides - nothing is baked" if found else
                 f"No {tex.name(obj, kind)}.png in 02.Overrides - stays on Bake",
-                'IMAGE_REFERENCE' if found else 'ERROR', 1)]
+                'NONE' if found else 'ERROR', 1)]
     return keep
 
 
