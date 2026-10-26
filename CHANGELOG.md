@@ -63,7 +63,8 @@ on the object (survives Drive syncs, Send Out / Send Back):
 
 ### Camera switch keeps the spot you look at (2026-10-26)
 
-Switching camera inside solo (eye, photo, arrow keys, a brush in Focus / Lock) no longer
+Switching camera inside solo (eye, photo, arrow keys, and in Focus / Lock the Paint brush,
+the Fill bucket and the eraser - which now looks through its row's camera too) no longer
 jumps: the point of the object nearest the middle of the camera view stays where it was on
 screen, as big, in the next photo - zoom and pan are set from it. A point behind the new
 camera or far off its photo leaves the view as it was. Entering solo is unchanged.
