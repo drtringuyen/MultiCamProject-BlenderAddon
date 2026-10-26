@@ -117,7 +117,9 @@ def _get_mode(data, kind):
 
 
 def _set_mode(data, kind, value):
-    """Load without its file goes (back) to Bake."""
+    """Load without its file goes (back) to Bake. A pick shows the object Baked (MAT_):
+    the texture it picked is what is seen."""
+    from . import gn_final
     from ..tex_override import core as tex
     obj = data.id_data
     scene = bpy.context.scene
@@ -126,6 +128,9 @@ def _set_mode(data, kind, value):
         tex.set_mode(scene, obj, kind, want)
     except RuntimeError as e:       # Locked Finish: the dropdown is greyed anyway
         print(f"[MultiCamProject] {obj.name}: {e}")
+        return
+    if gn_final.get_modifier(obj) is not None and not gn_final.is_final(obj):
+        gn_final.set_final(obj, scene, True)
 
 
 def _get_ba_show(data):
