@@ -10,7 +10,7 @@ warns the steps after it (outdated_note); a missing one locks them.
   03 Mesh Editing     BAo_ baked and fresh
   04 Projection       optional: never blocks 05
   05 Bake Albedo      ALB_ fresh
-  06 Inpainting       optional: never blocks 07
+  06 Final Texture Fix optional (Inpainting, Seam Fix): never blocks 07
   07 Generate Normal  NOR_ fresh
   08 Lock Finish      by hand only
   09 Export           never locked (nor is Polycount Estimation)"""
@@ -30,7 +30,7 @@ STAGES = {      # stage -> (label, icon)
 }
 
 STEP_NAMES = {1: "01. Setup", 2: "02. Mesh Workflow", 3: "03. Mesh Editing",
-              4: "04. Projection Painting", 5: "05. Bake Albedo", 6: "06. Inpainting",
+              4: "04. Projection Painting", 5: "05. Bake Albedo", 6: "06. Final Texture Fix",
               7: "07. Generate Normal", 8: "08. Lock Finish", 9: "09. Export"}
 
 # done: the step's result is there and current. made: it is there (maybe outdated) - what

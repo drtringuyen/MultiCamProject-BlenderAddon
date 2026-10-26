@@ -87,9 +87,13 @@ def draw(layout, context):
     sub.operator("multicamproject.seamfix_apply", text="Apply to Files", icon='FILE_TICK')
 
 
+STEP_PANEL = "MULTICAMPROJECT_PT_inpainting"     # 06. Final Texture Fix (image_editor)
+
+
 class MULTICAMPROJECT_PT_SeamFix(bpy.types.Panel):
     """Hide UV seams: Fix Seam (the source's continuation across the seam), Seam-leveling
-    (both sides meet at their average colour), Bake, Apply"""
+    (both sides meet at their average colour), Bake, Apply. A sub-panel of 06. Final
+    Texture Fix - of the main panel when the Image Editor module is off"""
     bl_label = "Seam Fix"
     bl_idname = "MULTICAMPROJECT_PT_seam_fix"
     bl_space_type = 'VIEW_3D'
@@ -102,6 +106,9 @@ class MULTICAMPROJECT_PT_SeamFix(bpy.types.Panel):
         self.layout.label(icon='UV_SYNC_SELECT')
 
     def draw(self, context):
+        if self.bl_parent_id == STEP_PANEL:     # greyed while 06 is locked (its line says why)
+            from ... import gate
+            gate.lock(self.layout, context, 6)
         draw(self.layout, context)
 
 
@@ -128,6 +135,8 @@ classes = (MULTICAMPROJECT_PT_SeamFix, MULTICAMPROJECT_PT_SeamFixUV)
 
 
 def register():
+    MULTICAMPROJECT_PT_SeamFix.bl_parent_id = (
+        STEP_PANEL if hasattr(bpy.types, STEP_PANEL) else "MULTICAMPROJECT_PT_main")
     for c in classes:
         bpy.utils.register_class(c)
 

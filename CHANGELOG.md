@@ -61,6 +61,12 @@ on the object (survives Drive syncs, Send Out / Send Back):
 - Once per file: objects that already have an override file start on Load; an empty
   override folder setting becomes //02.Overrides/. Replaces the Texture Override copy below.
 
+### 06. Final Texture Fix: Inpainting + Seam Fix (2026-10-26)
+
+Step 06 "Inpainting" is now **06. Final Texture Fix**: the Inpainting rows, then Seam Fix as
+its sub-panel (greyed with the step; under the main panel when the Image Editor module is
+off). The Image / UV editor keeps its own Seam Fix panel.
+
 ### Seam Fix module (2026-10-23, work in progress)
 
 A new module (Infos row: Seam_fix) to hide UV seams of a finished albedo. Panel: 3D view

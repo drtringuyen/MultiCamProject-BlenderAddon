@@ -268,11 +268,11 @@ def _draw_file(row, src):
 
 
 class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
-    """06. Inpainting: the active object's images to inpaint - ALB_, BAo_ and its cameras'
-    photos. Each opens in the Image Editor with Inpaint on; a saved one is <name>_inpaint
+    """06. Final Texture Fix: Inpainting - the active object's images to inpaint: ALB_, BAo_
+    and its cameras' photos. Each opens in the Image Editor with Inpaint on; a saved one is <name>_inpaint
     (the original stays), which the materials and 05 / 07 / Export use. Optional: 07 does not
     wait for it"""
-    bl_label = "06. Inpainting"
+    bl_label = "06. Final Texture Fix"
     bl_idname = "MULTICAMPROJECT_PT_inpainting"
     bl_space_type = 'VIEW_3D'
     bl_region_type = 'UI'
@@ -293,6 +293,7 @@ class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
     def draw(self, context):
         layout, _open = gate.step_box(self.layout, context, 6)
         obj = context.active_object
+        layout.label(text="Inpainting", icon='BRUSH_DATA')    # Seam Fix: the sub-panel
         if not sources.draw_ready(obj):
             hint = layout.row()
             hint.active = False
