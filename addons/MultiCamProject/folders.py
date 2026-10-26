@@ -659,8 +659,22 @@ def _pin_old():
 MADE = ('ORIGINALS', 'EXPORT')      # the bake + export folders are made on disk when missing
 
 
+SCAN_DIR = "00.scan"
+
+
+def in_scan_folder(path=None):
+    """The .blend sits in the room's 00.Scan (or below): a scan file, never a main file - its
+    // folders would land inside the scan (Corridor2's bakes, 2026-10-15)."""
+    path = path or bpy.data.filepath
+    parts = os.path.normcase(os.path.normpath(os.path.dirname(path))).split(os.sep)
+    return bool(path) and SCAN_DIR in parts
+
+
 def _is_project(scene):
-    """A file that uses the add-on (other .blends opened never get folders made)."""
+    """A file that uses the add-on (other .blends opened never get folders made, nor a scan
+    file in 00.Scan)."""
+    if in_scan_folder():
+        return False
     return any(roles.find(scene, r) is not None for r in ('OBJECTS', 'EXPORT', 'ORIGINALS'))         or bool(photo_objects())
 
 

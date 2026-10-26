@@ -5,7 +5,7 @@ import os
 import bpy
 
 from ... import folders, gate, roles
-from . import core, operators as ops
+from . import check, core, operators as ops
 
 
 def _state(obj):
@@ -130,8 +130,7 @@ def draw_roles(layout, context):
     sub = split.row(align=True)
     sub.active = bool(folders.original_normal_nodes(scene, vl))
     sub.prop(props, "original_normal_strength", text="Normal")
-    split.operator(ops.MULTICAMPROJECT_OT_AutoFillFolders.bl_idname,
-                   text="Auto Detect and Fill Folders", icon='VIEWZOOM')
+    split.operator(check.MULTICAMPROJECT_OT_CheckProject.bl_idname, icon='VIEWZOOM')
 
 
 def _draw_picker(row, scene, vl, props, role, attr):

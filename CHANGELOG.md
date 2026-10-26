@@ -2,6 +2,36 @@
 
 ## Unreleased
 
+### Check Project / Fix replaces Auto Detect and Fill Folders (2026-10-26)
+
+The IO Folders & Collections button **Check Project** checks the open main file. It reads
+everything and changes nothing:
+- the role folders;
+- every object's own textures (they belong in the Bake Folder; a Loaded ALB_ / NOR_ in
+  Overrides);
+- each linked work file, read by a background Blender: it belongs at the top of the Bake
+  Folder, pointing at this main file and Bake Folder.
+
+The report opens when the check is done:
+- What is wrong is red.
+- A file found twice is merged when identical. When the copies differ, you pick which one
+  stays, with both dates. The linked copy is the default; a Locked object keeps the Bake
+  Folder's.
+- One **Fix** button:
+  - goes one object at a time: moves its textures into the Bake Folder, saves its work file
+    there (paths remapped, pointing at this file) and relinks the object here;
+  - checks each object (its link state, images, work file). The first failure stops Fix,
+    and nothing is removed then.
+  - Once every object has passed, it sends what was left behind to the Recycle Bin, removes
+    the folders that are left empty, makes missing folders (02.Overrides) and saves the file.
+- Only the add-on's own files are touched, and nothing outside the .blend's folder is
+  removed. Scan .blends, photos and scan textures are never touched.
+
+The old Auto Detect jobs (pickers, wiring, viewport, Estimation) are all in **Project
+Setup**. A .blend inside 00.Scan no longer gets 01.Bake / Export folders made next to it.
+Send Out from such a file warns. This is how Corridor2's bakes ended up in
+00.Scan\01.FBX\01.Bake.
+
 ### TexOverride module: ALB_ / NOR_ on Bake or Load (2026-10-22)
 
 A new module (Infos row: Tex_override). Each object's ALB_ and NOR_ has its own mode, saved

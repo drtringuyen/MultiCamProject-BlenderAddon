@@ -116,6 +116,9 @@ class MULTICAMPROJECT_OT_WorkSendOut(bpy.types.Operator):
             self.report({'WARNING'}, f"'{obj.name}' is linked to a work window: end the link "
                                      "(X) first")
             return {'CANCELLED'}
+        if folders.in_scan_folder():
+            self.report({'WARNING'}, "This .blend is inside 00.Scan: the work file and its "
+                                     "bakes go there too - send out from the main file")
         try:
             new, path = work_target(context, obj)
             from ..export import fixes
@@ -453,45 +456,6 @@ class MULTICAMPROJECT_OT_RenameRoleCollection(bpy.types.Operator):
         return {'FINISHED'}
 
 
-class MULTICAMPROJECT_OT_AutoFillFolders(bpy.types.Operator):
-    """Fill the empty collection pickers (OBJECTS, Original Mesh, EXPORT, CAMERAS), create
-    Original Mesh / EXPORT when they are not in the scene, and set
-    every folder to the one holding most of its files - the default folder (or a folder in
-    it), else where the files are now. Missing bake / export folders are made, every
-    image material of the file is wired image -> Principled BSDF -> Output (not Emission),
-    the viewport set up for speed (Preview, EEVEE samples / shadows) and the Polycount
-    Estimation calculated"""
-    bl_idname = "multicamproject.auto_fill_folders"
-    bl_label = "Auto Detect and Fill Folders"
-    bl_options = {'REGISTER', 'UNDO'}
-
-    @classmethod
-    def poll(cls, context):
-        from ... import gate
-        if not gate.prefix_ok(context.scene):
-            cls.poll_message_set("Fill in the Name Prefix first")
-            return False
-        return context.mode == 'OBJECT'
-
-    def execute(self, context):
-        if not bpy.data.filepath:
-            self.report({'WARNING'}, "Save the .blend first: the folders sit next to it")
-            return {'CANCELLED'}
-        for line in folders.auto_fill(context.scene, context.view_layer):
-            self.report({'INFO'}, line)
-        context.scene.multicamproject_props.file_io_done = True     # the add-on unlocks
-        from ... import quality
-        for line in quality.setup_file(context.scene):
-            self.report({'INFO'}, line)
-        from ... import module_manager
-        if module_manager.is_loaded("estimation"):
-            from ..estimation import core as est
-            if est.calculate(context) is not None:
-                n = len(context.scene.multicamproject_estimation.rows)
-                self.report({'INFO'}, f"Polycount Estimation: {n} objects")
-        return {'FINISHED'}
-
-
 def window_copy(context, obj, mode, new_name, content=None):
     """2B / 2C for a work window: the copy of obj (Object Mode), named `new_name` (MCP_ /
     MAT_ / textures follow), in EXPORT, with the projection; the original keeps its name.
@@ -696,7 +660,7 @@ class MULTICAMPROJECT_OT_WorkReopen(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkReopen, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_AutoFillFolders, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_RenameRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
+_CLASSES = (MULTICAMPROJECT_OT_ReloadFolder, MULTICAMPROJECT_OT_WorkReopen, MULTICAMPROJECT_OT_WorkSave, MULTICAMPROJECT_OT_WorkRemeshOut, MULTICAMPROJECT_OT_CreateRoleCollection, MULTICAMPROJECT_OT_RenameRoleCollection, MULTICAMPROJECT_OT_WorkSendOut, MULTICAMPROJECT_OT_WorkReceive,
             MULTICAMPROJECT_OT_WorkOpen, MULTICAMPROJECT_OT_WorkRelink,
             MULTICAMPROJECT_OT_WorkFind,
             MULTICAMPROJECT_OT_WorkSelect, MULTICAMPROJECT_OT_WorkCancel,
