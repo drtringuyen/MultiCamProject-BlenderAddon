@@ -71,6 +71,7 @@ def _icon(icon):
 
 TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
 TOOL_WIDTH = 1.0     # units per tool button: narrow, the X / Y shift fields need the room
+THUMB_UNITS = 2.6    # the selected cameras' photo, in front of its field: as tall as two lines
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -309,33 +310,71 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
     def _draw_block(self, context, layout, obj, item, debug, solo_cam, shift, flood):
         """One camera = one box. While a camera is soloed every other box is dimmed, so
-        the soloed one stands out (Blender can only tint a whole block red)."""
+        the soloed one stands out (Blender can only tint a whole block red). With its shift
+        line: [eye name / tools] [the photo, two lines tall] [photo field  slots / X Y]."""
         col = layout.box().column()
         col.scale_y = 1.25
         solo = item.camera == solo_cam
         col.active = solo_cam is None or solo
         m = self._metrics(context, debug, core.slot_count(core.data(obj)))
-        self._draw_row(col, obj, item, debug, m, solo, inpaint=_inpaint_ready(obj))
-        if shift:
-            self._draw_shift(col, obj, item.camera, m, flood)
+        inpaint = _inpaint_ready(obj)
+        it = core.shift_holder(obj, item.camera) if shift else None
+        if it is None:
+            self._draw_row(col, obj, item, debug, m, solo, inpaint=inpaint)
+            return
+        cam = item.camera
+        # fixed widths from the region's pixels (as _metrics): the names column, the photo and
+        # the slot buttons keep their size - the photo field and X / Y take the rest
+        unit = 20 * context.preferences.system.ui_scale
+        avail = max(1.0, context.region.width - 2.8 * unit)
+        left_w = (6.5 if debug else 5.5) * unit
+        thumb_w = THUMB_UNITS * unit
+        rest_w = max(1.0, avail - left_w)
+        outer = col.split(factor=min(0.5, left_w / avail), align=True)
+        names = outer.column(align=True)
+        rest = outer.split(factor=min(0.5, thumb_w / rest_w), align=True)
+        pic = rest.column(align=True)
+        pic.template_icon(icon_value=thumbs.icon(core.cam_image(cam))
+                          or bpy.types.UILayout.icon('IMAGE_DATA'), scale=THUMB_UNITS)
+        fields = rest.column(align=True)
 
-    @staticmethod
-    def _draw_row(col, obj, item, debug, m, solo, removable=False, inpaint=False):
+        self._draw_eye_name(names.row(align=True), cam, item, debug, solo)
+        self._draw_tools(names.row(align=True), obj, cam, flood)
+        split = fields.row().split(
+            factor=max(0.1, 1.0 - m[0] * avail / max(1.0, rest_w - thumb_w)), align=True)
+        self._draw_photo(split.row(align=True), cam, solo, inpaint, thumb=False)
+        self._draw_slots(split.row(align=True), obj, cam, False)
+        self._draw_xy(fields.row(align=True), it, cam)
+
+    @classmethod
+    def _draw_row(cls, col, obj, item, debug, m, solo, removable=False, inpaint=False):
+        """One line: [eye] [name] [photo field] [slots] - Other Cameras' list rows."""
         slots_f, name_f = m[:2]
         cam = item.camera
         split = col.row().split(factor=1.0 - slots_f, align=True)
         left, right = split.row(align=True), split.row(align=True)
+        cls._draw_eye_name(left.row(align=True), cam, None, debug, solo)
+        nsplit = left.split(factor=name_f, align=True)
+        nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
+        cls._draw_photo(nsplit.row(align=True), cam, solo, inpaint)
+        cls._draw_slots(right, obj, cam, removable)
 
-        eye = left.row(align=True)
+    @staticmethod
+    def _draw_eye_name(row, cam, item, debug, solo):
+        """The solo eye - and the camera's name, unless item is None (the caller places it)."""
+        eye = row.row(align=True)
         eye.active = True       # never dimmed: clicking another eye switches the solo camera
         # highlighted: the view mode (one for all cameras): camera Focus, lock Lock, eye Freestyle
         icon = VIEW_MODE_ICONS[view_mode(bpy.context)] if solo else 'HIDE_ON'
         op = eye.operator("multicamproject.solo_camera", text="", icon=icon, depress=solo)
         op.camera = cam.name
+        if item is not None:
+            row.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug
+                      else cam.name)
 
-        nsplit = left.split(factor=name_f, align=True)
-        nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
-        mid = nsplit.row(align=True)
+    @staticmethod
+    def _draw_photo(mid, cam, solo, inpaint, thumb=True):
+        """[Overlays] [Liquify / Lasso] [Inpaint] [photo field] [Load]."""
         space = bpy.context.space_data
         if solo and space is not None and space.type == 'VIEW_3D':
             # the header's Overlays = the camera photo; kept as set across camera switches and brushes
@@ -348,7 +387,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # image field takes all remaining width
         bg = core.bg_entry(cam)
         if bg:
-            mid.prop(bg, "image", text="", **thumbs.kw(bg.image))
+            mid.prop(bg, "image", text="", **(thumbs.kw(bg.image) if thumb else {}))
         else:
             mid.label(text="(no background)")
 
@@ -357,6 +396,9 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         op = sub.operator("multicamproject.load_cam_image", text="", icon='FILE_FOLDER')
         op.camera = cam.name
 
+    @staticmethod
+    def _draw_slots(right, obj, cam, removable):
+        """[1] .. [n] [global] (+ [remove])."""
         count = core.slot_count(core.data(obj))
         # equal columns: the global toggle gets the same width as a slot button
         slots = right.grid_flow(row_major=True, columns=count + 1 + removable, even_columns=True,
@@ -374,14 +416,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             op = slots.operator("multicamproject.remove_camera", text="", icon='X')
             op.camera = cam.name
 
-    def _draw_shift(self, col, obj, cam, m, flood):
-        it = core.shift_holder(obj, cam)      # a global camera's shift is shared by every object
-        if it is None:
-            return
-        # the tools as narrow icon buttons (their icons are the add-on's own, centred); the
-        # X / Y shift fields take the rest of the line
-        line = col.row(align=True)
-        tools = line.row(align=True)            # vertex paint VCMix with this camera's color
+    @staticmethod
+    def _draw_tools(tools, obj, cam, flood):
+        """Vertex paint VCMix with this camera's color: narrow icon buttons (their icons are
+        the add-on's own, centred), then the whole object's alpha to 0."""
         tools.scale_y = TOOL_SCALE
         tools.scale_x = TOOL_WIDTH
         using = paint_session.current(obj)     # (camera, tool) the viewport paints with
@@ -393,7 +431,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             op.camera, op.mode = cam.name, mode
         # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
         tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
-        row = line.row(align=True)
+
+    @staticmethod
+    def _draw_xy(row, it, cam):
+        """The X / Y shift (a global camera's is shared by every object), then Load Shift."""
         row.scale_y = TOOL_SCALE                 # same height: bottoms line up with the buttons
         row.prop(it, "shift", index=0, text="X", slider=True)
         row.prop(it, "shift", index=1, text="Y", slider=True)
