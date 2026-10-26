@@ -72,6 +72,7 @@ def _icon(icon):
 TOOL_SCALE = 1.4     # Paint / Flood / Erase buttons and the shift fields next to them
 TOOL_WIDTH = 1.0     # units per tool button: narrow, the X / Y shift fields need the room
 THUMB_UNITS = 1.25 * (1 + TOOL_SCALE)   # the selected cameras' photo: the box's two lines
+POPUP_UNITS = 12.0   # the photo once clicked (its popup), before jumping to the camera
 
 
 class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
@@ -339,9 +340,14 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # col.scale_y, its width is the column's): thumbs makes it a centred square crop
         outer = col.split(factor=min(0.4, thumb_w / avail), align=True)
         pic = outer.column(align=True)
-        pic.template_icon(icon_value=thumbs.icon(core.cam_image(cam))
-                          or bpy.types.UILayout.icon('IMAGE_DATA'),
-                          scale=THUMB_UNITS / col.scale_y)
+        cd = getattr(cam, "multicamproject_camera", None)
+        if cd is not None:      # a click: the photo bigger, a click on it looks through it
+            pic.template_icon_view(cd, "photo_jump", show_labels=False,
+                                   scale=THUMB_UNITS / col.scale_y, scale_popup=POPUP_UNITS)
+        else:
+            pic.template_icon(icon_value=thumbs.icon(core.cam_image(cam))
+                              or bpy.types.UILayout.icon('IMAGE_DATA'),
+                              scale=THUMB_UNITS / col.scale_y)
         rest = outer.split(factor=min(0.5, left_w / rest_w), align=True)
         names = rest.column(align=True)
         fields = rest.column(align=True)

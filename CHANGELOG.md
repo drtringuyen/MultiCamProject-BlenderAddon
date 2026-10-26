@@ -65,7 +65,8 @@ on the object (survives Drive syncs, Send Out / Send Back):
 
 Freestyle / Focus / Lock are three buttons next to the solo (Isolate) toggle, the current
 one highlighted. A camera's eye no longer cycles them: it only looks through that camera
-(Ctrl+click leaves solo).
+(Ctrl+click leaves solo). The selected cameras' big photo is a button: a click shows it
+bigger, a click on that looks through the camera.
 
 ### Export to 02.Overrides (2026-10-26)
 

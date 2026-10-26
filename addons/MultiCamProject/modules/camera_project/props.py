@@ -213,6 +213,47 @@ def _set_bg_show(cd, value):
         pass
 
 
+_jump_items = {}    # camera name -> its one item, kept alive (Blender borrows the strings)
+
+
+def _photo_jump_items(cd, _context):
+    """One item: the camera's photo (the big thumbnail in front of its box)."""
+    from ... import thumbs
+    from . import core
+    cam = cd.id_data
+    icon = thumbs.icon(core.cam_image(cam)) or bpy.types.UILayout.icon('IMAGE_DATA')
+    item = _jump_items.get(cam.name)
+    if item is None or item[0][3] != icon:
+        item = _jump_items[cam.name] = [('PHOTO', cam.name, "Look through this camera",
+                                         icon, 0)]
+    return item
+
+
+def _jump_later(cam_name, window, area):
+    """After the popup: look through the camera in the 3D view whose sidebar it came from
+    (solo_camera needs that view as its context)."""
+    def run():
+        for win in bpy.context.window_manager.windows:
+            if win.as_pointer() != window:
+                continue
+            for a in win.screen.areas:
+                if a.as_pointer() == area and a.type == 'VIEW_3D':
+                    region = next((r for r in a.regions if r.type == 'WINDOW'), None)
+                    with bpy.context.temp_override(window=win, area=a, region=region):
+                        if bpy.ops.multicamproject.solo_camera.poll():
+                            bpy.ops.multicamproject.solo_camera('INVOKE_DEFAULT',
+                                                                camera=cam_name)
+                    return None
+        return None
+    bpy.app.timers.register(run, first_interval=0.0)
+
+
+def _set_photo_jump(cd, _value):
+    ctx = bpy.context
+    if ctx.window is not None and ctx.area is not None:
+        _jump_later(cd.id_data.name, ctx.window.as_pointer(), ctx.area.as_pointer())
+
+
 class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
     """Per-camera data (on the camera object, so it belongs to the file, not to a mesh).
     A global camera is shared by every object: one UV shift for all of them, and Reload
@@ -236,6 +277,12 @@ class MULTICAMPROJECT_CameraData(bpy.types.PropertyGroup):
                           set=_set_bg_show, options={'SKIP_SAVE'},
                           description="Which photo this camera projects: the original or its "
                                       "inpaint (both files stay)")
+    # the selected cameras' big photo: a click opens it bigger, a click on that looks
+    # through the camera (Blender has no clickable big image, only this popup)
+    photo_jump: EnumProperty(name="Photo", items=_photo_jump_items, get=lambda _cd: 0,
+                             set=_set_photo_jump, options={'SKIP_SAVE'},
+                             description="Click: the photo bigger - click it to look through "
+                                         "this camera")
     shift: FloatVectorProperty(
         name="Shift", size=2, default=(0.0, 0.0), subtype='XYZ',
         min=-1.0, max=1.0, step=0.1, precision=5, update=_on_global_shift,
