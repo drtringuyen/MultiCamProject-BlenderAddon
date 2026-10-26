@@ -328,9 +328,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
     @staticmethod
     def _draw_bake_button(layout, s, obj, switches=False):
         """[A v] (the active object's own size), the green "05. Bake Albedo" (ALB_ only:
-        NOR_ is 07's) + its inpaint | "Finalize + Lock" (ALB_ + NOR_ + Lock; a work window:
-        "Finalize + Send Back"), the bake settings' gear at its end. `switches`: ALB_ / NOR_
-        [Bake|Load] (TexOverride) in place of 05's button."""
+        NOR_ is 07's) + ALB_'s Inpaint (Inpaint Final once Locked) | "Finalize + Lock" (ALB_
+        + NOR_ + Lock; a work window: "Finalize + Send Back"), the bake settings' gear at its
+        end. `switches`: ALB_ / NOR_ [Bake|Load] (TexOverride) in place of 05's button, the
+        Inpaint right after ALB_."""
         row = layout.row(align=True)
         row.scale_y = 1.5
         draw_object_size(row, obj)
@@ -339,19 +340,31 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         left, right = split.row(align=True), split.row(align=True)
         draw_green(left)
         from ... import module_manager
+        d = common.data(obj)
+
+        def inpaint():
+            """ALB_'s Inpaint right after it: 06's, or Inpaint Final once the object is
+            Locked (the final ALB_ - Save makes NOR_ again and locks again)."""
+            if d.alb_image is None or not module_manager.is_loaded("image_editor"):
+                return
+            from ..image_editor import sources
+            if d.locked and d.alb_mode != 'LOAD':
+                op = left.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER',
+                                   depress=sources.has_inpaint(sources.Source('ALB', obj)))
+                op.kind, op.owner, op.final = 'ALB', obj.name, True
+            elif sources.draw_ready(obj):
+                sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (greyed on Load)
+
         if switches and module_manager.is_loaded("tex_override"):
             from ..tex_override import ui as tex_ui
             tex_ui.draw_switch(left, obj, 'ALB')
+            inpaint()
             left.separator(factor=0.5)
             tex_ui.draw_switch(left, obj, 'NOR')
         else:
             left.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
                           icon='RENDER_STILL')
-        d = common.data(obj)
-        if d.alb_image is not None and module_manager.is_loaded("image_editor"):
-            from ..image_editor import sources
-            if sources.draw_ready(obj):
-                sources.draw_button(left, 'ALB', obj)  # 06: inpaint ALB_ (greyed on Load)
+            inpaint()
         draw_green(left)
         # 08 at the middle pad: the object's lock (Lock Finish / Unlock)
         draw_lock(right, obj)
@@ -361,13 +374,6 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
                            icon='EXPORT')
         else:
             right.operator("multicamproject.bake_final", text="Finalize + Lock", icon='LOCKED')
-        if d.alb_image is not None and module_manager.is_loaded("image_editor"):
-            from ..image_editor import sources
-            sub = right.row(align=True)     # Inpaint Final: the final ALB_, before its NOR_
-            sub.enabled = d.locked and d.alb_mode != 'LOAD'     # Load: edit the file itself
-            op = sub.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER',
-                              depress=sources.has_inpaint(sources.Source('ALB', obj)))
-            op.kind, op.owner, op.final = 'ALB', obj.name, True
         if window:          # already final: just send it (Send Back Final, no new bake)
             right.operator("multicamproject.work_send_back", text="", icon='EXPORT')
         draw_green(right)

@@ -68,7 +68,9 @@ copied into 02.Overrides as its override, after a confirm (Overwrite when one is
 the old one goes to the Recycle Bin). Nothing switches: pick Load to use it. Greyed in the
 tooltip's words when there is no file yet, no Overrides folder, or the row is on Load.
 The Bake | Load dropdowns carry their name - ALB_Bake / ALB_Load, NOR_Bake / NOR_Load (red
-"Load (not found)" without the file) - instead of a label in front.
+"Load (not found)" without the file) - instead of a label in front. ALB_'s Inpaint sits
+right after ALB_ in that row; the separate Inpaint Final button after Finalize + Lock is
+gone: once the object is Locked the same button is Inpaint Final.
 
 ### Image thumbnails (2026-10-26)
 
