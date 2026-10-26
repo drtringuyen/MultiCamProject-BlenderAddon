@@ -194,7 +194,8 @@ def export_steps(context, fix_log=()):
     objs = [o for o in objs if common.data(o).material is not None and o.name not in live]
     if not objs:
         raise RuntimeError("No baked meshes in the EXPORT collection")
-    folder = bpy.path.abspath(es.folder)
+    # normpath: a // path up to another project keeps its '..' - past Windows' 260 characters
+    folder = os.path.normpath(bpy.path.abspath(es.folder))
     os.makedirs(folder, exist_ok=True)
     finals = {o: gn_final.is_final(o) for o in objs}
     temps = {"objects": [], "meshes": [], "materials": [], "images": [], "mat_names": []}

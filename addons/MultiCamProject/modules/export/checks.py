@@ -132,7 +132,8 @@ def unused_textures(scene, fresh=True):
 
 
 def export_textures_dir(scene):
-    return os.path.join(bpy.path.abspath(scene.multicamproject_export.folder), "Textures")
+    return os.path.normpath(os.path.join(bpy.path.abspath(scene.multicamproject_export.folder),
+                                         "Textures"))
 
 
 def stale_export_textures(scene, keep_names):

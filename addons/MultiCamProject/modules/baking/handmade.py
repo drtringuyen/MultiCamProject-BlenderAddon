@@ -605,6 +605,6 @@ def _to_export_textures(obj, scene):
         from ..export import fbx
     except ImportError:
         return []
-    copies = list(fbx.copy_textures([obj], bpy.path.abspath(es.folder)).values())
+    copies = list(fbx.copy_textures([obj], os.path.normpath(bpy.path.abspath(es.folder))).values())
     owned.add(scene, copies)
     return copies
