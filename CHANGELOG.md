@@ -67,8 +67,10 @@ Every image the panels show has a small thumbnail instead of the plain image ico
 camera photo fields, the Baked Source / ALB_ / photo original / _inpaint dropdowns, 06's
 rows, the Inpaint and Liquify boxes, the Clean list. Read from the file the way the File
 Browser does (OS thumbnail cache) - a 45 MP photo is never loaded for it; a saved _inpaint
-gets a new one. The selected cameras' boxes start with the photo, as tall as the box
-(both lines), then name / tools and the photo field / X Y.
+gets a new one. The selected cameras' boxes start with the photo, a square as tall as the
+box (a centred crop), then name / tools and the photo field / X Y; Other Cameras' rows
+start with their photo. Thumbnails are drawn from pixels the add-on sets (a file's own
+preview often left its icon blank).
 
 ### 06. Final Texture Fix: Inpainting + Seam Fix (2026-10-26)
 

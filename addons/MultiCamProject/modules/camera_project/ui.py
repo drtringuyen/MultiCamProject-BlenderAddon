@@ -328,14 +328,15 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         unit = 20 * context.preferences.system.ui_scale
         avail = max(1.0, context.region.width - 2.8 * unit)
         thumb_w = THUMB_UNITS * unit
-        left_w = (6.5 if debug else 5.5) * unit
+        left_w = (5.5 if debug else 4.0) * unit     # the name / the tools, no room around
         rest_w = max(1.0, avail - thumb_w)
-        # the photo first, as tall as the box's two lines (a preview is drawn square)
+        # the photo first, a square as tall as the box's two lines (its height is scaled by
+        # col.scale_y, its width is the column's): thumbs makes it a centred square crop
         outer = col.split(factor=min(0.4, thumb_w / avail), align=True)
         pic = outer.column(align=True)
-        pic.scale_y = 1.0 / col.scale_y
         pic.template_icon(icon_value=thumbs.icon(core.cam_image(cam))
-                          or bpy.types.UILayout.icon('IMAGE_DATA'), scale=THUMB_UNITS)
+                          or bpy.types.UILayout.icon('IMAGE_DATA'),
+                          scale=THUMB_UNITS / col.scale_y)
         rest = outer.split(factor=min(0.5, left_w / rest_w), align=True)
         names = rest.column(align=True)
         fields = rest.column(align=True)
@@ -350,15 +351,16 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
 
     @classmethod
     def _draw_row(cls, col, obj, item, debug, m, solo, removable=False, inpaint=False):
-        """One line: [eye] [name] [photo field] [slots] - Other Cameras' list rows."""
+        """One line: [photo] [eye] [name] [photo field] [slots] - Other Cameras' list rows."""
         slots_f, name_f = m[:2]
         cam = item.camera
         split = col.row().split(factor=1.0 - slots_f, align=True)
         left, right = split.row(align=True), split.row(align=True)
+        left.label(text="", **thumbs.kw(core.cam_image(cam)))
         cls._draw_eye_name(left.row(align=True), cam, None, debug, solo)
         nsplit = left.split(factor=name_f, align=True)
         nsplit.label(text=f"{cam.name} {item.score:.2f} {item.coverage:.0%}" if debug else cam.name)
-        cls._draw_photo(nsplit.row(align=True), cam, solo, inpaint)
+        cls._draw_photo(nsplit.row(align=True), cam, solo, inpaint, thumb=False)
         cls._draw_slots(right, obj, cam, removable)
 
     @staticmethod
