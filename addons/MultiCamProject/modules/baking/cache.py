@@ -21,7 +21,10 @@ _dirs = {}          # folder -> (read at, [names])
 
 
 def get(obj, key, fn):
-    data = obj.data.as_pointer() if obj.data is not None else 0
+    me = obj.data
+    # the mesh and its size: a mesh swapped in (Receive) can sit at the freed one's address
+    data = ((me.as_pointer(), len(me.vertices), len(me.polygons))
+            if isinstance(me, bpy.types.Mesh) else (me.as_pointer() if me is not None else 0))
     entry = _cache.get(obj.name)
     if entry is None or entry.get("__data") != data:     # new, renamed onto, other mesh
         entry = _cache[obj.name] = {"__data": data}
