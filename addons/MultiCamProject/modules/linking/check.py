@@ -35,6 +35,24 @@ def _n(path):
     return os.path.normcase(os.path.normpath(os.path.abspath(path))) if path else ""
 
 
+SAME_DEPTH = 5      # folders a path must share from its end to be the same place elsewhere
+
+
+def same_place(a, b):
+    """The same path - also where the shared Drive is mounted elsewhere: D:\\ggdrive\\... on
+    one computer is I:\\... on another, and a work file saved there names I:\\... for the
+    same folder. Equal from the end for at least SAME_DEPTH folders, the shorter one whole."""
+    if not a or not b:
+        return False
+    a, b = _n(a), _n(b)
+    if a == b:
+        return True
+    pa = os.path.splitdrive(a)[1].strip(os.sep).split(os.sep)
+    pb = os.path.splitdrive(b)[1].strip(os.sep).split(os.sep)
+    n = min(len(pa), len(pb))
+    return n >= SAME_DEPTH and pa[-n:] == pb[-n:]
+
+
 def _when(path):
     try:
         return time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
@@ -58,7 +76,8 @@ def _common():
 class Tex:
     """One texture file name of an object: where it should be (`target`), who uses which copy.
     state: ok | relink (paths only) | move (only elsewhere) | same (a copy elsewhere is
-    identical) | pick (copies differ: `key` in the picks) | missing."""
+    identical) | pick (copies differ: `key` in the picks) | missing | stale (an ALB_ inpaint
+    link with no file that nothing uses: Fix clears it)."""
 
     def __init__(self, name, target):
         self.name = name
@@ -68,6 +87,7 @@ class Tex:
         self.state = "ok"
         self.source = ""        # the copy elsewhere (pick / move / same)
         self.locked = False
+        self.droppable = False  # alb_inpaint only its object uses: a missing file is stale
 
     @property
     def key(self):
@@ -75,7 +95,7 @@ class Tex:
 
     def users_off(self):
         """Paths in use that are not the target."""
-        return [p for p in (self.work, self.main) if p and _n(p) != _n(self.target)]
+        return [p for p in (self.work, self.main) if p and not same_place(p, self.target)]
 
 
 class Item:
@@ -195,6 +215,9 @@ def _object_textures(scene, obj, bake, overrides):
         t = out.setdefault(name, Tex(name, os.path.join(top, name)))
         t.main = path
         t.locked = bool(getattr(d, "locked", False))
+        if ptr == "alb_inpaint":
+            users = bpy.data.user_map(subset=[img]).get(img, set())
+            t.droppable = all(u == obj for u in users)
     return out
 
 
@@ -204,6 +227,8 @@ def _decide(t):
     off = [p for p in t.users_off() if os.path.isfile(p)]
     if not off:
         t.state = "ok" if there and not t.users_off() else ("relink" if there else "missing")
+        if t.state == "missing" and t.droppable:
+            t.state = "stale"
         return
     t.source = t.work if t.work in off else off[0]      # the work file's copy first
     if not there:
@@ -350,7 +375,7 @@ def check_steps(context):
                         ("main file", "multicamproject_work_of", main),
                         ("bake folder", "multicamproject_work_bakes", bake),
                         ("save path", "multicamproject_work_save_as", it.work_dst))
-                        if _n(k.get(key, "")) != _n(want)]
+                        if not same_place(k.get(key, ""), want)]
                     if wrong:
                         it.problems.append("its " + ", ".join(wrong) + " point elsewhere")
                     for name_, _fp, path, _ok in res["images"]:
@@ -478,6 +503,12 @@ def _fix_object(context, rep, it, bake):
     targets = {t.name: t.target for t in it.tex}
     common = _common()
     d = common.data(obj)
+    stale = {t.name for t in it.tex if t.state == "stale"}
+    img = d.alb_inpaint
+    if img is not None and os.path.basename(common.image_file(img)) in stale:
+        d.alb_inpaint = None        # its file is gone and nothing shows it
+        if img.users == 0:
+            bpy.data.images.remove(img)
     for ptr, _fn, _n_ in core.TEXTURES:
         img = getattr(d, ptr, None)
         path = common.image_file(img)
@@ -639,6 +670,7 @@ def _summary(rep):
 
 
 _TEX_TEXT = {"relink": "relinked to the Bake Folder", "move": "moves into the Bake Folder",
+             "stale": "old ALB_ inpaint link - no file, nothing uses it: Fix clears the link",
              "same": "identical copy elsewhere - merged", "missing": "not found anywhere"}
 
 
