@@ -216,6 +216,17 @@ class MULTICAMPROJECT_OT_ToggleTexOverride(bpy.types.Operator):
         module_manager.toggle("tex_override")
         return {'FINISHED'}
 
+
+class MULTICAMPROJECT_OT_ToggleSeamFix(bpy.types.Operator):
+    """Toggle SeamFix module on/off"""
+    bl_idname = "multicamproject.toggle_seam_fix"
+    bl_label = "SeamFix"
+
+    def execute(self, context):
+        from . import module_manager
+        module_manager.toggle("seam_fix")
+        return {'FINISHED'}
+
 def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_Build)
     bpy.utils.register_class(MULTICAMPROJECT_OT_Reload)
@@ -232,9 +243,11 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleEstimation)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleUvMesh)
     bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleTexOverride)
+    bpy.utils.register_class(MULTICAMPROJECT_OT_ToggleSeamFix)
 
 
 def unregister():
+    bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleSeamFix)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleTexOverride)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleUvMesh)
     bpy.utils.unregister_class(MULTICAMPROJECT_OT_ToggleEstimation)
