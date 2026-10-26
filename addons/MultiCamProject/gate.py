@@ -95,6 +95,8 @@ def draw_start(layout, context):
     sub = row.row(align=True)
     sub.enabled = prefix_ok(scene)
     sub.operator("multicamproject.project_setup", text="Setup File IO", icon='VIEWZOOM')
+    if ready(scene) and hasattr(bpy.types, "MULTICAMPROJECT_OT_check_project"):
+        row.operator("multicamproject.check_project", text="Fix Project", icon='CHECKMARK')
     if ready(scene):
         return
     hint = layout.row()

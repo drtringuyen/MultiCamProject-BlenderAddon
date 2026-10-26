@@ -821,7 +821,7 @@ def draw_stage(layout, context, obj, units):
 
 
 def draw_button(layout, context):
-    """Automate (N picked) - next to Load All - and Fix Project (Linking's Check Project)."""
+    """Automate (N picked) - next to Load All."""
     from ..baking import jobs
     if ready():
         return
@@ -831,9 +831,6 @@ def draw_button(layout, context):
     sub.operator(MULTICAMPROJECT_OT_EstimationAutomate.bl_idname,
                  text=f"Automate Plan & Split Files ({n})" if n
                  else "Automate Plan & Split Files", icon='PLAY')
-    if hasattr(bpy.types, "MULTICAMPROJECT_OT_check_project"):     # the Linking module is on
-        layout.operator("multicamproject.check_project", text="Fix Project", icon='VIEWZOOM')
-
 
 CLASSES = (MULTICAMPROJECT_OT_EstimationAutoPick, MULTICAMPROJECT_OT_EstimationFromActive,
            MULTICAMPROJECT_OT_EstimationAutoMatch,
