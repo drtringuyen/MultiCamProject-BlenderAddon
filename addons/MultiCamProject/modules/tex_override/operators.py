@@ -135,43 +135,78 @@ class MULTICAMPROJECT_OT_TexDeleteOverride(bpy.types.Operator):
         return {'FINISHED'}
 
 
+TARGET_ITEMS = (('ASK', "Ask", "ALB_: a popup with the choices, NOR_: a confirm"),
+                ('OVERRIDE', "Override", "Into 02.Overrides as the override"),
+                ('BAO', "Overwrite BAo_", "Over this object's BAo_ in the bake folder"),
+                ('CANCEL', "Cancel", "Nothing happens"))
+
+
 class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
-    """Copy this texture's file into 02.Overrides as its override (overwrites the one there).
-    Nothing switches: pick Load to use it"""
+    """ALB_: overwrite this object's BAo_ with it, or copy it into 02.Overrides as its
+    override (a popup asks). NOR_: into 02.Overrides. Nothing switches: pick Load to use an
+    override"""
     bl_idname = "multicamproject.tex_export_override"
     bl_label = "Export to Overrides"
     bl_options = {'REGISTER'}
 
     kind: EnumProperty(items=KIND_ITEMS, options={'SKIP_SAVE'})
     object_name: StringProperty(options={'HIDDEN', 'SKIP_SAVE'})
+    target: EnumProperty(items=TARGET_ITEMS, default='ASK', options={'SKIP_SAVE'})
 
     @staticmethod
-    def _why_not(context, obj, kind):
-        """'' or why the texture can't be exported."""
+    def _why_not(context, obj, kind, target='OVERRIDE'):
+        """'' or why the texture can't go to `target` (OVERRIDE / BAO)."""
         from ..baking import cache, common
         if obj is None:
             return "No mesh"
-        if not core.folder(context.scene):
-            return "No Overrides folder set (Project Setup)"
         src = common.image_file(core.image(obj, kind))
         if not src or not cache.isfile(src):
             return f"{core.name(obj, kind)} has no file on disk yet"
+        if target == 'BAO':
+            return "" if kind == 'ALB' else "Only ALB_ can overwrite BAo_"
+        if not core.folder(context.scene):
+            return "No Overrides folder set (Project Setup)"
         if os.path.normcase(src) == os.path.normcase(
                 os.path.normpath(core.override_path(context.scene, obj, kind))):
             return "On Load: the texture already is the file in 02.Overrides"
         return ""
 
+    @staticmethod
+    def _bao_path(scene, obj):
+        """The object's BAo_ file - BAo_<name>.png in the bake folder when it has none yet."""
+        from ..baking import common
+        return (common.image_file(common.data(obj).ba_image)
+                or common.texture_path(scene, common.ba_name(obj)))
+
     @classmethod
     def description(cls, context, props):
-        why = cls._why_not(context, _target(props, context), props.kind)
-        return why or cls.__doc__
+        obj = _target(props, context)
+        if props.target == 'CANCEL':
+            return "Nothing happens"
+        if props.target == 'BAO':
+            return cls._why_not(context, obj, props.kind, 'BAO') or (
+                "Replace this object's BAo_ with this ALB_ (the old file to the Recycle Bin). "
+                "ALB_ / NOR_ are outdated against it then")
+        if props.target == 'OVERRIDE':
+            return cls._why_not(context, obj, props.kind) or (
+                "Copy it into 02.Overrides as its override (the old one to the Recycle Bin). "
+                "Pick Load to use it")
+        if props.kind == 'ALB':
+            return "Overwrite BAo_ with this ALB_, or copy it into 02.Overrides (a popup asks)"
+        return cls._why_not(context, obj, props.kind) or cls.__doc__
 
     @classmethod
     def poll(cls, context):
         return not _busy()
 
     def invoke(self, context, event):
+        if self.target == 'CANCEL':
+            return {'CANCELLED'}
+        if self.target != 'ASK':            # a choice of the ALB_ popup
+            return self.execute(context)
         obj = _target(self, context)
+        if self.kind == 'ALB':
+            return self._ask(context, obj)
         why = self._why_not(context, obj, self.kind)
         if why:
             self.report({'WARNING'}, why)
@@ -190,33 +225,121 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
             message=msg, confirm_text="Overwrite" if there else "Export",
             icon='WARNING' if there else 'QUESTION')
 
-    def execute(self, context):
+    def _ask(self, context, obj):
+        """ALB_: [Overwrite BAo_] [Override ALB_] [Cancel] - a choice that can't be done is
+        greyed, with why."""
+        from ..baking import cache
+        if obj is None:
+            self.report({'WARNING'}, "No mesh")
+            return {'CANCELLED'}
+        scene, name, kind = context.scene, obj.name, self.kind
+        img = core.image(obj, kind)
+        dirty = img is not None and img.is_dirty
+        bao_path = self._bao_path(scene, obj)
+        ovr_path = core.override_path(scene, obj, kind)
+        choices = (('BAO', f"{'Overwrite' if cache.isfile(bao_path) else 'Write'} "
+                           f"{os.path.basename(bao_path)}", 'IMAGE_DATA',
+                    self._why_not(context, obj, kind, 'BAO')),
+                   ('OVERRIDE', f"{'Override' if cache.isfile(ovr_path) else 'Export'} "
+                                f"{os.path.basename(ovr_path)} (02.Overrides)", 'EXPORT',
+                    self._why_not(context, obj, kind)))
+        idname = MULTICAMPROJECT_OT_TexExportOverride.bl_idname
+
+        def draw(menu, _context):
+            col = menu.layout.column()
+            for target, text, icon, why in choices:
+                r = col.row()
+                r.enabled = not why
+                op = r.operator(idname, text=text + (f"  ({why})" if why else ""), icon=icon)
+                op.kind, op.object_name, op.target = kind, name, target
+            if dirty:
+                r = col.row()
+                r.alert = True
+                r.label(text="Unsaved changes in Blender are not in the file - save first",
+                        icon='ERROR')
+            col.separator()
+            op = col.operator(idname, text="Cancel", icon='CANCEL')
+            op.kind, op.object_name, op.target = kind, name, 'CANCEL'
+
+        context.window_manager.popup_menu(draw, title=f"{core.name(obj, kind)}: where to?",
+                                          icon='QUESTION')
+        return {'CANCELLED'}
+
+    @staticmethod
+    def _replace(src, dst):
+        """Copy src over dst - the old dst to the Recycle Bin (Export module on)."""
         import shutil
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        if os.path.isfile(dst):
+            try:
+                from ..export import fixes
+                fixes.to_recycle_bin([dst])
+            except ImportError:
+                pass
+        shutil.copy2(src, dst)
+
+    def execute(self, context):
         from ..baking import cache, common
+        if self.target == 'CANCEL':
+            return {'CANCELLED'}
+        target = 'BAO' if self.target == 'BAO' else 'OVERRIDE'
         obj = _target(self, context)
-        why = self._why_not(context, obj, self.kind)
+        why = self._why_not(context, obj, self.kind, target)
         if why:
             self.report({'WARNING'}, why)
             return {'CANCELLED'}
         src = common.image_file(core.image(obj, self.kind))
-        dst = core.override_path(context.scene, obj, self.kind)
+        dst = (self._bao_path(context.scene, obj) if target == 'BAO'
+               else core.override_path(context.scene, obj, self.kind))
+        if os.path.normcase(os.path.normpath(src)) == os.path.normcase(os.path.normpath(dst)):
+            self.report({'WARNING'}, "Source and target are the same file")
+            return {'CANCELLED'}
         try:
-            os.makedirs(os.path.dirname(dst), exist_ok=True)
-            if os.path.isfile(dst):         # the old override: recoverable (Export module on)
-                try:
-                    from ..export import fixes
-                    fixes.to_recycle_bin([dst])
-                except ImportError:
-                    pass
-            shutil.copy2(src, dst)
+            self._replace(src, dst)
         except (OSError, RuntimeError) as e:
             self.report({'ERROR'}, f"{os.path.basename(dst)}: {e}")
             return {'CANCELLED'}
+        if target == 'BAO':
+            self._take_bao(context.scene, obj, dst)
         cache.clear()
-        self.report({'INFO'}, f"{os.path.basename(dst)} written to 02.Overrides")
+        where = "the bake folder" if target == 'BAO' else "02.Overrides"
+        self.report({'INFO'}, f"{os.path.basename(dst)} written to {where}")
         for area in context.screen.areas if context.screen else ():
             area.tag_redraw()
         return {'FINISHED'}
+
+    @staticmethod
+    def _take_bao(scene, obj, path):
+        """The object's BAo_ is the new file now: its image reloaded (or made), stamped as a
+        fresh BAo_ (ALB_ / NOR_ are outdated against it) and shown in MCP_ - an inpainted
+        BAo_ copy (06) is switched off, so this one shows."""
+        from ..baking import common, engine, fingerprint
+        d = common.data(obj)
+        img = d.ba_image
+        if img is None:
+            name = common.ba_name(obj)
+            img = bpy.data.images.get(name) or bpy.data.images.load(path, check_existing=False)
+            img.name = name
+            d.ba_image = img
+        img.colorspace_settings.name = 'sRGB'
+        engine.link_file(img, path)
+        try:
+            from ..baking import owned
+            owned.add(scene, [path])
+        except ImportError:
+            pass
+        d.ba_size = img.size[0] or common.resolution(obj)
+        d.ba_fingerprint = fingerprint.stamp_source(obj)
+        if d.ba_inpaint is not None:
+            d.ba_use_inpaint = False
+        try:
+            from ..image_editor import sources
+            sources.relink(sources.Source('BAO', obj), scene)
+        except ImportError:
+            cam = getattr(obj, "multicamproject_cam", None)
+            if cam is not None and cam.is_setup:
+                from ..camera_project import core as cp
+                cp.ensure_material(obj)
 
 
 @persistent
