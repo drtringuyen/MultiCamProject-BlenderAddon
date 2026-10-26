@@ -63,8 +63,10 @@ on the object (survives Drive syncs, Send Out / Send Back):
 
 ### View mode buttons in the Selected Cameras header (2026-10-26)
 
-Freestyle / Focus / Lock are three buttons next to the solo (Isolate) toggle, the current
-one highlighted. A camera's eye no longer cycles them: it only looks through that camera
+Freestyle / Focus / Lock are a group of their own right after the header's title, the
+current one highlighted. The X next to each camera's tools clears only that camera's paint
+(its channel of VCMix / VCMix2, or CMX1_ / CMX2_); Clear All Projection (every camera) is
+the X in the header, after Isolate. A camera's eye no longer cycles them: it only looks through that camera
 (Ctrl+click leaves solo). The selected cameras' big photo is a button: a click shows it
 bigger, a click on that looks through the camera.
 

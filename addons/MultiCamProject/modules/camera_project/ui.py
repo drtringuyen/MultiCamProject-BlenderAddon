@@ -188,6 +188,12 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # always drawn: its header holds the slot count
         header, body = box.panel("multicamproject_selected_cams", default_closed=False)
         header.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
+        # how the tools move the view: Freestyle / Focus / Lock - a group of its own
+        modes = header.row(align=True)
+        current = view_mode(context)
+        for mode in ('FREE', 'FOCUS', 'LOCK'):
+            modes.operator("multicamproject.view_mode_set", text="", icon=VIEW_MODE_ICONS[mode],
+                           depress=current == mode).mode = mode
         # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the
         # material's Cam textures against the slots) at the end, like Other Cameras
         sub = header.row(align=True)
@@ -196,11 +202,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         props = context.scene.multicamproject_props
         sub.prop(props, "solo_isolate", text="", toggle=True,
                  icon='SOLO_ON' if props.solo_isolate else 'SOLO_OFF')
-        modes = sub.row(align=True)     # how the tools move the view: Freestyle / Focus / Lock
-        current = view_mode(context)
-        for mode in ('FREE', 'FOCUS', 'LOCK'):
-            modes.operator("multicamproject.view_mode_set", text="", icon=VIEW_MODE_ICONS[mode],
-                           depress=current == mode).mode = mode
+        # Clear All Projection: every camera's paint off the whole object (BAo_ shows)
+        sub.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
         sub.prop(props, "airbrush", text="", toggle=True, icon='OUTLINER_DATA_META')
         # yellow: keep the cameras as picked - Resort no longer red
         sub.operator("multicamproject.confirm_cameras", text="", icon='CHECKMARK',
@@ -433,7 +436,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
     @staticmethod
     def _draw_tools(tools, obj, cam, flood):
         """Vertex paint VCMix with this camera's color: narrow icon buttons (their icons are
-        the add-on's own, centred), then the whole object's alpha to 0."""
+        the add-on's own, centred), then Clear this camera's paint."""
         tools.scale_y = TOOL_SCALE
         tools.scale_x = TOOL_WIDTH
         using = paint_session.current(obj)     # (camera, tool) the viewport paints with
@@ -443,8 +446,8 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             op = sub.operator("multicamproject.cam_paint", text="", depress=using == (cam.name, mode),
                               **_icon(icon))
             op.camera, op.mode = cam.name, mode
-        # next to Erase: the whole object's alpha (VCMix + VCMix2) to 0 at once
-        tools.operator("multicamproject.mask_fill", text="", icon='X').value = 0.0
+        # next to Erase: this camera's paint off the whole object (Clear All is in the header)
+        tools.operator("multicamproject.clear_camera", text="", icon='X').camera = cam.name
 
     @staticmethod
     def _draw_xy(row, it, cam):

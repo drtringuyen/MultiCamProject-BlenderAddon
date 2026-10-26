@@ -1122,6 +1122,56 @@ class MULTICAMPROJECT_OT_MaskFill(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_ClearCamera(bpy.types.Operator):
+    """Clear this camera's projection from the whole object - the other cameras' paint
+    stays; where only this camera was painted the original mesh's bake (BAo_) shows"""
+    bl_idname = "multicamproject.clear_camera"
+    bl_label = "Clear Camera"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    camera: StringProperty(options={'SKIP_SAVE'})
+
+    @classmethod
+    def poll(cls, context):
+        return MULTICAMPROJECT_OT_MaskFill.poll(context)
+
+    def execute(self, context):
+        import numpy as np
+        obj = context.active_object
+        cam = bpy.data.objects.get(self.camera)
+        slot = core.slot_of(obj, cam) if cam is not None else 0
+        if not slot:
+            self.report({'WARNING'}, f"'{self.camera}' is in no slot of {obj.name}")
+            return {'CANCELLED'}
+        ch = (slot - 1) % 3     # its R / G / B in VCMix (1-3) / VCMix2 (4-6), CMX1_ / CMX2_
+        processing_preview(context, obj)
+        if paint_tex.can_paint(obj, context.scene):
+            leave_paint(obj)
+
+            def zero(arr):
+                arr[:, ch] = 0.0
+                return arr
+            paint_tex.queue(obj, paint_tex.kind_of_slot(slot), zero)
+            return {'FINISHED'}
+        mode = obj.mode
+        if mode == 'VERTEX_PAINT':
+            paint_sync.sync(obj)
+        if mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        a = obj.data.color_attributes.get(core.slot_layer(slot))
+        if a is not None:
+            buf = np.empty(len(a.data) * 4, np.float32)
+            a.data.foreach_get("color", buf)
+            buf[ch::4] = 0.0
+            a.data.foreach_set("color", buf)
+        obj.update_tag()
+        if mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode=mode)
+        if mode == 'VERTEX_PAINT':
+            paint_sync.reset(obj)
+        return {'FINISHED'}
+
+
 class MULTICAMPROJECT_OT_PaintModeSet(bpy.types.Operator):
     """Where the camera paint goes - the paint as it shows now is converted, nothing
     changes on screen"""
@@ -1474,6 +1524,7 @@ _classes = (
     MULTICAMPROJECT_OT_CamPaintFinish,
     MULTICAMPROJECT_OT_BakeViewMix,
     MULTICAMPROJECT_OT_ViewModeSet,
+    MULTICAMPROJECT_OT_ClearCamera,
 )
 
 _keymaps = []
