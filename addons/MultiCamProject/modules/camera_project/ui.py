@@ -190,10 +190,10 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         title = header.row()
         title.alignment = 'LEFT'        # the modes right after the label, no gap
         title.label(text=f"Selected Cameras ({len(top)})", icon='VIEW_CAMERA')
-        # how the tools move the view: Freestyle / Focus / Lock - a group of its own
+        # how the tools move the view: Focus / Lock / Freestyle - a group of its own
         modes = title.row(align=True)
         current = view_mode(context)
-        for mode in ('FREE', 'FOCUS', 'LOCK'):
+        for mode in ('FOCUS', 'LOCK', 'FREE'):
             modes.operator("multicamproject.view_mode_set", text="", icon=VIEW_MODE_ICONS[mode],
                            depress=current == mode).mode = mode
         # Resort (score all cameras, pick the best), slot count dropdown, Refresh (check the

@@ -71,7 +71,7 @@ camera or far off its photo leaves the view as it was. Entering solo is unchange
 
 ### View mode buttons in the Selected Cameras header (2026-10-26)
 
-Freestyle / Focus / Lock are a group of their own right after the header's title, the
+Focus / Lock / Freestyle are a group of their own right after the header's title, the
 current one highlighted. The X next to each camera's tools clears only that camera's paint
 (its channel of VCMix / VCMix2, or CMX1_ / CMX2_); Clear All Projection (every camera) is
 the X in the header, after Isolate. A camera's eye no longer cycles them: it only looks through that camera
