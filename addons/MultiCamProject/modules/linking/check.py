@@ -130,9 +130,11 @@ class Report:
         self.dirs = []          # folders removed when they are empty after that
         self.errors = []        # Fix can't run (red)
         self.counts = []        # photos / scan textures (only counted)
+        self.absolute = []      # this file's absolute paths Fix makes relative (labels)
 
     def to_fix(self):
-        return bool(self.make or self.strays or any(i.needs_fix() for i in self.items))
+        return bool(self.make or self.strays or self.absolute
+                    or any(i.needs_fix() for i in self.items))
 
 
 # ---------------------------------------------------------------- the background Blender
@@ -188,6 +190,66 @@ def _read(path, job_id, label):
     if res.get("ok"):
         _READS[_n(path)] = (sig, res)
     return res
+
+
+def local(path):
+    """A missing file named under another mount of this room (I:\\...\\<room>\\x on the other
+    computer) -> the same file here, when it is there."""
+    room = os.path.dirname(bpy.data.filepath)
+    if not path or not room or os.path.exists(path):
+        return path
+    parts = os.path.normpath(path).split(os.sep)
+    name = os.path.basename(room).lower()
+    tail = os.sep if path.endswith(("/", "\\")) else ""     # a folder stays one
+    for i in range(len(parts) - 1, -1, -1):
+        if parts[i].lower() == name:
+            cand = os.path.join(room, *parts[i + 1:])
+            return cand + tail if os.path.exists(cand) else path
+    return path
+
+
+def _relative(path):
+    """// of this file (a folder keeps its trailing separator); unchanged on another drive."""
+    try:
+        rel = bpy.path.relpath(path)
+    except ValueError:
+        return path
+    return rel + (os.sep if path.endswith(("/", "\\")) and not rel.endswith(("/", "\\")) else "")
+
+
+def _absolute_fixable(value):
+    """An absolute path of this file Fix can make relative: on the .blend's drive, or the
+    other computer's name for something in this room."""
+    if not value or value.startswith("//"):
+        return False
+    full = os.path.normpath(bpy.path.abspath(value))
+    same = os.path.splitdrive(_n(full))[0] == os.path.splitdrive(_n(bpy.data.filepath))[0]
+    return same or _n(local(full)) != _n(full)
+
+
+def main_paths(scene):
+    """[(label, get, set)] of this file's absolute paths Fix makes relative: images, linked
+    libraries, the role folders, Overrides and each object's photo folder."""
+    out = []
+
+    def add(label, owner, attr):
+        if _absolute_fixable(getattr(owner, attr, "")):
+            out.append((label, lambda: os.path.normpath(bpy.path.abspath(getattr(owner, attr)))
+                        + (os.sep if getattr(owner, attr).endswith(("/", "\\")) else ""),
+                        lambda v: setattr(owner, attr, v)))
+    for role in roles.ORDER:
+        pg, attr = folders.holder(scene, role)
+        if pg is not None:
+            add(folders.LABELS[role], pg, attr)
+    add("Overrides", scene.multicamproject_props, "texture_override_folder")
+    for o in folders.photo_objects():
+        add(f"{o.name} photo folder", o.multicamproject_cam, "image_folder")
+    for im in bpy.data.images:
+        if not im.library and not im.packed_file and im.source in {'FILE', 'SEQUENCE', 'MOVIE'}:
+            add(im.name, im, "filepath")
+    for lib in bpy.data.libraries:
+        add(lib.name, lib, "filepath")
+    return out
 
 
 # ---------------------------------------------------------------- Check
@@ -384,6 +446,11 @@ def check_steps(context):
                             continue
                         t = tex.setdefault(fname, Tex(fname, os.path.join(bake, fname)))
                         t.work = path
+                    absolute = res.get("absolute", [])
+                    if absolute:
+                        it.problems.append(f"{len(absolute)} absolute path(s) - made relative: "
+                                           + ", ".join(absolute[:4])
+                                           + (" ..." if len(absolute) > 4 else ""))
                     if res.get("photos_missing"):
                         it.notes.append(f"{res['photos_missing']} of {res['photos']} photos "
                                         "missing in the work file")
@@ -396,6 +463,7 @@ def check_steps(context):
         rep.items.append(it)
     rep.strays = sorted((p for p in set(rep.strays) | set(_strays(rep, bake, export, overrides))
                          if in_room(p)), key=_n)
+    rep.absolute = [label for label, _get, _set in main_paths(scene)]
     _sync_picks(context, rep)
     return rep
 
@@ -486,7 +554,8 @@ def _fix_object(context, rep, it, bake):
         relink = {t.name: t.target for t in it.tex if os.path.isfile(t.target)}
         res = yield from _run("fix", it.work, f"saving {os.path.basename(it.work_dst)}",
                               dst=it.work_dst, main=bpy.data.filepath, bake=bake,
-                              id=it.job_id, relink=relink)
+                              id=it.job_id, relink=relink,
+                              room=os.path.dirname(bpy.data.filepath))
         if not res.get("ok"):
             raise RuntimeError(f"{os.path.basename(it.work)}: "
                                + "; ".join(res.get("errors", [])))
@@ -537,6 +606,12 @@ def fix_steps(context, rep):
     scene = context.scene
     bake = folders.folder(scene, 'ORIGINALS')
     lines = []
+    n = 0
+    for _label, get, put in main_paths(scene):
+        put(_relative(local(get())))
+        n += 1
+    if n:
+        lines.append(f"{n} absolute path(s) of this file made relative")
     for path in rep.make:
         os.makedirs(path, exist_ok=True)
         lines.append(f"made {_short(path)}")
@@ -706,6 +781,10 @@ class MULTICAMPROJECT_OT_CheckReport(bpy.types.Operator):
             split = row.split(factor=0.22)
             split.label(text=label, icon='CHECKMARK' if ok else 'ERROR')
             split.label(text=_short(path) + (f"   {note}" if note else ""))
+        if rep.absolute:
+            _line(box, f"{len(rep.absolute)} absolute path(s) in this file - Fix makes them "
+                       f"relative: {', '.join(rep.absolute[:4])}"
+                       + (" ..." if len(rep.absolute) > 4 else ""), 'ERROR', alert=True)
         for c in rep.counts:
             _line(box, c, 'INFO', grey=True)
         for it in rep.items:

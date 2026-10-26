@@ -1383,12 +1383,40 @@ def _move_bakes_for_save(scene):
     s.output_dir = os.path.join(dest, "")
 
 
+def rel_to(path, blend):
+    """`path` (absolute, or // of the file as it is now) relative to where `blend` is saved:
+    '//...'. Unchanged when it can't be (another drive, nothing to save against)."""
+    if not path or not blend:
+        return path
+    full = os.path.normpath(bpy.path.abspath(path))
+    try:
+        rel = os.path.relpath(full, os.path.dirname(os.path.abspath(blend)))
+    except ValueError:      # another drive
+        return path
+    return "//" + ("" if rel == "." else rel) + (os.sep if path.endswith(("/", "\\")) else "")
+
+
+def _relative_keys(scene, blend):
+    """A work window keeps its main file, bake folder and save path relative to itself (an
+    absolute one names this computer's drive - I:\\ on another computer is D:\\ggdrive
+    here). Before each save, against where it is saved (Save As moves it)."""
+    for key in (WORK_KEY, WORK_BAKES_KEY, WORK_SAVE_AS_KEY):
+        value = scene.get(key, "")
+        if isinstance(value, str) and value:
+            scene[key] = rel_to(value, blend)
+    s = getattr(scene, "multicamproject_bake_settings", None)
+    if s is not None and s.output_dir:
+        s.output_dir = rel_to(s.output_dir, blend)
+
+
 @persistent
-def _on_save_pre(*_args):
+def _on_save_pre(*args):
+    blend = args[0] if args and isinstance(args[0], str) and args[0] else bpy.data.filepath
     try:
         for scene in bpy.data.scenes:
             if is_work_window(scene):
                 _move_bakes_for_save(scene)
+                _relative_keys(scene, blend)
     except Exception as e:  # never block a save
         print(f"[MultiCamProject] work window bakes not moved: {e}")
     try:
