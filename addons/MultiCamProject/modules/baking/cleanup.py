@@ -17,6 +17,7 @@ import re
 import bpy
 
 from . import common, owned, route
+from ... import thumbs
 
 _COPY = re.compile(r"\.\d{3}$")
 _WORK = (("ba_image", "BAo_", route.ORIGINAL), ("bn_image", "BNo_", route.ORIGINAL),
@@ -155,11 +156,11 @@ class MULTICAMPROJECT_OT_CheckTextures(bpy.types.Operator):
         col.separator()
         if not imgs and not files:
             col.label(text="Nothing invalid (tick the box for the routes not in use)", icon='INFO')
-        rows = [(i.name, w, 'IMAGE_DATA') for i, w in imgs]
-        rows += [(os.path.basename(p), w, 'FILE_IMAGE') for p, w in files]
+        rows = [(i.name, w, thumbs.kw(i)) for i, w in imgs]
+        rows += [(os.path.basename(p), w, {"icon": 'FILE_IMAGE'}) for p, w in files]
         for name, why, icon in rows[:24]:
             r = col.row()
-            r.label(text=name, icon=icon)
+            r.label(text=name, **icon)
             sub = r.row()
             sub.active = False
             sub.label(text=why)

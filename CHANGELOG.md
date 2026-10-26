@@ -61,6 +61,14 @@ on the object (survives Drive syncs, Send Out / Send Back):
 - Once per file: objects that already have an override file start on Load; an empty
   override folder setting becomes //02.Overrides/. Replaces the Texture Override copy below.
 
+### Image thumbnails (2026-10-26)
+
+Every image the panels show has a small thumbnail instead of the plain image icon: the
+camera photo fields, the Baked Source / ALB_ / photo original / _inpaint dropdowns, 06's
+rows, the Inpaint and Liquify boxes, the Clean list. Read from the file the way the File
+Browser does (OS thumbnail cache) - a 45 MP photo is never loaded for it; a saved _inpaint
+gets a new one.
+
 ### 06. Final Texture Fix: Inpainting + Seam Fix (2026-10-26)
 
 Step 06 "Inpainting" is now **06. Final Texture Fix**: the Inpainting rows, then Seam Fix as

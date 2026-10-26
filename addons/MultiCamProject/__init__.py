@@ -11,7 +11,7 @@ bl_info = {
 
 
 def register():
-    from . import properties, infos, panels, folders, view_keys, quality, project_setup, steps
+    from . import properties, infos, panels, folders, view_keys, quality, project_setup, steps, thumbs
     properties.register()
     steps.register()
     quality.register()
@@ -20,6 +20,7 @@ def register():
     panels.register()
     folders.register()
     view_keys.register()
+    thumbs.register()
 
     from . import module_manager
     module_manager.load_all()
@@ -29,7 +30,8 @@ def unregister():
     from . import module_manager
     module_manager.unload_all()
 
-    from . import properties, infos, panels, folders, view_keys, quality, project_setup, steps
+    from . import properties, infos, panels, folders, view_keys, quality, project_setup, steps, thumbs
+    thumbs.unregister()
     steps.unregister()
     view_keys.unregister()
     folders.unregister()

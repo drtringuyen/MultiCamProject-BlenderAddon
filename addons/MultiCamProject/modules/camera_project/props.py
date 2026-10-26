@@ -181,11 +181,12 @@ def _bg_show_items(cd, _context):
     orig = cd.bg_original if cd.bg_original is not None else shown
     ip = cd.bg_inpaint_off if cd.bg_inpaint_off is not None else (
         shown if cd.bg_original is not None else None)
+    from ... import thumbs
     _bg_items[:] = [('ORIGINAL', common.file_label(orig) if orig else "(no photo)",
-                     "The camera's photo", 'IMAGE_DATA', 0)]
+                     "The camera's photo", thumbs.icon(orig) or 'IMAGE_DATA', 0)]
     if ip is not None:
         _bg_items.append(('INPAINT', common.file_label(ip), "The photo's inpainted copy (06)",
-                          'BRUSH_DATA', 1))
+                          thumbs.icon(ip) or 'BRUSH_DATA', 1))
     return _bg_items
 
 

@@ -1,6 +1,6 @@
 import bpy
 
-from ... import gate
+from ... import gate, thumbs
 from . import inpaint, lasso_ops, props, session, sources, tool
 
 
@@ -47,7 +47,7 @@ class MULTICAMPROJECT_PT_Liquify(bpy.types.Panel):
             return
 
         box = layout.box()
-        box.label(text=s.photo_name, icon='IMAGE_DATA')
+        box.label(text=s.photo_name, **thumbs.kw(bpy.data.images.get(s.photo_name)))
         col = box.column(align=True)
         col.active = False
         if s.reedit:
@@ -190,7 +190,7 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
             reason = inpaint.start_reason(context)
             if img is not None:
                 col = layout.column(align=True)
-                col.label(text=img.name, icon='IMAGE_DATA')
+                col.label(text=img.name, **thumbs.kw(img))
                 sub = col.column(align=True)
                 sub.active = False
                 sub.label(text=sources.label(src)
@@ -210,7 +210,7 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
             return
 
         box = layout.box()
-        box.label(text=s.alb_name, icon='IMAGE_DATA')
+        box.label(text=s.alb_name, **thumbs.kw(bpy.data.images.get(s.alb_name)))
         col = box.column(align=True)
         col.active = False
         col.label(text=f"Copy {s.w}x{s.h} · {len(s.undo)} fill(s)")
@@ -308,7 +308,8 @@ class MULTICAMPROJECT_PT_Inpainting(bpy.types.Panel):
                     else f"BG {src.owner.name}")
             split = col.split(factor=0.3, align=True)
             split.label(text=name + ("  ·  inpainted" if done else ""),
-                        icon='CHECKMARK' if done else 'IMAGE_DATA')
+                        **thumbs.kw(sources.current(src),
+                                    'CHECKMARK' if done else 'IMAGE_DATA'))
             row = split.row(align=True)
             _draw_file(row, src)
             sources.draw_button(row, src.kind, src.owner)

@@ -1,7 +1,7 @@
 import bpy
 from bl_ui.space_toolsystem_common import ToolSelectPanelHelper
 
-from ... import gate
+from ... import gate, thumbs
 from . import core, paint_session, paint_tex
 from .operators import (CAM_BRUSHES, VIEW_MODE_ICONS, cameras_hidden, flood_ready,
                         highlight_camera, is_solo, view_mode)
@@ -348,7 +348,7 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         # image field takes all remaining width
         bg = core.bg_entry(cam)
         if bg:
-            mid.prop(bg, "image", text="")
+            mid.prop(bg, "image", text="", **thumbs.kw(bg.image))
         else:
             mid.label(text="(no background)")
 

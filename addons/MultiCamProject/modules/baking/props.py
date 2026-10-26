@@ -58,11 +58,12 @@ _alb_items = []
 def _show_items(keep, orig, ip, what):
     """[original, its _inpaint] as dropdown items - '<folder>/<file>' each (06's rows)."""
     from . import common
+    from ... import thumbs
     keep[:] = [('ORIGINAL', common.file_label(orig) if orig else f"(no {what})",
-                f"The {what} as baked", 'IMAGE_DATA', 0)]
+                f"The {what} as baked", thumbs.icon(orig) or 'IMAGE_DATA', 0)]
     if ip is not None:
         keep.append(('INPAINT', common.file_label(ip), f"{what}'s inpainted copy (06)",
-                     'BRUSH_DATA', 1))
+                     thumbs.icon(ip) or 'BRUSH_DATA', 1))
     return keep
 
 
