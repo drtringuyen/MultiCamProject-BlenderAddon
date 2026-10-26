@@ -102,7 +102,8 @@ def _draw_export(row, context):
     folder = os.path.normpath(bpy.path.abspath(es.folder)) if es.folder else ""
     opener = row.row(align=True)
     opener.enabled = bool(folder) and os.path.isdir(folder)
-    opener.operator("wm.path_open", text="", icon='FILE_FOLDER').filepath = folder
+    # not FILE_FOLDER: the path field's own browse button (pick the folder) has that icon
+    opener.operator("wm.path_open", text="", icon='FOLDER_REDIRECT').filepath = folder
 
 
 def _draw_tail(cells, context, obj, st):
