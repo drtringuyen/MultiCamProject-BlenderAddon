@@ -2,6 +2,21 @@
 
 ## Unreleased
 
+### Projection Painting: camera lens shift, modifiers above the projection (2026-10-27)
+
+- The projection now uses each camera's lens shift (Shift X / Y). Metashape cameras
+  imported by LivingLacquer carry their calibrated principal point there. Before, a camera
+  with a large shift projected the wrong part of its photo (e.g. the backdrop, showing
+  white). Camera scoring and the visibility check use it too. The node groups rebuild
+  (version 15); the shift is driven from the camera, like Focal.
+- Each camera row shows its lens shift ("Lens +0.27 +0.00") when it isn't zero, red past
+  half a photo: worth checking that sensor's calibration in Metashape. It is separate from
+  the X / Y fields, which are the object's own photo nudge.
+- A modifier from another add-on above GN-CameraProject (MeshBuildTimelapse's playback)
+  gets a red warning in 04 with **Move Below**: it goes to the end of the stack, before
+  GN-Final. Above the projection, the cameras projected onto that frame's build stage, so
+  paint followed the frame and "VCMix does not match the mesh" could stop painting.
+
 ### Check Project / Fix replaces Auto Detect and Fill Folders (2026-10-26)
 
 The IO Folders & Collections button **Check Project** checks the open main file. It reads

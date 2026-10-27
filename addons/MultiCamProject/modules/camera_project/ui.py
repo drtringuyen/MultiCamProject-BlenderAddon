@@ -109,9 +109,24 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
             layout.operator("multicamproject.setup", text="Rebuild Setup", icon='FILE_REFRESH')
             return
 
+        self._draw_foreign(layout, obj)
         self._draw_mode(layout, obj)
         # straight in the panel: Folder, Clip + Mode, blend row, then the camera sections
         self._draw_box(context, layout, obj, d, mod)
+
+    @staticmethod
+    def _draw_foreign(layout, obj):
+        """Modifiers above the projection (a timelapse playback): the cameras project onto
+        what they make at this frame, not the mesh - one click moves them below."""
+        mods = core.foreign_above(obj)
+        if not mods:
+            return
+        row = layout.row(align=True)
+        row.alert = True
+        names = ", ".join(m.name for m in mods)
+        row.label(text=f"{names} above the projection - paint follows the frame", icon='ERROR')
+        row.operator("multicamproject.move_below_projection", text="Move Below",
+                     icon='TRIA_DOWN_BAR')
 
     @staticmethod
     def _draw_mode(layout, obj):
@@ -459,6 +474,13 @@ class MULTICAMPROJECT_PT_CameraProject(bpy.types.Panel):
         row.prop(it, "shift", index=1, text="Y", slider=True)
         op = row.operator("multicamproject.load_shift", text="", icon='PASTEDOWN')
         op.camera = cam.name
+        # the camera's own lens shift (Metashape's principal point), not the X / Y nudge above
+        sx, sy = core.lens_shift(cam)
+        if abs(sx) > 5e-4 or abs(sy) > 5e-4:
+            lens = row.row(align=True)
+            lens.alert = max(abs(sx), abs(sy)) > core.LENS_SHIFT_BIG
+            lens.active = lens.alert
+            lens.label(text=f"Lens {sx:+.2f} {sy:+.2f}")
 
 
 _filter_opened = set()      # list ids whose filter bar was opened once this session

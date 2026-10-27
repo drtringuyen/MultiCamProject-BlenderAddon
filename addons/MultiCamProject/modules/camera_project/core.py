@@ -214,12 +214,12 @@ def score_camera(cam, co_w, nr_w, scene):
         return 0.0, 0.0
     # frame width at each point (sensor fit horizontal)
     width = cd.ortho_scale if ortho else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens
-    u = p[:, 0] / width + 0.5
+    u = p[:, 0] / width + 0.5 - cd.shift_x
     across = front & (u > 0) & (u < 1)
     if not across.any():        # nothing in the frame's width: no photo header read
         return 0.0, 0.0
     aspect = image_aspect(cam_image(cam), scene, load=False)
-    v = p[:, 1] / width * aspect + 0.5
+    v = (p[:, 1] / width - cd.shift_y) * aspect + 0.5
     inside = across & (v > 0) & (v < 1)
     if not inside.any():
         return 0.0, 0.0
@@ -1010,6 +1010,47 @@ def get_modifier(obj):
     return None
 
 
+# the add-on's own modifiers that belong above the projection (remesh.workflow DECIMATE /
+# SNAP, remesh.core _TEMP_MOD, baking.engine SUBDIV - named here, the modules are optional)
+OWN_ABOVE = {"Decimate", "Snap to Source", "_MCP_PolyCut", "MCP_BAKE_SUBDIV"}
+
+
+def foreign_above(obj):
+    """Other add-ons' / hand-made modifiers shown above the projection, e.g. MeshBuildTimelapse's
+    playback: what they make (a build stage at this frame) is what gets projected, painted
+    and read back - not the mesh, so reads stop matching it and paint moves with the frame."""
+    mod = get_modifier(obj)
+    if mod is None:
+        return []
+    mods = list(obj.modifiers)
+    return [m for m in mods[:mods.index(mod)] if m.show_viewport and m.name not in OWN_ABOVE]
+
+
+def move_below(obj, mods):
+    """`mods` to the end of the stack, after the projection (GN-Final, which keeps itself
+    last, stays after them). Through the data API, in their order."""
+    for m in mods:
+        obj.modifiers.move(list(obj.modifiers).index(m), len(obj.modifiers) - 1)
+    try:
+        from ..baking import gn_final
+        fin = gn_final.get_modifier(obj)
+    except ImportError:
+        fin = None
+    if fin is not None:
+        obj.modifiers.move(list(obj.modifiers).index(fin), len(obj.modifiers) - 1)
+    obj.update_tag()
+
+
+LENS_SHIFT_BIG = 0.5    # a lens shift past half the photo: worth a look at the calibration
+
+
+def lens_shift(cam):
+    """The camera's lens shift (x, y) in photo widths - from the photogrammetry calibration
+    (principal point off the photo center); the projection uses it as Blender's view does."""
+    cd = cam.data if cam is not None else None
+    return (cd.shift_x, cd.shift_y) if cd is not None and cam.type == 'CAMERA' else (0.0, 0.0)
+
+
 KEEP_INPUTS = ("Mode", "Previous Bake", "Occlusion")
 _OLD_NAMES = {"Previous Bake": "Original Blend"}    # before the 2026-09-24 rename
 
@@ -1121,7 +1162,8 @@ def ident(ng, name):
 def required_inputs(n):
     return ("Material", "Mode", "Previous Bake", "Occlusion") + tuple(
         f"{k} {i}" for i in range(1, n + 1)
-        for k in ("Camera", "Focal", "Sensor", "Aspect", "Ortho", "Ortho Scale")) + tuple(
+        for k in ("Camera", "Focal", "Sensor", "Aspect", "Ortho", "Ortho Scale",
+                  "Lens Shift X", "Lens Shift Y")) + tuple(
         f"UV Shift Cam{i}" for i in range(1, n + 1))
 
 
@@ -1310,7 +1352,8 @@ def cam_uvd(cam, scene, co):
     width = (cd.ortho_scale if cd.type == 'ORTHO'
              else np.where(front, depth, 1.0) * cd.sensor_width / cd.lens)
     aspect = image_aspect(cam_image(cam), scene, load=False)
-    return p[:, 0] / width + 0.5, p[:, 1] / width * aspect + 0.5, depth
+    return (p[:, 0] / width + 0.5 - cd.shift_x,
+            (p[:, 1] / width - cd.shift_y) * aspect + 0.5, depth)
 
 
 def _cam_sees(obj, cam, scene, co, nr, bvh=None):
@@ -1678,6 +1721,8 @@ def apply_slots(obj, scene):
         _set_driver(obj, input_path(mod, f"Sensor {i}"), cam, "sensor_width")
         _set_driver(obj, input_path(mod, f"Ortho {i}"), cam, "type")    # enum -> 0 persp, 1 ortho
         _set_driver(obj, input_path(mod, f"Ortho Scale {i}"), cam, "ortho_scale")
+        _set_driver(obj, input_path(mod, f"Lens Shift X {i}"), cam, "shift_x")
+        _set_driver(obj, input_path(mod, f"Lens Shift Y {i}"), cam, "shift_y")
         img = cam_image(cam) if cam else None
         set_input(mod, f"Aspect {i}", image_aspect(img, scene))
         it = shift_holder(obj, cam, create=True) if cam else None

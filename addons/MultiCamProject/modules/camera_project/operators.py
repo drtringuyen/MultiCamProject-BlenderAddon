@@ -894,6 +894,28 @@ class MULTICAMPROJECT_OT_LoadShift(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_MoveBelowProjection(bpy.types.Operator):
+    """Move the modifiers above the projection to the end of the stack (before GN-Final):
+    the cameras project onto the mesh itself again, at every frame. A timelapse playback
+    there still plays the build, on the projected / baked result"""
+    bl_idname = "multicamproject.move_below_projection"
+    bl_label = "Move Below Projection"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = context.active_object
+        return obj is not None and obj.type == 'MESH' and bool(core.foreign_above(obj))
+
+    def execute(self, context):
+        obj = context.active_object
+        mods = core.foreign_above(obj)
+        names = ", ".join(m.name for m in mods)
+        core.move_below(obj, mods)
+        self.report({'INFO'}, f"Moved below the projection: {names}")
+        return {'FINISHED'}
+
+
 # Smooth is Shift+drag while painting (Blender keymap). A panel cannot see held keys,
 # so the icons do not change with Shift - the tooltips tell.
 # icon: a UI icon name, or "file:<name>" for one of the add-on's icons (icons/*.png)
@@ -1629,6 +1651,7 @@ _classes = (
     MULTICAMPROJECT_OT_SoloRemove,
     MULTICAMPROJECT_OT_LoadCamImage,
     MULTICAMPROJECT_OT_LoadShift,
+    MULTICAMPROJECT_OT_MoveBelowProjection,
     MULTICAMPROJECT_OT_CamPaint,
     MULTICAMPROJECT_OT_CamPaintFinish,
     MULTICAMPROJECT_OT_BakeViewMix,

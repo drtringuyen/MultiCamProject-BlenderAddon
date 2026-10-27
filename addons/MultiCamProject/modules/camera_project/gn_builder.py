@@ -9,7 +9,7 @@ SINGLE = "GN-CamProject_Single"
 MIX = "MCP-MixResult"
 MATINDEX = "MCP-MatIndex_to_uv"   # legacy (Convert Material button) - removed by setup
 MAIN = "GN-CameraProject"
-VERSION = 14         # bump when the node layout changes
+VERSION = 15         # bump when the node layout changes
 SLOT_COUNTS = (3, 4, 5, 6)
 LAYERS = ("VCMix", "VCMix2")        # cameras 1-3 / 4-6 in R, G, B
 MASK2_STASH = "_mcp_mask2"          # VCMix2 alpha while paint_sync uses it as its marker
@@ -136,6 +136,8 @@ def build_single():
     _iface(ng, "Aspect", "INPUT", "NodeSocketFloat", 1.5, 0.001)
     _iface(ng, "Ortho", "INPUT", "NodeSocketFloat", 0.0)
     _iface(ng, "Ortho Scale", "INPUT", "NodeSocketFloat", 6.0, 0.001)
+    _iface(ng, "Lens Shift X", "INPUT", "NodeSocketFloat", 0.0)
+    _iface(ng, "Lens Shift Y", "INPUT", "NodeSocketFloat", 0.0)
 
     b = B(ng)
     gi = b.n("NodeGroupInput", (-1400, 0))
@@ -153,7 +155,8 @@ def build_single():
     b.link(tp.outputs[0], sep.inputs[0])
 
     # width of the frame at the point: perspective depth * sensor / focal, orthographic
-    # Ortho Scale (sensor fit horizontal). u = x / width + 0.5, v = y / width * aspect + 0.5
+    # Ortho Scale (sensor fit horizontal). u = x / width + 0.5 - shift x,
+    # v = (y / width - shift y) * aspect + 0.5 (the camera's lens shift is in frame widths)
     depth = b.math("MULTIPLY", sep.outputs["Z"], -1.0, (-350, 150), "Depth")
     pw = b.math("MULTIPLY", depth, gi.outputs["Sensor Width"], (-550, 50))
     pw = b.math("DIVIDE", pw, gi.outputs["Focal Length"], (-350, 50), "Persp Width")
@@ -166,8 +169,10 @@ def build_single():
     b.link(gi.outputs["Ortho Scale"], _sock(width.inputs, "B"))
     width = _sock(width.outputs, "Result")
     ux = b.math("DIVIDE", sep.outputs["X"], width, (50, 400))
+    ux = b.math("SUBTRACT", ux, gi.outputs["Lens Shift X"], (50, 450))
     u = b.math("ADD", ux, 0.5, (200, 400), "U")
     vy = b.math("DIVIDE", sep.outputs["Y"], width, (50, 250))
+    vy = b.math("SUBTRACT", vy, gi.outputs["Lens Shift Y"], (50, 300))
     v = b.math("MULTIPLY_ADD", vy, gi.outputs["Aspect"], (200, 250), "V")
     v.node.inputs[2].default_value = 0.5
     uv = b.n("ShaderNodeCombineXYZ", (400, 350))
@@ -425,6 +430,8 @@ def build_main(single, mix, n):
         _iface(ng, f"Aspect {i}", "INPUT", "NodeSocketFloat", 1.5, 0.001, parent=lens, single=True)
         _iface(ng, f"Ortho {i}", "INPUT", "NodeSocketFloat", 0.0, parent=lens, single=True)
         _iface(ng, f"Ortho Scale {i}", "INPUT", "NodeSocketFloat", 6.0, 0.001, parent=lens, single=True)
+        _iface(ng, f"Lens Shift X {i}", "INPUT", "NodeSocketFloat", 0.0, parent=lens, single=True)
+        _iface(ng, f"Lens Shift Y {i}", "INPUT", "NodeSocketFloat", 0.0, parent=lens, single=True)
 
     b = B(ng)
     gi = b.n("NodeGroupInput", (-440, -246))
@@ -447,6 +454,8 @@ def build_main(single, mix, n):
         b.link(gi.outputs[f"Aspect {i}"], g.inputs["Aspect"])
         b.link(gi.outputs[f"Ortho {i}"], g.inputs["Ortho"])
         b.link(gi.outputs[f"Ortho Scale {i}"], g.inputs["Ortho Scale"])
+        b.link(gi.outputs[f"Lens Shift X {i}"], g.inputs["Lens Shift X"])
+        b.link(gi.outputs[f"Lens Shift Y {i}"], g.inputs["Lens Shift Y"])
         b.link(gi.outputs[f"UV Shift Cam{i}"], mx.inputs[f"UV Shift {i}"])
         b.link(g.outputs["UV"], mx.inputs[f"UV Cam{i}"])
         b.link(g.outputs["Weight"], mx.inputs[f"Weight Cam{i}"])
