@@ -57,7 +57,7 @@ def _pickable(obj):
         return "Handmade"
     if wf.is_copy(obj) or wf.is_low_poly(obj):
         return "Already a 2B / 2C object"
-    if obj.name.endswith(wf.ORIGINAL_SUFFIX) or wf.is_original(obj):
+    if wf.is_original(obj):     # (by its copy: a reset scan can keep the _original name)
         return "A Remesh original"
     if steps.workflow(obj) != 'NONE':
         return "Already has its workflow"

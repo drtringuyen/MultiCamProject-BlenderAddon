@@ -766,6 +766,10 @@ def make_copy(context, obj, retopo=False, decimate=True, content=None):
     copy.data = retopo_mesh(obj, mesh_name, content) if retopo else obj.data.copy()
     # plain renames (not export's rename_object): MCP_/MAT_/ALB_/NOR_ keep their names and
     # belong to the copy, which takes the original name
+    if name.endswith(ORIGINAL_SUFFIX):         # a reset original: no _original_original
+        name = name[:-len(ORIGINAL_SUFFIX)]
+    if mesh_name.endswith(ORIGINAL_SUFFIX):
+        mesh_name = mesh_name[:-len(ORIGINAL_SUFFIX)]
     obj.name = name + ORIGINAL_SUFFIX
     obj.data.name = mesh_name + ORIGINAL_SUFFIX
     copy.name = name

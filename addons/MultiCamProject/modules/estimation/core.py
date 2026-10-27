@@ -337,6 +337,8 @@ def suggest_name(name):
         from ..baking import naming
     except ImportError:
         naming = None
+    if name.endswith("_original"):     # a reset Remesh original keeps the suffix
+        name = name[:-len("_original")]
     p = naming.parse(name) if naming is not None else None
     if p:
         return p[1]
