@@ -288,6 +288,11 @@ def check_transform(obj):
         out.append(Issue(obj.name, 'TRANSFORM', "negative scale", WARNING))
     elif rot.angle > 1e-4 or any(abs(v - 1.0) > 1e-4 for v in sca):
         out.append(Issue(obj.name, 'TRANSFORM', "rotation/scale not applied", WARNING))
+    else:       # clean in the world, but its own transform only cancels the parent's
+        _l, prot, psca = obj.matrix_basis.decompose()
+        if prot.angle > 1e-4 or any(abs(v - 1.0) > 1e-4 for v in psca):
+            out.append(Issue(obj.name, 'TRANSFORM', "rotation/scale only cancel the parent's",
+                             WARNING))
     pivot = cache.get(obj, "pivot", _bbox_pivot)
     if max(abs(v) for v in pivot) > 0.001:
         out.append(Issue(obj.name, 'TRANSFORM', "origin not at the bottom center", WARNING))

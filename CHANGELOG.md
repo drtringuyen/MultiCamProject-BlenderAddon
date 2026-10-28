@@ -2,6 +2,16 @@
 
 ## Unreleased
 
+### Export: Fix Transforms keeps a parented object clean (2026-10-28)
+
+- Fix Transforms on an object with a scaled / rotated parent (a scan under its camera
+  Empty, scale 0.1) left the object's own transform as the inverse of the parent's (scale
+  ~10 plus a rotation). The world looked right, but the object stayed hard to work with.
+  The parent now goes into the parent inverse: the object stays a child, with scale 1 and
+  no rotation of its own, and nothing moves.
+- The Export check flags such an object ("rotation/scale only cancel the parent's"), so
+  Fix cleans the ones already in a file.
+
 ### Projection Painting: camera lens shift, modifiers above the projection (2026-10-27)
 
 - The projection now uses each camera's lens shift (Shift X / Y). Metashape cameras
