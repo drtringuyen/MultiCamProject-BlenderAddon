@@ -100,7 +100,8 @@ try:
             if im.library or im.packed_file or not im.filepath:
                 continue
             p = os.path.normpath(bpy.path.abspath(im.filepath))
-            target = cfg["relink"].get(os.path.basename(p))
+            ovr = os.path.basename(os.path.dirname(p)).lower() == "02.overrides"
+            target = (cfg.get("relink_ovr", {}) if ovr else cfg["relink"]).get(os.path.basename(p))
             if target and _n(p) != _n(target):
                 if not os.path.isfile(target):
                     res["errors"].append(f"{im.name}: {target} not found")

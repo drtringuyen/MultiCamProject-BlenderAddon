@@ -119,9 +119,13 @@ def draw_roles(layout, context):
     split = row.split(factor=0.38, align=True)
     split.label(text="Overrides", icon='FILE_FOLDER')
     cell = split.row(align=True)
-    path = props.texture_override_folder
-    cell.alert = bool(path) and not folders.exists(os.path.normpath(bpy.path.abspath(path)))
-    cell.prop(props, "texture_override_folder", text="")
+    from ..tex_override import core as tov
+    path = tov.folder(scene)
+    cell.alert = bool(path) and not folders.exists(path)
+    if tov.main_file(scene):        # a work window: the room's folder, set in the main file
+        cell.label(text=check._short(path) if path else "off", icon='LOCKED')
+    else:
+        cell.prop(props, "texture_override_folder", text="")
     box.separator(factor=0.6)
     row = box.row(align=True)
     row.scale_y = 1.2

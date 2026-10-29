@@ -53,6 +53,13 @@ def same_place(a, b):
     return n >= SAME_DEPTH and pa[-n:] == pb[-n:]
 
 
+OVR = "|overrides"  # Tex key of a work file's Loaded copy whose main-file twin is a bake
+
+
+def _in_dir(path, top):
+    return bool(path and top) and _n(os.path.dirname(path)) == _n(top)
+
+
 def _when(path):
     try:
         return time.strftime("%m-%d %H:%M", time.localtime(os.path.getmtime(path)))
@@ -453,7 +460,15 @@ def check_steps(context):
                         fname = os.path.basename(path)
                         if not _own(fname):
                             continue
-                        t = tex.setdefault(fname, Tex(fname, os.path.join(bake, fname)))
+                        t = tex.get(fname)
+                        if overrides and tov.is_overrides_dir(os.path.dirname(path)) and (
+                                t is None or not _in_dir(t.target, overrides)):
+                            # loaded in the work file (an old 01.Bake\02.Overrides too): its
+                            # place is the room's Overrides, never over a bake here
+                            t = tex.setdefault(fname + OVR, Tex(fname, os.path.join(overrides,
+                                                                                  fname)))
+                        elif t is None:
+                            t = tex.setdefault(fname, Tex(fname, os.path.join(bake, fname)))
                         t.work = path
                     absolute = [_KEY_LABELS.get(a, a) for a in res.get("absolute", [])]
                     if absolute:
@@ -625,7 +640,7 @@ def _fix_object(context, rep, it, bake):
     before = _state_text(obj) if it.job_id else ""
     for t in it.tex:
         if t.state == "move":
-            yield jobs.Step(f"{t.name} -> {_short(bake)}")
+            yield jobs.Step(f"{t.name} -> {_short(os.path.dirname(t.target))}")
             shutil.copy2(t.source, t.target)
         elif t.state == "pick":
             p = pick_of(context, t)
@@ -639,10 +654,17 @@ def _fix_object(context, rep, it, bake):
         if it.work_dst and _n(it.work) != _n(it.work_dst) and os.path.exists(it.work_dst):
             if _recycle([it.work_dst]):
                 raise RuntimeError(f"{_short(it.work_dst)} is in the way")
-        relink = {t.name: t.target for t in it.tex if os.path.isfile(t.target)}
+        from ..tex_override import core as tov
+        overrides = tov.folder(context.scene)
+        # an image in a 02.Overrides folder goes to the room's Overrides, the others to the
+        # Bake Folder: the same ALB_ name can be in both (Bake here, Load in the work file)
+        relink = {t.name: t.target for t in it.tex if os.path.isfile(t.target)
+                  and not _in_dir(t.target, overrides)}
+        relink_ovr = {t.name: t.target for t in it.tex if os.path.isfile(t.target)
+                      and _in_dir(t.target, overrides)}
         res = yield from _run("fix", it.work, f"saving {os.path.basename(it.work_dst)}",
                               dst=it.work_dst, main=bpy.data.filepath, bake=bake,
-                              id=it.job_id, relink=relink,
+                              id=it.job_id, relink=relink, relink_ovr=relink_ovr,
                               room=os.path.dirname(bpy.data.filepath))
         if not res.get("ok"):
             raise RuntimeError(f"{os.path.basename(it.work)}: "
@@ -657,7 +679,7 @@ def _fix_object(context, rep, it, bake):
         _READS.pop(_n(it.work), None)
         core._set_file(obj, it.work_dst)
     yield jobs.Step(f"{it.name}: relinked here")
-    targets = {t.name: t.target for t in it.tex}
+    targets = {t.name: t.target for t in it.tex if t.main}     # this file's own images
     common = _common()
     d = common.data(obj)
     stale = {t.name for t in it.tex if t.state == "stale"}

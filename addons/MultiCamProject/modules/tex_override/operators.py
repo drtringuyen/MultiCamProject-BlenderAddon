@@ -351,6 +351,7 @@ def _migrate_all():
     try:
         for sc in bpy.data.scenes:
             core.migrate(sc)
+            core.relink_loads(sc)   # Load at the room's 02.Overrides, whatever relinked it
     except Exception as e:      # never stops a file from opening
         print(f"[MultiCamProject] TexOverride migrate: {e}")
     return None

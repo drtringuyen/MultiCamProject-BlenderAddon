@@ -19,6 +19,7 @@ import bpy
 BAKE, LOAD = 'BAKE', 'LOAD'
 KINDS = ('ALB', 'NOR')
 DEFAULT_FOLDER = "//02.Overrides/"
+OLD_DIR = "02.Overrides"    # its name - also of the old per-work-file one in 01.Bake
 # a stamp no bake state equals: the Bake side must be made again (Load -> Bake)
 SWITCHED = "texoverride-switched"
 
@@ -47,13 +48,56 @@ def name(obj, kind):
     return c.alb_name(obj) if kind == 'ALB' else c.nor_name(obj)
 
 
+def main_file(scene):
+    """A work window's main .blend (absolute) - '' in the main file itself."""
+    from ..baking import common
+    if scene is None or not common.is_work_window(scene):
+        return ""
+    path = str(scene.get(common.WORK_WINDOW_KEY, ""))
+    return os.path.normpath(bpy.path.abspath(path)) if path else ""
+
+
 def folder(scene=None):
-    """The Overrides folder (absolute, normalized) - '' when none is set. A work window
-    holds the main file's folder as an absolute path (Send Out writes it so)."""
+    """The Overrides folder (absolute, normalized) - '' when none is set. One per room: a
+    relative one is next to the main file. A work window (saved in 01.Bake) reads it against
+    its main file, never against itself - every file of the room shares the one folder."""
     scene = scene or bpy.context.scene
     props = getattr(scene, "multicamproject_props", None)
     top = getattr(props, "texture_override_folder", "") if props is not None else ""
-    return os.path.normpath(bpy.path.abspath(top)) if top else ""
+    if not top:
+        return ""
+    main = main_file(scene)
+    # //..\02.Overrides: an older window's path from its own folder (01.Bake) up to the room
+    if main and top.startswith("//") and not top[2:].startswith(".."):
+        return os.path.normpath(os.path.join(os.path.dirname(main), top[2:]))
+    return os.path.normpath(bpy.path.abspath(top))
+
+
+def is_overrides_dir(path):
+    """A folder named 02.Overrides (the room's, or an old one inside 01.Bake)."""
+    return os.path.basename(os.path.normpath(path)).lower() == OLD_DIR.lower()
+
+
+def legacy_path(scene, obj, kind):
+    """Where a work window used to look before the Overrides folder was one per room:
+    <its own folder>/02.Overrides/ALB_<name>.png - '' outside a saved work window."""
+    if not main_file(scene) or not bpy.data.filepath:
+        return ""
+    path = os.path.join(os.path.dirname(bpy.data.filepath), OLD_DIR, name(obj, kind) + ".png")
+    return path if os.path.normcase(os.path.dirname(path)) != os.path.normcase(folder(scene)) \
+        else ""
+
+
+def _legacy_only(scene, obj, kind):
+    """The file is only at the old place: Load stays on (never flipped to Bake, which
+    would lose it) - Check Project's Fix moves it into the room's Overrides."""
+    path = legacy_path(scene, obj, kind)
+    if path and os.path.isfile(path):
+        print(f"[MultiCamProject] {obj.name}: {os.path.basename(path)} is still in the old "
+              f"{os.path.dirname(path)} - Check Project / Fix in the main file moves it into "
+              f"{folder(scene)}; Load stays on")
+        return True
+    return False
 
 
 def override_path(scene, obj, kind):
@@ -236,7 +280,7 @@ def loads(scene, obj, kind):
     file is gone goes back to Bake (False: bake it)."""
     if not is_load(obj, kind):
         return False
-    if available(scene, obj, kind):
+    if available(scene, obj, kind) or _legacy_only(scene, obj, kind):
         return True
     set_mode(scene, obj, kind, BAKE)
     print(f"[MultiCamProject] {obj.name}: {name(obj, kind)} not found in 02.Overrides - back to Bake")
@@ -260,12 +304,39 @@ def apply_modes(scene, obj):
                 unlink(scene, obj, kind)
 
 
+def relink_loads(scene):
+    """On load: each Loaded texture at the room's override file - a work file from before
+    one Overrides per room (or the missing-file relink, which takes the same name in Export)
+    points elsewhere. Bake textures are left alone. Returns the names relinked."""
+    done = []
+    c = _common()
+    for obj in scene.objects:
+        if obj.type != 'MESH' or obj.library or getattr(obj, "multicamproject_bake", None) is None:
+            continue
+        for kind in KINDS:
+            if not is_load(obj, kind) or not available(scene, obj, kind):
+                continue
+            img = image(obj, kind)
+            if img is None or (os.path.normcase(os.path.normpath(c.image_file(img)))
+                               != os.path.normcase(override_path(scene, obj, kind))):
+                try:
+                    link(scene, obj, kind)
+                    done.append(name(obj, kind))
+                except Exception as e:
+                    print(f"[MultiCamProject] TexOverride {obj.name} {kind}: {e}")
+    if done:
+        print(f"[MultiCamProject] TexOverride: relinked to {folder(scene)} - {', '.join(done)}")
+        _forget()
+    return done
+
+
 def refresh(scene, obj, kind):
     """The texture's file read again (edited outside Blender). Returns 'reloaded',
     'unsaved' (changed in Blender: kept) or ''."""
     from ..baking import cache
     from ..baking.normal import reload_from_disk
-    if is_load(obj, kind) and not available(scene, obj, kind):
+    if is_load(obj, kind) and not available(scene, obj, kind) \
+            and not _legacy_only(scene, obj, kind):
         set_mode(scene, obj, kind, BAKE)        # its file is gone: back to Bake
         return "bake"
     if is_load(obj, kind) and available(scene, obj, kind):
@@ -335,7 +406,8 @@ def copy_to_new_name(scene, obj, kind, old_name):
 
 def migrate(scene):
     """Before TexOverride an override file simply won: objects that have one start on Load,
-    once per file. The Overrides folder defaults to 02.Overrides when none was set."""
+    once per file. The Overrides folder defaults to 02.Overrides when none was set (in a
+    work window that is the main file's, see folder())."""
     props = getattr(scene, "multicamproject_props", None)
     if props is None or props.tex_modes_migrated:
         return []

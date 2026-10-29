@@ -302,8 +302,11 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
         cell.prop(self, "resolution", text="")
         mid.label(text="Overrides", icon='FILE_FOLDER')
         cell = split.row(align=True)        # lines up with the folders above
+        from .modules.tex_override import core as tov
+        work = bool(tov.main_file(scene))   # a work window: the room's folder, from the main file
+        cell.enabled = not work
         cell.alert = bool(self.dir_override) and not folders.exists(
-            os.path.normpath(bpy.path.abspath(self.dir_override)))
+            tov.folder(scene) if work else os.path.normpath(bpy.path.abspath(self.dir_override)))
         cell.prop(self, "dir_override", text="")
         hint = box.row()
         hint.active = False
@@ -383,7 +386,8 @@ class MULTICAMPROJECT_OT_ProjectSetup(bpy.types.Operator):
             bake.resolution = int(self.resolution)
             lines.append(f"Bake resolution: {int(self.resolution) // 1024}K")
         props = scene.multicamproject_props
-        if props.texture_override_folder != self.dir_override:
+        from .modules.tex_override import core as tov
+        if not tov.main_file(scene) and props.texture_override_folder != self.dir_override:
             props.texture_override_folder = self.dir_override
             lines.append(f"Texture Override: {self.dir_override or 'off'}")
         given = {role: getattr(self, f"dir_{key}") for role, key in _KEYS.items()}

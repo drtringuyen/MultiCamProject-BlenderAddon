@@ -360,7 +360,10 @@ def _scene_settings(scene):
             if p.identifier == "rna_type" or p.type in {'POINTER', 'COLLECTION'} or p.is_readonly:
                 continue
             v = getattr(pg, p.identifier)
-            if p.subtype in {'DIR_PATH', 'FILE_PATH'} and isinstance(v, str)                     and v.startswith("//") and bpy.data.filepath:
+            if p.identifier == "texture_override_folder":
+                pass    # stays //: a work window reads it against the main file (one per room)
+            elif p.subtype in {'DIR_PATH', 'FILE_PATH'} and isinstance(v, str) \
+                    and v.startswith("//") and bpy.data.filepath:
                 v = bpy.path.abspath(v)     # the work window is saved elsewhere / unsaved
             elif p.type == 'ENUM' and p.is_enum_flag:
                 v = sorted(v)
@@ -1424,6 +1427,7 @@ def _relative_keys(scene, blend):
     """A work window keeps its main file, bake folder and save path relative to itself (an
     absolute one names this computer's drive - I:\\ on another computer is D:\\ggdrive
     here). Before each save, against where it is saved (Save As moves it)."""
+    _relative_overrides(scene)      # first: it reads the main file's key as it is now
     for key in (WORK_KEY, WORK_BAKES_KEY, WORK_SAVE_AS_KEY):
         value = scene.get(key, "")
         if isinstance(value, str) and value:
@@ -1431,6 +1435,20 @@ def _relative_keys(scene, blend):
     s = getattr(scene, "multicamproject_bake_settings", None)
     if s is not None and s.output_dir:
         s.output_dir = rel_to(s.output_dir, blend)
+
+
+def _relative_overrides(scene):
+    """The Overrides folder of a work window: // of the MAIN file (tex_override.folder reads
+    it so) - an absolute one from an older Send Out names this computer's drive."""
+    from ..tex_override import core as tov
+    props = getattr(scene, "multicamproject_props", None)
+    main = tov.main_file(scene)
+    value = getattr(props, "texture_override_folder", "") if props is not None else ""
+    if not main or not value or (value.startswith("//") and not value[2:].startswith("..")):
+        return
+    rel = rel_to(tov.folder(scene) + os.sep, main)
+    if rel.startswith("//"):
+        props.texture_override_folder = rel
 
 
 @persistent

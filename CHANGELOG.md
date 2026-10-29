@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### Overrides: one 02.Overrides per room (2026-10-29)
+
+- A work file (saved in 01.Bake) read `//02.Overrides` against itself and loaded from, or
+  exported to, `01.Bake\02.Overrides` - a second folder per room. In a work file the
+  Overrides folder is now read against its main file: every file of the room shares the
+  room's `02.Overrides`, so a texture can be loaded (and locked) from a work file too.
+- Send Out keeps the folder relative; saving a work file turns an absolute or `//..\` one
+  into the main-file form. In a work file the folder shows read-only (set in the main file).
+- On open, every Loaded ALB_ / NOR_ is pointed at the room's override file (the missing-file
+  relink used to take the same name from Export).
+- A Load whose file is only at the old `01.Bake\02.Overrides` stays on Load (never flipped
+  to Bake); Check Project / Fix moves such a work-file copy into the room's Overrides
+  instead of the Bake Folder.
+
 ### Export: Fix Transforms keeps a parented object clean (2026-10-28)
 
 - Fix Transforms on an object with a scaled / rotated parent (a scan under its camera
