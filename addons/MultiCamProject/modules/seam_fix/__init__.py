@@ -9,16 +9,18 @@
     Apply          destructive: bakes over the files (backed up), uv_new becomes uv_normal
 
 Panels: the MultiCamProject tab of the 3D view and of the UV editor."""
-from . import operators, props, ui
+from . import direct, operators, props, ui
 
 
 def register():
     props.register()
     operators.register()
     ui.register()
+    direct.register()
 
 
 def unregister():
+    direct.unregister()
     ui.unregister()
     operators.unregister()
     props.unregister()

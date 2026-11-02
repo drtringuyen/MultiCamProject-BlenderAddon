@@ -3,13 +3,68 @@ import json
 import bpy
 
 from . import geometry as geo
-from . import operators, shader
+from . import direct, operators, shader
+
+
+def draw_direct(layout, context):
+    """Level Seam / Blur Seam straight on ALB_: the toggles preview, Apply writes the file."""
+    obj = context.active_object
+    st = operators.settings(context)
+    box = layout.box()
+    on = direct.target()
+    why = direct.why_not(obj)
+    head = box.row()
+    if on is not None and on != obj:
+        head.label(text=f"Preview on {on.name}", icon='INFO')
+    elif why:
+        head.alert = True
+        head.label(text=why, icon='ERROR')
+    else:
+        img = direct.albedo(obj)
+        head.label(text=f"On {img.name} ({direct.kind_label(obj)}) · {img.size[0]}px",
+                   icon='IMAGE_DATA')
+    col = box.column(align=True)
+    col.enabled = not why or on is not None
+    col.scale_y = 1.2
+    row = col.row(align=True)
+    row.prop(st, "q_level", toggle=True, icon='MOD_SMOOTH')
+    sub = row.row(align=True)
+    sub.scale_x = 0.8
+    sub.prop(st, "level_px", text="Falloff")
+    sub.prop(st, "max_jump", text="Max Jump")
+    row = col.row(align=True)
+    row.prop(st, "q_blur", toggle=True, icon='MATFLUID')
+    sub = row.row(align=True)
+    sub.scale_x = 0.8
+    sub.prop(st, "blur_px", text="Radius")
+    if on is not None:
+        row = box.row(align=True)
+        row.scale_y = 1.2
+        row.operator("multicamproject.seamfix_direct_view", icon='HIDE_OFF',
+                     text="After" if on.get(direct.VIEW, 1) else "Before",
+                     depress=bool(on.get(direct.VIEW, 1)))
+        row.prop(st, "q_tint", text="Seams", toggle=True, icon='OVERLAY')
+        sub = row.row(align=True)
+        sub.alert = True
+        sub.operator("multicamproject.seamfix_direct_apply", icon='FILE_TICK')
+        row.operator("multicamproject.seamfix_direct_cancel", text="", icon='X')
+    n = direct.undo_count(obj)
+    row = box.row(align=True)
+    row.operator("multicamproject.seamfix_direct_undo", icon='LOOP_BACK',
+                 text=f"Undo ({n})" if n else "Undo")
+    if direct.status:
+        line = box.row()
+        line.active = False
+        line.label(text=direct.status)
 
 
 def draw(layout, context):
-    """Fix Seam / Seam-leveling / Bake, the view toggle, Reset / Apply - same in the 3D
-    view and the UV editor."""
+    """Level / Blur Seam on ALB_, then Fix Seam / Seam-leveling / Bake, the view toggle,
+    Reset / Apply - same in the 3D view and the UV editor."""
+    draw_direct(layout, context)
     obj = context.active_object
+    if direct.installed(obj):       # the preview group sits after ALB_: Fix Seam waits
+        return
     why = operators._why_not(obj)
     if why:
         col = layout.column()

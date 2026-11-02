@@ -4,7 +4,7 @@ import time
 import bmesh
 import bpy
 
-from . import bake, files, maps, shader
+from . import bake, direct, files, maps, shader
 from . import geometry as geo
 
 MASK_RES = 4096         # SF_mask_ at most (the blend width is a few texels)
@@ -326,10 +326,100 @@ class MULTICAMPROJECT_OT_seamfix_apply(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------- Level / Blur Seam (on ALB_)
+
+class MULTICAMPROJECT_OT_seamfix_direct_apply(bpy.types.Operator):
+    """Write the preview (Level Seam / Blur Seam) into the ALB_ file at full size - the
+    02.Overrides file on Load. The old file goes to _previous first: Undo puts it back"""
+    bl_idname = "multicamproject.seamfix_direct_apply"
+    bl_label = "Apply to ALB_"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        obj = direct.target()
+        if obj is None:
+            cls.poll_message_set("Switch Level Seam or Blur Seam on first")
+            return False
+        return True
+
+    def execute(self, context):
+        obj = direct.target()
+        if context.mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        wm = context.window_manager
+        wm.progress_begin(0, 5)
+        try:
+            msg = direct.apply(obj, settings(context), context.scene, wm.progress_update)
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        finally:
+            wm.progress_end()
+        st = settings(context)
+        st["q_level"] = False           # no update: the preview is already gone
+        st["q_blur"] = False
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_seamfix_direct_cancel(bpy.types.Operator):
+    """Drop the preview - the ALB_ file was never touched"""
+    bl_idname = "multicamproject.seamfix_direct_cancel"
+    bl_label = "Cancel"
+    bl_options = {'REGISTER'}
+
+    def execute(self, context):
+        st = settings(context)
+        st["q_level"] = False
+        st["q_blur"] = False
+        direct.stop()
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_seamfix_direct_view(bpy.types.Operator):
+    """Flip between the ALB_ as it is and the preview"""
+    bl_idname = "multicamproject.seamfix_direct_view"
+    bl_label = "Before / After"
+    bl_options = {'INTERNAL'}
+
+    def execute(self, context):
+        obj = direct.target()
+        if obj is None:
+            return {'CANCELLED'}
+        direct.set_view(obj, not obj.get(direct.VIEW, 1))
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_seamfix_direct_undo(bpy.types.Operator):
+    """Put back the ALB_ file the last Apply wrote over (its copy in _previous)"""
+    bl_idname = "multicamproject.seamfix_direct_undo"
+    bl_label = "Undo"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        if not direct.undo_count(context.active_object):
+            cls.poll_message_set("Nothing applied on this object")
+            return False
+        return True
+
+    def execute(self, context):
+        try:
+            msg = direct.undo(context.active_object)
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
 classes = (MULTICAMPROJECT_OT_seamfix_fix, MULTICAMPROJECT_OT_seamfix_level,
            MULTICAMPROJECT_OT_seamfix_bake, MULTICAMPROJECT_OT_seamfix_mode,
            MULTICAMPROJECT_OT_seamfix_select_overlaps, MULTICAMPROJECT_OT_seamfix_reset,
-           MULTICAMPROJECT_OT_seamfix_apply)
+           MULTICAMPROJECT_OT_seamfix_apply, MULTICAMPROJECT_OT_seamfix_direct_apply,
+           MULTICAMPROJECT_OT_seamfix_direct_cancel, MULTICAMPROJECT_OT_seamfix_direct_view,
+           MULTICAMPROJECT_OT_seamfix_direct_undo)
 
 
 def register():

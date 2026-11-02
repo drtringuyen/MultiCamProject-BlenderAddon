@@ -89,8 +89,22 @@ def _box(a, r, axis):
     pad[axis] = (r + 1, r)
     c = np.cumsum(np.pad(a, pad), axis=axis, dtype=np.float32)
     n = a.shape[axis]
-    return (np.take(c, np.arange(2 * r + 1, 2 * r + 1 + n), axis)
-            - np.take(c, np.arange(n), axis)) / (2 * r + 1)
+    hi = [slice(None)] * a.ndim
+    lo = [slice(None)] * a.ndim
+    hi[axis] = slice(2 * r + 1, 2 * r + 1 + n)
+    lo[axis] = slice(0, n)
+    return (c[tuple(hi)] - c[tuple(lo)]) / (2 * r + 1)
+
+
+def each(fn, items):
+    """fn(*item) for every item on all cores (numpy leaves the GIL in its blurs); the
+    results in order."""
+    from concurrent.futures import ThreadPoolExecutor
+    items = list(items)
+    if len(items) < 2:
+        return [fn(*it) for it in items]
+    with ThreadPoolExecutor(max(1, min(16, os.cpu_count() or 4))) as pool:
+        return list(pool.map(lambda it: fn(*it), items))
 
 
 def gauss(a, sigma):
@@ -233,9 +247,17 @@ def build_level(obj, seams, albedo, falloff_px, tex_res, res, max_jump=64 / 255)
     colour (averaged over the corner's seam edges); spread along each seam and faded into
     each island separately. A seam whose sides differ by more than max_jump runs along a
     real colour edge (pillow / sheet) and is left alone. Returns stats."""
-    me = obj.data
-    owner, _face, _ = geo.raster_islands(me, geo.UV_SRC, seams.island, res)
+    owner, _face, _ = geo.raster_islands(obj.data, geo.UV_SRC, seams.island, res)
     rgb, _alpha = load_rgb(albedo, res)
+    out, stats = level_field(seams, rgb, owner, falloff_px, tex_res, max_jump)
+    write_image(level_name(obj), out)
+    return stats
+
+
+def level_field(seams, rgb, owner, falloff_px, tex_res, max_jump=64 / 255):
+    """build_level's (res, res, 3) field (0.5 + offset) of rgb / owner at their res, and
+    its stats - nothing written."""
+    res = rgb.shape[0]
     sigma = max(1.0, falloff_px * res / tex_res / 2)
 
     corner = {}      # key -> [sum offset (3), count]
@@ -265,10 +287,10 @@ def build_level(obj, seams, albedo, falloff_px, tex_res, res, max_jump=64 / 255)
     for e in edges:
         by_island.setdefault(e[0], []).append(e)
     pad = int(np.ceil(4 * sigma)) + 2
-    for isl, es in by_island.items():
+    def one(isl, es):
         ys, xs = np.nonzero(owner == isl)
         if not len(ys):
-            continue
+            return None
         y0, y1 = max(0, ys.min() - pad), min(res, ys.max() + pad + 1)
         x0, x1 = max(0, xs.min() - pad), min(res, xs.max() + pad + 1)
         h, w = y1 - y0, x1 - x0
@@ -286,6 +308,12 @@ def build_level(obj, seams, albedo, falloff_px, tex_res, res, max_jump=64 / 255)
         GVS = np.stack([gauss(VS[..., c], sigma) for c in range(3)], axis=-1)
         field = GVS / np.maximum(GS, 1e-8)[..., None] * _fade(GS, (np.concatenate(sy),
                                                                    np.concatenate(sx)))[..., None]
+        return isl, y0, y1, x0, x1, field
+
+    for got in each(one, by_island.items()):       # the blurs in parallel, the writes not
+        if got is None:
+            continue
+        isl, y0, y1, x0, x1, field = got
         crop_owner = owner[y0:y1, x0:x1]
         mine = crop_owner == isl
         region = out[y0:y1, x0:x1]
@@ -294,8 +322,7 @@ def build_level(obj, seams, albedo, falloff_px, tex_res, res, max_jump=64 / 255)
         _dilate_into(sub, mine, crop_owner == -1, 2)
         grow = (crop_owner == -1) & np.any(sub != region, axis=-1)
         region[grow] = sub[grow]
-    write_image(level_name(obj), out)
-    return {"falloff_px": falloff_px, "seam_sides": len(edges) // 2,
+    return out, {"falloff_px": falloff_px, "seam_sides": len(edges) // 2,
             "skipped_colour_edges": skipped,
             "jump_median_255": round(float(np.median(jumps)) * 255, 1) if jumps else 0.0,
             "jump_max_255": round(float(np.max(jumps)) * 255, 1) if jumps else 0.0}

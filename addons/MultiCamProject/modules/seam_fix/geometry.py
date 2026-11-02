@@ -42,9 +42,10 @@ def raster_tri(p0, p1, p2, res, bary=False):
     return xs[inside], ys[inside]
 
 
-def raster_islands(me, uv_name, island, res, skip_faces=()):
+def raster_islands(me, uv_name, island, res, skip_faces=(), pairs=None):
     """(island id per pixel, face index per pixel), -1 where no face is. Triangles whose
-    pixels land on another island's pixels are counted per face: {face: pixels}."""
+    pixels land on another island's pixels are counted per face: {face: pixels}; with
+    `pairs` (a dict) also per island pair: {(low id, high id): pixels}."""
     uv = me.uv_layers[uv_name].data
     owner = np.full((res, res), -1, dtype=np.int32)
     face = np.full((res, res), -1, dtype=np.int32)
@@ -63,6 +64,10 @@ def raster_islands(me, uv_name, island, res, skip_faces=()):
             clash[fi] = clash.get(fi, 0) + int(hit.sum())
             for other in np.unique(face[ys[hit], xs[hit]]):
                 clash[int(other)] = clash.get(int(other), 0) + 1
+            if pairs is not None:
+                for oi in np.unique(o[hit]):
+                    k = (min(int(oi), isl), max(int(oi), isl))
+                    pairs[k] = pairs.get(k, 0) + int((o[hit] == oi).sum())
         owner[ys, xs] = isl
         face[ys, xs] = fi
     return owner, face, clash
@@ -214,17 +219,16 @@ class Seams:
                            minlength=self.n_islands)
         self.size = size
 
-        _owner, _face, clash = raster_islands(me, UV_SRC, self.island, res)
-        per_island = {}
-        for fi, n in clash.items():
-            per_island[self.island[fi]] = per_island.get(self.island[fi], 0) + n
-        self.left_out = {i for i, n in per_island.items() if n > tol_px}
-        self.overlap_faces = {fi for fi in clash if self.island[fi] in self.left_out}
-
         def rank(i):
             return (int(size[i]), -i)
 
         self.rank = rank
+        # of two islands sharing texels only the smaller one is left out: a stray face
+        # whose UVs sit on 47 texels of the book must not take the whole book with it
+        pairs = {}
+        _owner, _face, clash = raster_islands(me, UV_SRC, self.island, res, pairs=pairs)
+        self.left_out = {min(a, b, key=rank) for (a, b), n in pairs.items() if n > tol_px}
+        self.overlap_faces = {fi for fi in clash if self.island[fi] in self.left_out}
         self.sides = []
         self._bm_sides = []
         for e, a, b in seam_sides(bm, uv, self.island, self.seam_edges, rank):
