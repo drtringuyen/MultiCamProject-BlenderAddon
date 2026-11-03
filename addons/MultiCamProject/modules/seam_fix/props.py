@@ -36,7 +36,7 @@ class MULTICAMPROJECT_PG_seamfix(bpy.types.PropertyGroup):
         description="Preview: each island blurred inside itself next to its seams, "
                     "straight on ALB_ (no UV change) - Apply writes it into the file")
     blur_px: bpy.props.IntProperty(
-        name="Radius", default=16, min=1, max=256, subtype='PIXEL', update=_changed,
+        name="Radius", default=10, min=1, max=256, subtype='PIXEL', update=_changed,
         description="Blur Seam: how far (texture pixels) from the seam it blurs - and how "
                     "strongly")
     blend_px: bpy.props.IntProperty(
@@ -44,11 +44,11 @@ class MULTICAMPROJECT_PG_seamfix(bpy.types.PropertyGroup):
         description="Fix Seam: how far (texture pixels) the source's continuation fades "
                     "into the target side - also the free space each island gets in uv_new")
     level_px: bpy.props.IntProperty(
-        name="Falloff", default=128, min=8, max=2048, subtype='PIXEL', update=_changed,
+        name="Falloff", default=64, min=8, max=2048, subtype='PIXEL', update=_changed,
         description="Seam-leveling: how far (texture pixels) the colour correction fades "
                     "into each island")
     max_jump: bpy.props.IntProperty(
-        name="Max Jump", default=64, min=1, max=255, update=_changed,
+        name="Max Jump", default=255, min=1, max=255, update=_changed,
         description="Seam-leveling: seams whose two sides differ by more than this (0-255) "
                     "follow a real colour edge and are left alone")
     shrink: bpy.props.BoolProperty(

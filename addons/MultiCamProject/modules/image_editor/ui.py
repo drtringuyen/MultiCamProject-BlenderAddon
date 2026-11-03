@@ -232,11 +232,20 @@ class MULTICAMPROJECT_PT_Inpaint(bpy.types.Panel):
 
         row = layout.row(align=True)
         row.scale_y = 1.4
-        row.operator("multicamproject.inpaint_save", icon='CHECKMARK')
+        direct = getattr(s, "direct", False)
+        if direct:              # opened from 07: Save writes ALB_ itself
+            row.operator("multicamproject.inpaint_save", icon='CHECKMARK', text="Save into ALB_")
+        else:
+            row.operator("multicamproject.inpaint_save", icon='CHECKMARK')
+            row.operator("multicamproject.inpaint_save_alb", icon='IMPORT')
         row.operator("multicamproject.inpaint_discard", icon='CANCEL')
         col = layout.column(align=True)
         col.active = False
-        col.label(text="Saves <name>_inpaint, the original stays")
+        if direct:
+            col.label(text="Writes ALB_ itself - old one to _previous, Undo in 07")
+        else:
+            col.label(text="_inpaint: a copy, the original stays")
+            col.label(text="Into ALB_: the file the model uses (Undo in 07)")
 
     @staticmethod
     def _draw_settings(layout, st):

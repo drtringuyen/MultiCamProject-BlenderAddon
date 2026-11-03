@@ -196,7 +196,10 @@ def is_work_window(scene=None):
 
 
 def output_dir(scene):
-    return bpy.path.abspath(settings(scene).output_dir)
+    value = settings(scene).output_dir
+    if value.startswith("//"):      # '//\' would be the drive's root, not the file's folder
+        value = "//" + value[2:].lstrip("\\/")
+    return bpy.path.abspath(value)
 
 
 EXPORT_TEXTURES = "Textures"    # <export folder>/Textures: the FBX's textures

@@ -1104,6 +1104,177 @@ class MULTICAMPROJECT_OT_LockFinish(bpy.types.Operator):
         return _start_bake(self, context, "Rebake", [obj], True, s.nor_source, "Rebaked")
 
 
+class MULTICAMPROJECT_OT_ShowImage(bpy.types.Operator):
+    """Show this image in the Image / UV Editor of this window"""
+    bl_idname = "multicamproject.show_image"
+    bl_label = "Show in Image Editor"
+    bl_options = {'INTERNAL'}
+
+    image_name: bpy.props.StringProperty()
+
+    def execute(self, context):
+        img = bpy.data.images.get(self.image_name)
+        if img is None:
+            self.report({'WARNING'}, f"{self.image_name} is gone")
+            return {'CANCELLED'}
+        areas = [a for a in context.window.screen.areas if a.type == 'IMAGE_EDITOR']
+        if not areas:
+            self.report({'WARNING'}, "No Image / UV Editor in this window - open one, then "
+                                     "click again")
+            return {'CANCELLED'}
+        area = max(areas, key=lambda a: a.width * a.height)
+        sp = area.spaces.active
+        sp.image = img
+        region = next((r for r in area.regions if r.type == 'WINDOW'), None)
+        if region is not None:
+            with context.temp_override(window=context.window, area=area, region=region,
+                                       space_data=sp):
+                try:
+                    bpy.ops.image.view_all(fit_view=True)
+                except RuntimeError:
+                    pass
+        area.tag_redraw()
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_AlbUndo(bpy.types.Operator):
+    """Undo the last write into this ALB_ file (07's Inpaint or Seam Fix's Apply): its copy
+    in _previous goes back"""
+    bl_idname = "multicamproject.alb_undo"
+    bl_label = "Undo ALB_"
+    bl_options = {'REGISTER'}
+
+    object_name: bpy.props.StringProperty()
+
+    @classmethod
+    def description(cls, context, props):
+        from . import alb_history
+        obj = bpy.data.objects.get(props.object_name)
+        n = alb_history.count(obj)
+        return cls.__doc__ + (f" ({n} step{'s' if n != 1 else ''})" if n else
+                              " - nothing written yet")
+
+    def execute(self, context):
+        from . import alb_history
+        obj = bpy.data.objects.get(self.object_name)
+        if not alb_history.count(obj):
+            self.report({'INFO'}, "Nothing to undo")
+            return {'CANCELLED'}
+        try:
+            from ..image_editor import inpaint
+            if inpaint.active() is not None:
+                self.report({'WARNING'}, "An Inpaint is open - Save or Discard it first")
+                return {'CANCELLED'}
+        except ImportError:
+            pass
+        try:
+            from ..seam_fix import direct
+            if direct.target() == obj:
+                direct.stop(obj)        # its preview was made on the file being replaced
+            direct._cache.clear()
+        except ImportError:
+            pass
+        try:
+            msg = alb_history.undo(obj)
+        except (RuntimeError, OSError) as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        self.report({'INFO'}, msg)
+        return {'FINISHED'}
+
+
+def _inpaint_merge_paths(obj):
+    """(ALB_ file, its _inpaint file) when both are there and differ, else (why, None)."""
+    d = common.data(obj)
+    alb = common.image_file(d.alb_image) if d.alb_image is not None else ""
+    ip = common.image_file(d.alb_inpaint) if d.alb_inpaint is not None else ""
+    if not ip or not os.path.isfile(ip):
+        return "No ALB_ _inpaint (06 Inpainting makes one)", None
+    if not alb or not os.path.isfile(alb):
+        return "ALB_ has no file", None
+    if os.path.normcase(alb) == os.path.normcase(ip):
+        return "ALB_ is its _inpaint already", None
+    return alb, ip
+
+
+class MULTICAMPROJECT_OT_AlbMergeInpaint(bpy.types.Operator):
+    """Write ALB_'s _inpaint (06 Inpainting) into the ALB_ file itself - on Load the
+    02.Overrides file, which 07 and Export use (they ignore the _inpaint there). The old
+    ALB_ goes to _previous (Undo next to this button); the _inpaint is then switched off in
+    06, its file kept"""
+    bl_idname = "multicamproject.alb_merge_inpaint"
+    bl_label = "_inpaint into ALB_"
+    bl_options = {'REGISTER'}
+
+    object_name: bpy.props.StringProperty()
+
+    def _paths(self):
+        obj = bpy.data.objects.get(self.object_name)
+        if obj is None:
+            return obj, "No object", None
+        return (obj, *_inpaint_merge_paths(obj))
+
+    def invoke(self, context, event):
+        _obj, alb, ip = self._paths()
+        if ip is None:
+            self.report({'WARNING'}, alb)
+            return {'CANCELLED'}
+        return context.window_manager.invoke_props_dialog(self, width=520,
+                                                          confirm_text="Write into ALB_")
+
+    def draw(self, context):
+        import time as _t
+        _obj, alb, ip = self._paths()
+        if ip is None:
+            return
+        col = self.layout.column(align=True)
+        for label, p in (("From", ip), ("Over", alb)):
+            col.label(text=f"{label}: {os.path.basename(os.path.dirname(p))}/"
+                           f"{os.path.basename(p)}  ·  "
+                           f"{_t.strftime('%m-%d %H:%M', _t.localtime(os.path.getmtime(p)))}")
+        note = self.layout.column(align=True)
+        note.active = False
+        note.label(text="Everything in ALB_ that is not in the _inpaint is replaced", icon='INFO')
+        note.label(text="Old ALB_ to _previous - Undo puts it back")
+
+    def execute(self, context):
+        import shutil
+        from . import alb_history
+        from ..camera_project import imgsize
+        obj, alb, ip = self._paths()
+        if ip is None:
+            self.report({'WARNING'}, alb)
+            return {'CANCELLED'}
+        d = common.data(obj)
+        a, b = imgsize.size(d.alb_image), imgsize.size(d.alb_inpaint)
+        if a and b and tuple(a) != tuple(b):
+            self.report({'ERROR'}, f"Sizes differ: ALB_ {a[0]}px, _inpaint {b[0]}px")
+            return {'CANCELLED'}
+        try:
+            from ..seam_fix import direct
+            if direct.target() == obj:
+                direct.stop(obj)
+            direct._cache.clear()
+        except ImportError:
+            pass
+        try:
+            alb_history.push(obj, alb, context.scene)
+            shutil.copyfile(ip, alb)        # both 8-bit PNGs of this add-on: the bytes as they are
+        except OSError as e:
+            self.report({'ERROR'}, str(e))
+            return {'CANCELLED'}
+        handmade._reload_file(alb)
+        d.alb_use_inpaint = False           # 06: the original (= merged now), as its dropdown
+        try:
+            from ..image_editor import sources
+            sources.relink(sources.Source('ALB', obj), context.scene)
+        except ImportError:
+            pass
+        self.report({'INFO'}, f"{os.path.basename(ip)} written into {os.path.basename(alb)} - "
+                              "old one in _previous, the _inpaint switched off")
+        return {'FINISHED'}
+
+
 _classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_BakeFinal,
             MULTICAMPROJECT_OT_FinalInpaintDone, MULTICAMPROJECT_OT_Bake, MULTICAMPROJECT_OT_BakeFromSource, MULTICAMPROJECT_OT_FitCage,
             MULTICAMPROJECT_OT_BakeSetFinal, MULTICAMPROJECT_OT_BakeAlbedo,
@@ -1112,7 +1283,9 @@ _classes = (MULTICAMPROJECT_OT_LockFinish, MULTICAMPROJECT_OT_BakeFinal,
             MULTICAMPROJECT_OT_BakeSetupAI, MULTICAMPROJECT_OT_BakeResolution,
             MULTICAMPROJECT_OT_MaterialRefresh, MULTICAMPROJECT_OT_HandmadeEditUV,
             MULTICAMPROJECT_OT_HandmadeRebake, MULTICAMPROJECT_OT_HandmadeFinishUV,
-            MULTICAMPROJECT_OT_HandmadeCancelUV, MULTICAMPROJECT_OT_RenameUVNormal)
+            MULTICAMPROJECT_OT_HandmadeCancelUV, MULTICAMPROJECT_OT_RenameUVNormal,
+            MULTICAMPROJECT_OT_ShowImage, MULTICAMPROJECT_OT_AlbUndo,
+            MULTICAMPROJECT_OT_AlbMergeInpaint)
 
 
 def register():

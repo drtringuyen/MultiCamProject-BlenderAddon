@@ -17,7 +17,6 @@ One preview at a time (its object: `target()`); reading the file and the seams i
 until the file or uv_normal changes."""
 import json
 import os
-import shutil
 import time
 
 import bpy
@@ -34,7 +33,7 @@ PAD_PX = 4              # padding texels the result is extended into (Apply)
 STATE = "seamfix_direct"    # material property: {"nodes": [[image, group]], "links": [...]}
 VIEW = "seamfix_view"       # object property: 0 the file as it is, 1 the preview
 TINT = "seamfix_tint"       # object property: 1 = skipped seams red, left-out islands magenta
-UNDO = "seamfix_undo"       # object property: [[file, copy in _previous], ...]
+# Undo: baking.alb_history (shared with the Inpaint of 07's ALB_ row)
 GROUP = "SFD_preview"
 IMG_LEVEL, IMG_BLUR, IMG_WEIGHT = "SFD_level", "SFD_blur", "SFD_weight"
 IMG_TINT = "SFD_tint"
@@ -683,12 +682,10 @@ def apply(obj, st, scene, progress=None):
              pad_px=PAD_PX)
         del owner
     step(5)
-    copy = handmade.copy_to_previous(path, scene)
+    from ..baking import alb_history
+    alb_history.push(obj, path, scene)      # Undo: shared with 07's Inpaint
     _write_full(path, rgb, alpha, spec)
     handmade._reload_file(path)
-    undo = json.loads(obj.get(UNDO, "[]"))
-    undo.append([path, copy])
-    obj[UNDO] = json.dumps(undo)
     stop(obj)
     _cache.clear()
     done = [n for n, on in (("leveled", st.q_level), (f"blurred {st.blur_px}px", st.q_blur))
@@ -699,29 +696,19 @@ def apply(obj, st, scene, progress=None):
 
 
 def undo_count(obj):
-    return len(json.loads(obj.get(UNDO, "[]"))) if obj is not None else 0
+    from ..baking import alb_history
+    return alb_history.count(obj)
 
 
 def undo(obj):
-    """The file the last Apply wrote over gets its copy back. Returns the status line."""
+    """The last in-place ALB_ write (an Apply here or a 07 Inpaint) taken back. Returns the
+    status line."""
     global status
-    stack = json.loads(obj.get(UNDO, "[]"))
-    if not stack:
-        raise RuntimeError("Nothing to undo")
-    path, copy = stack[-1]
-    if not os.path.isfile(copy):
-        stack.pop()
-        obj[UNDO] = json.dumps(stack)
-        raise RuntimeError(f"{os.path.basename(copy)} is gone from _previous")
+    from ..baking import alb_history
     if installed(obj):
         stop(obj)
-    shutil.copyfile(copy, path)     # a new mtime: the file counts as the newest copy
-    from ..baking import handmade
-    handmade._reload_file(path)
-    stack.pop()
-    obj[UNDO] = json.dumps(stack)
+    status = alb_history.undo(obj)
     _cache.clear()
-    status = f"{os.path.basename(path)} back from {os.path.basename(copy)}"
     return status
 
 
@@ -741,15 +728,26 @@ def _on_load(_dummy):
     _cache.clear()
     status = ""
     cleanup_all()
+    _toggles_off()
+
+
+def _toggles_off():
+    """Level / Blur Seam off wherever no preview is (raw writes: no update) - after a file
+    load or an add-on reload they looked on with nothing behind them (2026-11-03)."""
+    if target() is not None:
+        return None
     for scene in bpy.data.scenes:
         st = getattr(scene, "multicamproject_seamfix", None)
         if st is not None:
             st["q_level"] = False
             st["q_blur"] = False
+    _redraw()
+    return None
 
 
 def register():
     bpy.app.handlers.load_post.append(_on_load)
+    bpy.app.timers.register(_toggles_off, first_interval=0.5)   # bpy.data is off-limits here
 
 
 def unregister():

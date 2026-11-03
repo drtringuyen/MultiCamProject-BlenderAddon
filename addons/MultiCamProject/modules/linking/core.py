@@ -191,6 +191,8 @@ def _rel(path):
 
 
 def _abs(path):
+    if path and path.startswith("//"):      # '//\' is the drive's root to abspath
+        path = "//" + path[2:].lstrip("\\/")
     return os.path.normpath(bpy.path.abspath(path)) if path else ""
 
 
@@ -1433,7 +1435,9 @@ def rel_to(path, blend):
         rel = os.path.relpath(full, os.path.dirname(os.path.abspath(blend)))
     except ValueError:      # another drive
         return path
-    return "//" + ("" if rel == "." else rel) + (os.sep if path.endswith(("/", "\\")) else "")
+    if rel == ".":          # its own folder: '//' - '//\' reads as the drive's root (D:\),
+        return "//"         # the next save made that ten '..' (2026-11-03)
+    return "//" + rel + (os.sep if path.endswith(("/", "\\")) else "")
 
 
 def _relative_keys(scene, blend):

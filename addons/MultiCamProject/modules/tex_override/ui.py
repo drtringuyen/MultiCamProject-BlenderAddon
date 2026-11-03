@@ -19,6 +19,35 @@ def draw_switch(layout, obj, kind):
     return row
 
 
+def _draw_edit(row, obj, kind, img):
+    """ALB_: [Inpaint in place] [Undo] - Save writes the file itself (Bake or Load), a copy
+    in _previous first. NOR_: the same room left empty, so both switches line up."""
+    from ... import module_manager
+    from ..baking import alb_history
+    if not module_manager.is_loaded("image_editor"):
+        return
+    sub = row.row(align=True)
+    if kind != 'ALB' or img is None:
+        for _i in range(3):
+            sub.label(text="", icon='BLANK1')
+        row.separator(factor=0.5)
+        return
+    sub.enabled = not obj.multicamproject_bake.locked
+    op = sub.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER')
+    op.kind, op.owner, op.direct = 'ALB', obj.name, True
+    u = sub.row(align=True)
+    n = alb_history.count(obj)
+    u.enabled = bool(n)
+    u.operator("multicamproject.alb_undo", text="", icon='LOOP_BACK').object_name = obj.name
+    from ..baking import common
+    ip = obj.multicamproject_bake.alb_inpaint
+    m = sub.row(align=True)
+    m.enabled = ip is not None and ip != img and common.file_ok(ip)  # 06 saved an _inpaint
+    m.operator("multicamproject.alb_merge_inpaint", text="",
+               icon='IMPORT').object_name = obj.name
+    row.separator(factor=0.5)
+
+
 def draw_row(layout, obj, kind, text, icon, img):
     """07: [label] [Bake|Load] [file] [export to Overrides] [folder] [refresh] [delete
     override] - and under it an override found (Bake) or missing (Load)."""
@@ -26,8 +55,15 @@ def draw_row(layout, obj, kind, text, icon, img):
     scene = bpy.context.scene
     col = layout.column(align=True)
     split = col.split(factor=0.3, align=True)
-    split.label(text=text, icon=icon)
+    if img is not None:         # a click shows it in the Image / UV Editor
+        left = split.row(align=True)
+        left.alignment = 'LEFT'         # reads like the label it was
+        left.operator("multicamproject.show_image", text=text, icon=icon,
+                      emboss=False).image_name = img.name
+    else:
+        split.label(text=text, icon=icon)
     right = split.row(align=True)
+    _draw_edit(right, obj, kind, img)
     sw = draw_switch(right, obj, kind)
     sw.ui_units_x = 5           # the file path gets the rest
     right.separator(factor=0.5)
