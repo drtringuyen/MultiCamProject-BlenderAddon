@@ -600,9 +600,20 @@ def _bakes_dest(scene):
     if trimmed != dest:
         scene[WORK_BAKES_KEY] = trimmed
         dest = trimmed
-    if bpy.data.filepath and (not dest or not os.path.isdir(dest)):
+    if bpy.data.filepath and (not dest or not os.path.isdir(dest) or _above_main(scene, dest)):
         dest = os.path.dirname(bpy.data.filepath)
     return dest
+
+
+def _above_main(scene, dest):
+    """dest is a folder ABOVE the main file's (2026-11-03: a key of nine '..' named
+    D:\\ggdrive - it exists, so it passed; every bake and _previous went there)."""
+    main = _abs(scene.get(WORK_KEY, ""))
+    if not main:
+        return False
+    d = os.path.normcase(os.path.join(os.path.normpath(dest), ""))
+    m = os.path.normcase(os.path.join(os.path.dirname(main), ""))
+    return m.startswith(d) and m != d
 
 
 def open_saved(obj):
@@ -1415,6 +1426,8 @@ def rel_to(path, blend):
     '//...'. Unchanged when it can't be (another drive, nothing to save against)."""
     if not path or not blend:
         return path
+    if path.startswith("//") and not bpy.data.filepath:
+        return path         # no file yet: abspath would leave it relative to the working dir
     full = os.path.normpath(bpy.path.abspath(path))
     try:
         rel = os.path.relpath(full, os.path.dirname(os.path.abspath(blend)))
