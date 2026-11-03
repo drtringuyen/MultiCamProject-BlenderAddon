@@ -21,6 +21,7 @@ import bpy
 import numpy as np
 
 from ..camera_project import core as cp
+from ..camera_project import paint_soften
 from . import common, fingerprint, gn_final, jobs, material
 
 TMP_NODE = "MCP_BAKE_TMP"
@@ -844,8 +845,8 @@ def _render_albedo(context, obj, size, route_view=None):
     cp.ensure_material(obj)
     gn_final.set_final(obj, context.scene, False)
     context.view_layer.update()
-    with subdivided(context, obj), (cp.route_override(obj, route_view) if route_view
-                                    else _nothing()):
+    with subdivided(context, obj), paint_soften.softened(obj), (
+            cp.route_override(obj, route_view) if route_view else _nothing()):
         px = uv_render(context, obj, size)
     yield jobs.Step("Albedo: margin")
     covered = px[..., 3] > 0.0
@@ -1021,7 +1022,7 @@ def bake_mask_steps(context, obj, size):
         gn_final.set_final(obj, scene, False)
         context.view_layer.update()
         yield jobs.Step("Normal: blend mask (EEVEE)")
-        with subdivided(context, obj):
+        with subdivided(context, obj), paint_soften.softened(obj):    # the same mask as ALB_
             px = uv_render(context, obj, size, emit=False)
         mask = np.ascontiguousarray(px[..., :1])
         covered = px[..., 3] > 0.0
