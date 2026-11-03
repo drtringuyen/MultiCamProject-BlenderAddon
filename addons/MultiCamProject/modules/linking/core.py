@@ -742,6 +742,7 @@ def take_incoming(scene):
         new.flip_normals()
     mats = list(obj.data.materials)
     prev = obj.data
+    _carry_split(prev, new)
     obj.data = new
     new.materials.clear()               # the window's own materials, not the copies
     for mat in mats:
@@ -1003,8 +1004,18 @@ def _to_local(me, obj):
         me.flip_normals()
 
 
+def _carry_split(old, new):
+    """The export's split parts (face attributes) onto the received mesh."""
+    try:
+        from ..export import split
+    except ImportError:
+        return
+    split.carry_over(old, new)
+
+
 def _swap_mesh(obj, me):
     old = obj.data
+    _carry_split(old, me)
     for m in old.materials:
         me.materials.append(m)
     name = old.name

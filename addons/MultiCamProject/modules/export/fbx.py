@@ -13,9 +13,10 @@ from contextlib import contextmanager
 
 import bpy
 import numpy as np
+from mathutils import Matrix
 
 from ..baking import common, gn_final, jobs
-from . import checks, fixes, status
+from . import checks, fixes, split, status
 
 TMP = "__mcp_export_tmp"
 UNITY_SCRIPT = os.path.join(os.path.dirname(__file__), "unity", "MCPTexturePostprocessor.cs")
@@ -112,19 +113,35 @@ def _trim(me, mat):
 
 
 def make_copies(context, objs, copies, coll, temps):
-    """Temporary copies of the evaluated Final objects. Returns {copy: missing items}."""
+    """Temporary copies of the evaluated Final objects; an object with split parts gets a
+    child per part (split.pieces) and is an empty when no face is left on it.
+    Returns {copy: missing items}."""
     dg = context.evaluated_depsgraph_get()
     out = {}
     for obj in objs:
         me = bpy.data.meshes.new_from_object(obj.evaluated_get(dg), preserve_all_data_layers=True,
                                              depsgraph=dg)
-        temps["meshes"].append((me, obj.data.name))
         mat = _export_material(obj, copies, temps)
         missing = _trim(me, mat)
-        cp = bpy.data.objects.new(obj.name + "_copy", me)
+        parts, rest = split.pieces(me)
+        if rest:
+            temps["meshes"].append((me, obj.data.name))
+            cp = bpy.data.objects.new(obj.name + "_copy", me)
+        else:
+            bpy.data.meshes.remove(me)
+            cp = bpy.data.objects.new(obj.name + "_copy", None)
+            cp.empty_display_size = 0.1
         cp.matrix_world = obj.matrix_world
         coll.objects.link(cp)
         temps["objects"].append((cp, obj.name))
+        for lab, pme, center in parts:
+            temps["meshes"].append((pme, lab))
+            child = bpy.data.objects.new(lab + "_copy", pme)
+            child.parent = cp
+            child.matrix_parent_inverse = Matrix.Identity(4)
+            child.location = center
+            coll.objects.link(child)
+            temps["objects"].append((child, lab))
         if mat is not None:
             temps["mat_names"].append((mat, common.data(obj).material.name))
         out[cp] = missing
@@ -136,7 +153,7 @@ def write_fbx(context, path, objs):
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with selection(context, objs[0], objs):
         bpy.ops.export_scene.fbx(
-            filepath=path, use_selection=True, object_types={'MESH'},
+            filepath=path, use_selection=True, object_types={'MESH', 'EMPTY'},   # split parents
             use_mesh_modifiers=False,           # the copies are already evaluated
             colors_type='SRGB', prioritize_active_color=False,
             path_mode='RELATIVE', embed_textures=False,
@@ -236,11 +253,12 @@ def export_steps(context, fix_log=()):
                     missing[cp.name] = miss
             copies_list = [cp for cp, _n in temps["objects"]]
             if es.split == 'PER_OBJECT':
-                for i, cp in enumerate(copies_list):
+                tops = list(made)
+                for i, cp in enumerate(tops):
                     path = os.path.join(folder, cp.name + ".fbx")
                     yield jobs.Step(f"Writing {os.path.basename(path)}",
-                                    0.5 + 0.5 * i / len(copies_list))
-                    write_fbx(context, path, [cp])
+                                    0.5 + 0.5 * i / len(tops))
+                    write_fbx(context, path, [cp] + [c for c in copies_list if c.parent == cp])
                     files.append(path)
             else:
                 from ..baking import naming

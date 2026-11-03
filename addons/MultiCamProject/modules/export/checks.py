@@ -15,7 +15,8 @@ Issue = namedtuple("Issue", "obj code text severity")
 ERROR, WARNING, INFO = 'ERROR', 'WARNING', 'INFO'
 # warnings that do not stop an object from being ready: orange, never red
 SOFT = {'UV_BAD',       # uv_normal overlapping / outside 0-1: often fine, the user decides
-        'OVERRIDE'}     # a loaded file's size / bit depth (02.Overrides): the user's call
+        'OVERRIDE',     # a loaded file's size / bit depth (02.Overrides): the user's call
+        'SPLIT'}        # split parts overlapping / a name twice: the FBX is still written
 
 
 def blocking(issue):
@@ -49,6 +50,8 @@ SUMMARY = {
     'HANDMADE': ("{n} handmade with problems", None, "see the object's notes"),
     'OVERRIDE': ("{n} loaded texture(s) of another size / format", None,
                  "fix the file in 02.Overrides"),
+    'SPLIT': ("{n} with split part problems", None,
+              "Object Data > Split Parts > Select Overlaps / rename"),
     'OVERRIDE_FILE': ("{n} loaded texture(s) missing in 02.Overrides", None,
                       "put the file back, or switch it to Bake (07)"),
 }
@@ -446,14 +449,32 @@ def check_handmade(obj):
     return out
 
 
+def check_split(obj, scene):
+    from . import split
+    if not split.part_names(obj.data):
+        return []
+    counts, over, none = split.stats(obj.data)
+    parts = [split.label(n) for n, c in counts.items() if c]
+    out = [Issue(obj.name, 'SPLIT_INFO', f"split into {len(parts)}: {', '.join(parts)}"
+                 + (f" + {none} faces on itself" if none else " (an empty)"), INFO)]
+    if over:
+        out.append(Issue(obj.name, 'SPLIT', f"{over} faces in two split parts "
+                         "(go to the first by name)", WARNING))
+    clash = split.clashes(scene, common.export_objects(scene)).get(obj.name)
+    if clash:
+        out.append(Issue(obj.name, 'SPLIT', f"split part name(s) {', '.join(clash)} used "
+                         "elsewhere (comes out as .001)", WARNING))
+    return out
+
+
 def object_issues(obj, scene, plan):
     from ..baking import handmade
     names = check_names(obj, plan) if scene.multicamproject_export.auto_names else []
     if handmade.is_handmade(obj):
-        return names + check_handmade(obj) + check_mesh(obj)
+        return names + check_handmade(obj) + check_mesh(obj) + check_split(obj, scene)
     return (names + check_materials(obj) + check_uv(obj) + check_color(obj, scene)
             + check_transform(obj) + check_mesh(obj) + check_textures(obj, scene)
-            + check_state(obj))
+            + check_state(obj) + check_split(obj, scene))
 
 
 # ---------------------------------------------------------------- scenes
