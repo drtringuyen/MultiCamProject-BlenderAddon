@@ -1,4 +1,5 @@
 """The fixes the export panel offers: rename, transforms, delete a scene, EXPORT links."""
+import json
 import os
 import shutil
 
@@ -314,11 +315,28 @@ def fix_transform(obj):
     """Apply all transforms into the mesh, then put the origin at the bottom center.
     Children keep their place. A parented object stays a child with a clean transform of
     its own (the parent's goes into matrix_parent_inverse - without it the object's
-    transform would only cancel a scaled / rotated parent's). Returns '' or why it was
-    skipped."""
+    transform would only cancel a scaled / rotated parent's). Nothing moves in the world, so
+    the bakes that were current stay current, also for a work window's Receive. Returns ''
+    or why it was skipped."""
     me = obj.data
     if len(checks.users_of_mesh(me)) > 1:
         return "mesh is shared by several objects"
+    try:
+        from ..linking import core as linking
+    except ImportError:
+        linking = None
+    rec = linking.out_record(obj) if linking is not None else None
+    same = rec is not None and rec.get("sig") == linking.mesh_signature(obj)
+    fingerprint.source_moved(obj, lambda: _apply_transform(obj))
+    if same:    # not an edit: Receive would warn, and a received object would read outdated
+        rec["sig"] = linking.mesh_signature(obj)
+        rec["matrix"] = linking._matrix_list(obj.matrix_world)
+        obj[linking.OUT_KEY] = json.dumps(rec)
+    return ""
+
+
+def _apply_transform(obj):
+    me = obj.data
     children = [(c, c.matrix_world.copy()) for c in obj.children]
     mw = obj.matrix_world.copy()
     me.transform(mw, shape_keys=True)
@@ -333,7 +351,6 @@ def fix_transform(obj):
     me.update()
     for c, m in children:
         c.matrix_world = m
-    return ""
 
 
 # ---------------------------------------------------------------- scenes

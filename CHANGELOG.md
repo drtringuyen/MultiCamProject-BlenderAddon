@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+### Export: a transform fix no longer sends objects back to Raw (2026-11-04)
+
+- Fix / Fix All / Fix + Export apply the transform by rewriting the mesh's local numbers, which
+  read as "mesh shape changed": BAo_, ALB_ and NOR_ went outdated and the object back to Raw
+  though nothing moved in the world. Bakes that were current now stay current, with their bake
+  times; a real mesh edit still outdates them. A Received object stays Received and its Receive
+  doesn't warn.
+- Locked objects get the transform fix too (textures, stamps and the lock stay). They were
+  skipped, so their Fix button stayed red and did nothing.
+- 03's route line no longer raises an error on a 2D Only Project object with a BAo_.
+
 ### Overrides: one 02.Overrides per room (2026-10-29)
 
 - A work file (saved in 01.Bake) read `//02.Overrides` against itself and loaded from, or

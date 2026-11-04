@@ -226,17 +226,17 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
         r = route.get(obj)
         if r in {route.ORIGINAL, route.MIXED}:
             parts = "BAo_ / BNo_" if d.original_normal == 'BAKED' else "BAo_"
+            # 2D Only Project: no Bake Source, BAo_ comes from the scan's own textures
+            source = d.bake_source.name if d.bake_source else "its own textures"
             if d.ba_image is None or not common.file_ok(d.ba_image):
-                col.label(text=f"No {parts} yet: bakes from {d.bake_source.name} first",
-                          icon='INFO')
+                col.label(text=f"No {parts} yet: bakes from {source} first", icon='INFO')
             elif fingerprint.ba_outdated(obj):
                 col.label(text=f"BAo_ outdated ({fingerprint.ba_why(obj)}): bakes from the "
                                "source again first", icon='INFO')
             elif engine.needs_source_bake(obj):
                 col.label(text="No current BNo_: bakes from the source again first", icon='INFO')
             else:
-                col.label(text=f"{parts} {_res(d.ba_size)} from {d.bake_source.name}",
-                          icon='MESH_DATA')
+                col.label(text=f"{parts} {_res(d.ba_size)} from {source}", icon='MESH_DATA')
         if r in {route.PROJECTION, route.MIXED}:
             if d.bap_image is None or not common.file_ok(d.bap_image):
                 col.label(text="No BAp_ yet: renders the projection first", icon='INFO')

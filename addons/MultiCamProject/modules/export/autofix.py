@@ -23,7 +23,9 @@ def plan(scene):
     for o in objs:
         issues = per[o.name].issues
         codes = {i.code for i in issues}
-        if common.data(o).locked:       # 08 Locked Finish: exported as it is
+        if common.data(o).locked:       # 08 Locked Finish: its textures as they are
+            if 'TRANSFORM' in codes:    # nothing moves in the world, the lock stays
+                transforms.append(o)
             continue
         if handmade.is_handmade(o):     # names only: never unwrapped, baked or transformed
             warnings += [f"{o.name}: {i.text}" for i in issues
@@ -64,8 +66,8 @@ def object_steps(obj, issues):
     live Decimate (03) - the user asked for this object explicitly."""
     from ..baking import handmade
     codes = {i.code for i in issues}
-    if common.data(obj).locked:         # 08 Locked Finish: nothing changes
-        return Steps(False, False, False, False, False)
+    if common.data(obj).locked:         # 08 Locked Finish: only the transform (see plan)
+        return Steps(False, False, 'TRANSFORM' in codes, False, False)
     rename = 'NAME' in codes
     if handmade.is_handmade(obj):       # names only, never unwrapped or baked
         return Steps(False, rename, False, False, False)

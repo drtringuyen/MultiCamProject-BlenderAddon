@@ -338,6 +338,30 @@ def restamped(obj, change):
     return out
 
 
+def source_moved(obj, change):
+    """Run change() - only the mesh's local numbers move, nothing in the world (a transform
+    applied, the origin moved) - and store the stamps again that matched before it: the bakes
+    are still right. Their bake times stay, so ALB_ does not read a new BAo_."""
+    from . import normal
+    d = common.data(obj)
+    old_ba = d.ba_fingerprint
+    ba = bool(old_ba) and old_ba.split(":")[0] == source_state(obj)
+    alb = bool(d.fingerprint) and d.fingerprint == compute(obj)
+    nor = bool(d.nor_fingerprint) and d.nor_fingerprint == normal.state(obj)
+    out = change()
+    cache.clear(obj)
+    if ba:
+        state, _sep, _when = stamp_source(obj).partition(":")
+        d.ba_fingerprint = f"{state}:{old_ba.partition(':')[2]}"
+        if d.bng_fingerprint.startswith(old_ba + "|"):
+            d.bng_fingerprint = d.ba_fingerprint + d.bng_fingerprint[len(old_ba):]
+    if alb:
+        d.fingerprint = compute(obj)
+    if nor:     # last: Bake from Scan's stamp holds the two above
+        d.nor_fingerprint = normal.state(obj)
+    return out
+
+
 PATHS_KEY = "paths_normalized"     # 2026-10-12: raw -> absolute
 NAMES_KEY = "paths_by_name"         # 2026-10-21: absolute -> folder/file
 
