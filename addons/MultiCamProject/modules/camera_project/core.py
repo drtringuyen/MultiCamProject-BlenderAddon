@@ -42,6 +42,8 @@ def set_slots(d, cams):
 # ---------------------------------------------------------------- images
 
 def bg_entry(cam, create=False):
+    if cam is None or cam.type != 'CAMERA':     # the UI's enums also ask for meshes
+        return None
     bgs = cam.data.background_images
     if len(bgs):
         return bgs[0]

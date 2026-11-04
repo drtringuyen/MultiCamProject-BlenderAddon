@@ -737,9 +737,9 @@ def take_incoming(scene):
     if new is None:
         raise RuntimeError(f"no mesh in {lib}")
     old = _old_version(scene, obj)      # only once the new mesh is here
-    new.transform(m)                    # the window works in world space (no parents)
-    if m.determinant() < 0:
-        new.flip_normals()
+    # the mesh stays in its own local space and the object takes the main file's placement,
+    # as Send Out's build does. Transforming the mesh as well moved it twice (2026-11-03:
+    # Window_Heater_Curtains 2.64 m off in the work window)
     mats = list(obj.data.materials)
     prev = obj.data
     _carry_split(prev, new)
@@ -750,6 +750,8 @@ def take_incoming(scene):
     if prev.users == 0:
         bpy.data.meshes.remove(prev)
     new.name = obj.name
+    obj.parent = None
+    obj.matrix_world = m
     for k in kinds:                     # what came along with the mesh and is unused now
         coll = getattr(bpy.data, k)
         for idb in [i for i in coll if i not in before[k] and i.users == 0]:
@@ -810,6 +812,15 @@ def _take_later():
 
 @persistent
 def _on_load_incoming(_):
+    if bpy.data.filepath:   # paths of another computer / the drive's root: fixed first
+        for scene in bpy.data.scenes:
+            try:
+                rep = repair_paths(scene)
+                if rep["paths"] or rep["textures"]:
+                    print(f"[MultiCamProject] {scene.name}: paths fixed on load: "
+                          f"{rep['paths'] + rep['textures']}")
+            except Exception as e:
+                print(f"[MultiCamProject] paths not checked on load: {e}")
     if bpy.data.filepath:   # a saved work window still baking into _work(/<object>)
         try:
             for scene in bpy.data.scenes:
@@ -1441,7 +1452,7 @@ def rel_to(path, blend):
         return path
     if path.startswith("//") and not bpy.data.filepath:
         return path         # no file yet: abspath would leave it relative to the working dir
-    full = os.path.normpath(bpy.path.abspath(path))
+    full = _abs(path)       # '//\' is the file's own folder, not the drive's root
     try:
         rel = os.path.relpath(full, os.path.dirname(os.path.abspath(blend)))
     except ValueError:      # another drive
@@ -1451,18 +1462,211 @@ def rel_to(path, blend):
     return "//" + rel + (os.sep if path.endswith(("/", "\\")) else "")
 
 
+PATH_PREFIXES = ("ALB_", "NOR_", "BAo_", "BAp_", "BNo_", "BNp_", "BNg_", "MSK_", "CMX1_",
+                 "CMX2_")      # the add-on's texture files, looked for in the bake folder
+
+
+def _ancestors(folder):
+    out = []
+    while folder:
+        out.append(folder)
+        up = os.path.dirname(folder)
+        if up == folder:
+            break
+        folder = up
+    return out
+
+
+def remap_foreign(path, blend=""):
+    """An absolute path from another computer (D:\\ggdrive\\... there, I:\\... here): the same
+    file or folder found by the longest end of its path under one of the folders this .blend
+    is in. '' when it is not found (never a match on its last name alone)."""
+    if not path or path.startswith("//"):
+        return ""
+    full = os.path.normpath(path)
+    if os.path.exists(full):
+        return full
+    blend = blend or bpy.data.filepath
+    if not blend:
+        return ""
+    parts = [p for p in os.path.splitdrive(full)[1].replace("/", os.sep).split(os.sep) if p]
+    here = _ancestors(os.path.dirname(os.path.abspath(blend)))
+    for k in range(len(parts) - 1):         # at least two names must match
+        tail = parts[k:]
+        for folder in here:
+            cand = os.path.join(folder, *tail)
+            if os.path.exists(cand):
+                return cand
+    return ""
+
+
+def _moves(blend):
+    """This save writes into another folder than the file's own (Save As, Save Copy)."""
+    if not blend or not bpy.data.filepath:
+        return False
+    folder = lambda p: os.path.normcase(os.path.dirname(os.path.abspath(p)))
+    return folder(blend) != folder(bpy.data.filepath)
+
+
+def _rebase(value, blend):
+    """A '//' value of the file as it is now, the same place seen from `blend`: '//...', or
+    absolute when `blend` is on another drive (nothing relative can reach it)."""
+    rel = rel_to(value, blend)
+    if rel != value:
+        return rel
+    return _abs(value) + (os.sep if value.endswith(("/", "\\")) else "")
+
+
+def _fix_path(value, blend):
+    """value as '//...' relative to `blend` - an absolute one first remapped when it names
+    another computer's drive, a relative one moved along when the file is saved into another
+    folder (Blender only does that for its own paths). None when it stays as it is."""
+    if not isinstance(value, str) or not value:
+        return None
+    if value.startswith("//"):
+        return _rebase(value, blend) if _moves(blend) else None
+    full = value if os.path.exists(os.path.normpath(value)) else remap_foreign(value, blend)
+    if not full:
+        return None
+    if value.endswith(("/", "\\")) and not full.endswith(os.sep):
+        full += os.sep
+    rel = rel_to(full, blend)
+    return rel if rel.startswith("//") and rel != value else None
+
+
+def relative_paths(scene, blend):
+    """Every folder / file setting of the add-on relative to `blend` (Photos, Scan Textures,
+    Export, the cameras' photo folder ...). Send Out writes them absolute - the drive letter
+    of this computer, so the work file broke on the other one (I:\\ here is D:\\ggdrive
+    there). The Overrides folder is read against the main file: only remapped here,
+    _relative_overrides makes it relative. Returns what changed."""
+    changed = []
+    if not blend:
+        return changed
+    for group in SCENE_GROUPS:
+        pg = getattr(scene, group, None)
+        if pg is None:
+            continue
+        for p in pg.bl_rna.properties:
+            if p.type != 'STRING' or p.subtype not in {'DIR_PATH', 'FILE_PATH'} \
+                    or p.is_readonly:
+                continue
+            value = getattr(pg, p.identifier)
+            if p.identifier == "texture_override_folder":
+                if value.startswith("//"):
+                    if is_work_window(scene):   # against its main file: a Save As changes nothing
+                        continue
+                    new = _fix_path(value, blend)
+                    if new is not None:
+                        setattr(pg, p.identifier, new)
+                        changed.append(p.identifier)
+                elif value and not os.path.isdir(os.path.normpath(value)):
+                    full = remap_foreign(value, blend)
+                    if full:
+                        setattr(pg, p.identifier, os.path.join(full, ""))
+                        changed.append(p.identifier)
+                continue
+            if p.identifier == "output_dir" and value.startswith("//") and is_work_window(scene):
+                continue                        # _relative_keys has moved it already
+            new = _fix_path(value, blend)
+            if new is not None:
+                setattr(pg, p.identifier, new)
+                changed.append(p.identifier)
+    return changed
+
+
+def _relative_cameras(blend):
+    """The cameras' photo folder, as relative_paths does for the settings. Apart from it: the
+    objects are the file's, not a scene's, and a save must move each value only once."""
+    changed = []
+    if not blend:
+        return changed
+    for obj in bpy.data.objects:
+        cam = getattr(obj, "multicamproject_cam", None) if not obj.library else None
+        if cam is None:
+            continue
+        new = _fix_path(cam.image_folder, blend)
+        if new is not None:
+            cam.image_folder = new
+            changed.append(f"{obj.name}.image_folder")
+    return changed
+
+
+def relink_textures(scene, blend):
+    """The add-on's textures whose file is gone but sits in the bake folder under the same
+    name (a bake folder that once was the drive's root, another computer's drive): linked
+    there again, relative. Returns their names."""
+    try:
+        from ..baking import common
+        bake = common.output_dir(scene)
+    except Exception:
+        return []
+    if not bake or not os.path.isdir(bake):
+        return []
+    out = []
+    for img in bpy.data.images:
+        if img.library or img.packed_file or img.source != 'FILE' or not img.filepath \
+                or not img.name.startswith(PATH_PREFIXES):
+            continue
+        if os.path.isfile(bpy.path.abspath(img.filepath)):
+            continue
+        cand = os.path.join(bake, os.path.basename(os.path.normpath(
+            bpy.path.abspath(img.filepath))))
+        if os.path.isfile(cand):
+            img.filepath = rel_to(cand, blend)
+            out.append(img.name)
+    return out
+
+
+def repair_paths(scene, blend=""):
+    """On load and before each save: the bake folder, the add-on's folders and its textures
+    point where they are on THIS computer, all relative. Returns a short report."""
+    blend = blend or bpy.data.filepath
+    report = {"paths": relative_paths(scene, blend) + _relative_cameras(blend)}
+    s = getattr(scene, "multicamproject_bake_settings", None)
+    if is_work_window(scene):
+        _relative_overrides(scene)
+        for key in (WORK_KEY, WORK_BAKES_KEY, WORK_SAVE_AS_KEY):
+            value = scene.get(key, "")
+            if isinstance(value, str) and value and not value.startswith("//"):
+                full = remap_foreign(value, blend)
+                if full:
+                    scene[key] = full
+        # the bake folder before the textures are looked for in it: one that is gone or
+        # above the main file (the drive's root of '//..\\..\\..') is this window's folder
+        dest = _bakes_dest(scene)
+        if dest and s is not None:
+            rel = rel_to(os.path.join(dest, ""), blend)
+            for value, put in ((s.output_dir, lambda v: setattr(s, "output_dir", v)),
+                               (scene.get(WORK_BAKES_KEY, ""),
+                                lambda v: scene.__setitem__(WORK_BAKES_KEY, v))):
+                cur = _abs(value) if value else ""
+                if not cur or not os.path.isdir(cur) or _above_main(scene, cur):
+                    put(rel)
+                    report["paths"].append("bake folder")
+    if s is not None and s.output_dir and not s.output_dir.startswith("//"):
+        full = remap_foreign(s.output_dir, blend)
+        if full:
+            s.output_dir = rel_to(os.path.join(full, ""), blend)
+    report["textures"] = relink_textures(scene, blend)
+    return report
+
+
 def _relative_keys(scene, blend):
     """A work window keeps its main file, bake folder and save path relative to itself (an
     absolute one names this computer's drive - I:\\ on another computer is D:\\ggdrive
     here). Before each save, against where it is saved (Save As moves it)."""
     _relative_overrides(scene)      # first: it reads the main file's key as it is now
+    s = getattr(scene, "multicamproject_bake_settings", None)
+    if s is not None and s.output_dir:  # before relative_paths: this reads it as it is now
+        s.output_dir = _rebase(s.output_dir, blend) if s.output_dir.startswith("//") \
+            and _moves(blend) else rel_to(s.output_dir, blend)
+    relative_paths(scene, blend)    # Photos, Scan Textures, Export
     for key in (WORK_KEY, WORK_BAKES_KEY, WORK_SAVE_AS_KEY):
         value = scene.get(key, "")
         if isinstance(value, str) and value:
-            scene[key] = rel_to(value, blend)
-    s = getattr(scene, "multicamproject_bake_settings", None)
-    if s is not None and s.output_dir:
-        s.output_dir = rel_to(s.output_dir, blend)
+            scene[key] = _rebase(value, blend) if value.startswith("//") and _moves(blend) \
+                else rel_to(value, blend)
 
 
 def _relative_overrides(scene):
@@ -1479,9 +1683,55 @@ def _relative_overrides(scene):
         props.texture_override_folder = rel
 
 
+_paths_before = {}      # a save into another folder: what to put back if the file stays here
+
+
+def _remember_paths(blend):
+    """Before a save into another folder rewrites the add-on's paths for it: Save Copy or a
+    failed save leave this file open where it is, and its paths must keep reading from here."""
+    values = []
+    for scene in bpy.data.scenes:
+        for group in SCENE_GROUPS:
+            pg = getattr(scene, group, None)
+            for p in pg.bl_rna.properties if pg is not None else ():
+                if p.type == 'STRING' and p.subtype in {'DIR_PATH', 'FILE_PATH'} \
+                        and not p.is_readonly:
+                    values.append((pg, p.identifier, getattr(pg, p.identifier)))
+        for key in (WORK_KEY, WORK_BAKES_KEY, WORK_SAVE_AS_KEY):
+            if key in scene:
+                values.append((scene, key, scene[key]))
+    for obj in bpy.data.objects:
+        cam = getattr(obj, "multicamproject_cam", None) if not obj.library else None
+        if cam is not None:
+            values.append((cam, "image_folder", cam.image_folder))
+    _paths_before.update(blend=blend, values=values)
+
+
+def _restore_paths(failed=False):
+    """After a save: the file did not move to where the save went - its paths back."""
+    if not _paths_before:
+        return
+    blend, values = _paths_before["blend"], _paths_before["values"]
+    _paths_before.clear()
+    if not failed and bpy.data.filepath and os.path.normcase(os.path.abspath(blend)) \
+            == os.path.normcase(os.path.abspath(bpy.data.filepath)):
+        return
+    for owner, name, value in values:
+        if isinstance(owner, bpy.types.Scene):
+            owner[name] = value
+        else:
+            setattr(owner, name, value)
+
+
 @persistent
 def _on_save_pre(*args):
     blend = args[0] if args and isinstance(args[0], str) and args[0] else bpy.data.filepath
+    _paths_before.clear()
+    try:
+        if _moves(blend):
+            _remember_paths(blend)
+    except Exception as e:
+        print(f"[MultiCamProject] paths not remembered: {e}")
     try:
         for scene in bpy.data.scenes:
             if is_work_window(scene):
@@ -1489,6 +1739,13 @@ def _on_save_pre(*args):
                 _relative_keys(scene, blend)
     except Exception as e:  # never block a save
         print(f"[MultiCamProject] work window bakes not moved: {e}")
+    try:
+        for scene in bpy.data.scenes:
+            if not is_work_window(scene):
+                relative_paths(scene, blend)
+        _relative_cameras(blend)
+    except Exception as e:
+        print(f"[MultiCamProject] paths not made relative: {e}")
     try:
         if not any(is_work_window(s) for s in bpy.data.scenes):
             remember_files()        # the main file: the work files' paths go into the .blend
@@ -1499,6 +1756,10 @@ def _on_save_pre(*args):
 @persistent
 def _on_save_post(*_args):
     """A saved work window tells the main file where it is (the row's open button)."""
+    try:
+        _restore_paths()
+    except Exception as e:
+        print(f"[MultiCamProject] paths not put back: {e}")
     try:
         for scene in bpy.data.scenes:
             job_id = scene.get(WORK_ID_KEY, "")
@@ -1562,15 +1823,25 @@ def linked_objects():
                   key=lambda o: o.name.lower())
 
 
+@persistent
+def _on_save_fail(*_args):
+    try:
+        _restore_paths(failed=True)
+    except Exception as e:
+        print(f"[MultiCamProject] paths not put back: {e}")
+
+
 def register():
     bpy.app.handlers.save_pre.append(_on_save_pre)
     bpy.app.handlers.save_post.append(_on_save_post)
+    bpy.app.handlers.save_post_fail.append(_on_save_fail)
     bpy.app.handlers.load_post.append(_on_load_incoming)
 
 
 def unregister():
     for lst, fn in ((bpy.app.handlers.save_pre, _on_save_pre),
                     (bpy.app.handlers.save_post, _on_save_post),
+                    (bpy.app.handlers.save_post_fail, _on_save_fail),
                     (bpy.app.handlers.load_post, _on_load_incoming)):
         if fn in lst:
             lst.remove(fn)
