@@ -141,9 +141,66 @@ TARGET_ITEMS = (('ASK', "Ask", "ALB_: a popup with the choices, NOR_: a confirm"
                 ('CANCEL', "Cancel", "Nothing happens"))
 
 
+def shown(obj, kind):
+    """The image this file shows for ALB_ / NOR_: on Bake an inpainted ALB_ copy (06) when
+    it is on, on Load the 02.Overrides file."""
+    from ..baking import common
+    return common.alb_source(obj) if kind == 'ALB' else core.image(obj, kind)
+
+
+def write_shown(img, dst):
+    """The pixels Blender holds for `img` - what the viewport shows, even when the file on
+    disk changed since (another window wrote it) or the image has unsaved paint - into a
+    new file at `dst`, the bit depth of img's own file. Returns the temporary file's path
+    next to dst (the caller moves it over dst)."""
+    import numpy as np
+    from ..baking import common
+    w, h = img.size
+    if not w or not h:
+        raise RuntimeError(f"{img.name} has no pixels")
+    px = np.empty(w * h * img.channels, np.float32)
+    img.pixels.foreach_get(px)
+    px = px.reshape(h, w, img.channels)
+    if px.shape[2] < 3:
+        px = np.repeat(px[..., :1], 3, axis=2)
+    rgb = np.ascontiguousarray(px[..., :3])
+    del px
+    if img.is_float and img.colorspace_settings.name == 'sRGB':
+        from ..baking import engine          # a float buffer holds linear values
+        engine.to_srgb(rgb)
+    os.makedirs(os.path.dirname(dst), exist_ok=True)
+    tmp = dst + ".tmp.png"
+    import OpenImageIO as oiio
+    src = common.image_file(img)
+    fmt = oiio.UINT8
+    if src and os.path.isfile(src):
+        inp = oiio.ImageInput.open(src)
+        if inp is not None:
+            fmt = inp.spec().format
+            inp.close()
+    if fmt == oiio.UINT8:
+        from ..baking.normal import pngio    # every ALB_: the fast 8-bit writer
+        pngio.write_rgb8(tmp, rgb)
+        return tmp
+    if fmt == oiio.UINT16:              # a 16-bit NOR_: integers, light compression (~15 s at 8K)
+        out = np.ascontiguousarray((np.clip(rgb[::-1], 0.0, 1.0) * 65535 + 0.5).astype(np.uint16))
+    else:
+        out = np.ascontiguousarray(np.clip(rgb, 0.0, 1.0)[::-1])
+        fmt = oiio.FLOAT if fmt != oiio.HALF else fmt
+    del rgb
+    spec = oiio.ImageSpec(w, h, 3, fmt)
+    spec.attribute("png:compressionLevel", 1)
+    o = oiio.ImageOutput.create(tmp)
+    if o is None or not o.open(tmp, spec) or not o.write_image(out):
+        raise RuntimeError(oiio.geterror() or f"{os.path.basename(dst)} could not be written")
+    o.close()
+    return tmp
+
+
 class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
-    """ALB_: overwrite this object's BAo_ with it, or copy it into 02.Overrides as its
-    override (a popup asks). NOR_: into 02.Overrides. Nothing switches: pick Load to use an
+    """ALB_: overwrite this object's BAo_ with what this file shows, or write it into
+    02.Overrides as its override (a popup asks). NOR_: into 02.Overrides. Bake or Load, it
+    is the texture as Blender shows it now. Nothing switches: pick Load to use an
     override"""
     bl_idname = "multicamproject.tex_export_override"
     bl_label = "Export to Overrides"
@@ -156,19 +213,15 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
     @staticmethod
     def _why_not(context, obj, kind, target='OVERRIDE'):
         """'' or why the texture can't go to `target` (OVERRIDE / BAO)."""
-        from ..baking import cache, common
         if obj is None:
             return "No mesh"
-        src = common.image_file(core.image(obj, kind))
-        if not src or not cache.isfile(src):
-            return f"{core.name(obj, kind)} has no file on disk yet"
+        img = shown(obj, kind)
+        if img is None or not img.size[0]:
+            return f"{core.name(obj, kind)} has no texture yet"
         if target == 'BAO':
             return "" if kind == 'ALB' else "Only ALB_ can overwrite BAo_"
         if not core.folder(context.scene):
             return "No Overrides folder set (Project Setup)"
-        if os.path.normcase(src) == os.path.normcase(
-                os.path.normpath(core.override_path(context.scene, obj, kind))):
-            return "On Load: the texture already is the file in 02.Overrides"
         return ""
 
     @staticmethod
@@ -189,8 +242,8 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
                 "ALB_ / NOR_ are outdated against it then")
         if props.target == 'OVERRIDE':
             return cls._why_not(context, obj, props.kind) or (
-                "Copy it into 02.Overrides as its override (the old one to the Recycle Bin). "
-                "Pick Load to use it")
+                "Write it into 02.Overrides as its override, as Blender shows it now (the old "
+                "file to the Recycle Bin). Pick Load to use it")
         if props.kind == 'ALB':
             return "Overwrite BAo_ with this ALB_, or copy it into 02.Overrides (a popup asks)"
         return cls._why_not(context, obj, props.kind) or cls.__doc__
@@ -214,11 +267,9 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
         from ..baking import cache
         dst = core.override_path(context.scene, obj, self.kind)
         there = cache.isfile(dst)
-        img = core.image(obj, self.kind)
-        msg = ("The file in 02.Overrides is replaced (to the Recycle Bin)" if there
+        msg = ("The file in 02.Overrides is replaced by the texture as Blender shows it "
+               "(the old one to the Recycle Bin)" if there
                else "Into 02.Overrides - pick Load to use it")
-        if img is not None and img.is_dirty:
-            msg += ". Unsaved changes in Blender are not in the file - save them first"
         return context.window_manager.invoke_confirm(
             self, event, title=(f"Overwrite {os.path.basename(dst)}?" if there
                                 else f"Export {os.path.basename(dst)}?"),
@@ -233,8 +284,6 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
             self.report({'WARNING'}, "No mesh")
             return {'CANCELLED'}
         scene, name, kind = context.scene, obj.name, self.kind
-        img = core.image(obj, kind)
-        dirty = img is not None and img.is_dirty
         bao_path = self._bao_path(scene, obj)
         ovr_path = core.override_path(scene, obj, kind)
         choices = (('BAO', f"{'Overwrite' if cache.isfile(bao_path) else 'Write'} "
@@ -252,11 +301,9 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
                 r.enabled = not why
                 op = r.operator(idname, text=text + (f"  ({why})" if why else ""), icon=icon)
                 op.kind, op.object_name, op.target = kind, name, target
-            if dirty:
-                r = col.row()
-                r.alert = True
-                r.label(text="Unsaved changes in Blender are not in the file - save first",
-                        icon='ERROR')
+            r = col.row()
+            r.active = False
+            r.label(text="Writes the texture as Blender shows it now", icon='INFO')
             col.separator()
             op = col.operator(idname, text="Cancel", icon='CANCEL')
             op.kind, op.object_name, op.target = kind, name, 'CANCEL'
@@ -288,17 +335,25 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
         if why:
             self.report({'WARNING'}, why)
             return {'CANCELLED'}
-        src = common.image_file(core.image(obj, self.kind))
-        dst = (self._bao_path(context.scene, obj) if target == 'BAO'
-               else core.override_path(context.scene, obj, self.kind))
-        if os.path.normcase(os.path.normpath(src)) == os.path.normcase(os.path.normpath(dst)):
-            self.report({'WARNING'}, "Source and target are the same file")
-            return {'CANCELLED'}
+        img = shown(obj, self.kind)
+        dst = os.path.normpath(self._bao_path(context.scene, obj) if target == 'BAO'
+                               else core.override_path(context.scene, obj, self.kind))
+        tmp = None
         try:
-            self._replace(src, dst)
+            tmp = write_shown(img, dst)
+            if self.kind == 'ALB' and os.path.isfile(dst) and \
+                    os.path.normcase(common.image_file(core.image(obj, 'ALB'))) == os.path.normcase(dst):
+                from ..baking import alb_history     # the ALB_ file itself: 07's Undo takes it back
+                alb_history.push(obj, dst, context.scene)
+            self._replace(tmp, dst)
         except (OSError, RuntimeError) as e:
             self.report({'ERROR'}, f"{os.path.basename(dst)}: {e}")
             return {'CANCELLED'}
+        finally:
+            if tmp and os.path.isfile(tmp):
+                os.remove(tmp)
+        from ..baking import handmade
+        handmade._reload_file(dst)          # images on that file show it (a Load ALB_ / NOR_)
         if target == 'BAO':
             self._take_bao(context.scene, obj, dst)
         cache.clear()
