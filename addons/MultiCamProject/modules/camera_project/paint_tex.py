@@ -136,8 +136,9 @@ def wanted(obj):
 
 def ensure(obj, kind, scene):
     """obj's CMX1_ / CMX2_ / MSK_: its own (brought to the current format), else a new 1K
-    PNG in the bake folder - made together with the other missing ones, from what VCMix /
-    VCMix2 show now, so nothing changes on screen. Object Mode. Returns (image, created)."""
+    PNG in the bake folder - made together with the other missing ones. The camera textures
+    take the weights VCMix / VCMix2 hold now; a new MSK_ is blank (R = 1, BAo_ shows): the
+    projection only shows where it is painted. Object Mode. Returns (image, created)."""
     if any(_version(obj, i) < VERSION for i in images(obj).values()):
         migrate(obj, scene)
     img = get(obj, kind)
@@ -145,6 +146,7 @@ def ensure(obj, kind, scene):
         return img, False
     missing = [k for k in set(wanted(obj)) | {kind} if get(obj, k) is None]
     px = shown_pixels(obj)
+    px["MSK"][:, 0] = 1.0
     for k in missing:
         _create(obj, k, scene, px[k] if k in px else _empty(k))
     return get(obj, kind), True
@@ -537,7 +539,7 @@ def _converted_elsewhere(obj, scene):
     tmp = bpy.data.images.load(path, check_existing=False)
     try:
         setup_image(tmp)
-        ok = tmp.size[0] > 0 and np.abs(read(tmp)[:, 2] - SIG).max(initial=1.0) < 1.5 / 255
+        ok = tmp.size[0] > 0 and np.abs(read(tmp)[:, 2] - SIG).max(initial=0.0) < 1.5 / 255
     finally:
         bpy.data.images.remove(tmp)
     if not ok:
@@ -547,6 +549,13 @@ def _converted_elsewhere(obj, scene):
         if get(obj, k) is not None:
             get(obj, k)[VERSION_KEY] = VERSION
     return True
+
+
+def mark_current(img):
+    """A paint texture loaded from a file already in the current format (received from a work
+    window): set up and marked, so the next load does not convert it a second time."""
+    setup_image(img)
+    img[VERSION_KEY] = VERSION
 
 
 def _migrate(obj, scene=None):

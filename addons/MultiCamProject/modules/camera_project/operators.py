@@ -97,6 +97,20 @@ def _mixed_after_cameras(obj):
     return True
 
 
+def _blank_mask_first(op, obj, scene):
+    """The first Resort / Confirm: the object starts on BAo_ alone (a blank MSK_), the
+    projection only shows where it is painted. An existing MSK_ stays; an object resorted
+    before keeps what it shows. Without uv_normal or a bake folder the first brush makes it."""
+    if core.data(obj).resorted or not paint_tex.can_paint(obj, scene) \
+            or paint_tex.get(obj, "MSK") is not None:
+        return
+    try:
+        if paint_tex.ensure(obj, "MSK", scene)[1]:
+            core.ensure_material(obj)
+    except (RuntimeError, OSError) as e:
+        op.report({'WARNING'}, f"Blank mask not made: {e}")
+
+
 def _workflow_after(obj):
     """2D Only Project: the projection on the scan itself (a Remesh / Retopo copy keeps its
     own workflow)."""
@@ -164,6 +178,7 @@ class MULTICAMPROJECT_OT_ConfirmCameras(bpy.types.Operator):
 
     def execute(self, context):
         obj = context.active_object
+        _blank_mask_first(self, obj, context.scene)
         core.data(obj).resorted = True
         if _mixed_after_cameras(obj):
             self.report({'INFO'}, "Bake Route: Mixed")
@@ -185,6 +200,7 @@ class MULTICAMPROJECT_OT_AutoPick(bpy.types.Operator):
     def execute(self, context):
         obj = context.active_object
         warning = core.auto_pick(obj, context.scene)
+        _blank_mask_first(self, obj, context.scene)
         core.data(obj).resorted = True
         if _mixed_after_cameras(obj):
             self.report({'INFO'}, "Bake Route: Mixed")

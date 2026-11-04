@@ -1125,6 +1125,9 @@ def _take_textures(obj, scene, man):
         if normal:
             img.colorspace_settings.name = 'Non-Color'
         engine.link_file(img, dst)
+        if ptr in PAINT_POINTERS:   # the window keeps them in the current format
+            from ..camera_project import paint_tex
+            paint_tex.mark_current(img)
         setattr(d, ptr, img)
         taken.append(ptr)
     for k, v in man.get("meta", {}).items():
