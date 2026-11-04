@@ -460,9 +460,11 @@ def _drop_data():
 
 
 def target():
-    """The object the preview is on, or None."""
+    """The object the preview is on, or None. VIEW marks it: the group sits in the materials,
+    and an old version sharing them looks previewed too (07_Desk_chair_v1, no uv_normal,
+    took Apply away from 08_Desk_chair - 2026-11-04)."""
     for obj in bpy.data.objects:
-        if obj.type == 'MESH' and installed(obj):
+        if obj.type == 'MESH' and VIEW in obj and installed(obj):
             return obj
     return None
 

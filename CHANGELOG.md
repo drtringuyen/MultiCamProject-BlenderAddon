@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Seam Fix: an old version sharing materials no longer takes over the preview (2026-11-04)
+
+- Level Seam and Blur Seam could treat another object using the same materials as the previewed
+  one. Apply then stopped with "No uv_normal on ..." and the sliders stopped updating, with
+  nothing written to ALB_. The preview now stays on the object it was started on.
+
 ### Export: a transform fix no longer sends objects back to Raw (2026-11-04)
 
 - Fix / Fix All / Fix + Export apply the transform by rewriting the mesh's local numbers, which
