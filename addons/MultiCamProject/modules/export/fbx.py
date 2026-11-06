@@ -16,7 +16,7 @@ import numpy as np
 from mathutils import Matrix
 
 from ..baking import common, gn_final, jobs
-from . import checks, fixes, split, status
+from . import checks, fixes, split, status, unity_script
 
 TMP = "__mcp_export_tmp"
 UNITY_SCRIPT = os.path.join(os.path.dirname(__file__), "unity", "MCPTexturePostprocessor.cs")
@@ -171,17 +171,10 @@ def write_fbx(context, path, objs):
 
 
 def write_unity_script(folder):
-    dst = os.path.join(folder, "Editor", "MCPTexturePostprocessor.cs")
+    """Returns (path, report lines): see unity_script.py."""
     with open(UNITY_SCRIPT, encoding="utf-8") as f:
         text = f.read()
-    if os.path.isfile(dst):
-        with open(dst, encoding="utf-8") as f:
-            if f.read() == text:
-                return dst
-    os.makedirs(os.path.dirname(dst), exist_ok=True)
-    with open(dst, "w", encoding="utf-8", newline="\n") as f:
-        f.write(text)
-    return dst
+    return unity_script.install(folder, text, fixes.to_recycle_bin)
 
 
 def write_report(folder, scene, files, statuses, missing, seconds, fix_log=()):
@@ -223,6 +216,10 @@ def export_steps(context, fix_log=()):
     # normpath: a // path up to another project keeps its '..' - past Windows' 260 characters
     folder = os.path.normpath(bpy.path.abspath(es.folder))
     os.makedirs(folder, exist_ok=True)
+    # before the textures: Unity may import them as soon as it gets focus, and only a first
+    # import takes the script's settings
+    if es.write_cs:
+        fix_log = list(fix_log) + write_unity_script(folder)[1]
     finals = {o: gn_final.is_final(o) for o in objs}
     temps = {"objects": [], "meshes": [], "materials": [], "images": [], "mat_names": []}
     coll = bpy.data.collections.new("MCP_EXPORT_TMP")
@@ -288,8 +285,6 @@ def export_steps(context, fix_log=()):
     stale = checks.stale_export_textures(scene, list(copies)) if files else []
     fix_log = list(fix_log) + [('INFO', f"Export Textures/: old {os.path.basename(p)} moved to "
                                         "the Recycle Bin") for p in fixes.to_recycle_bin(stale)]
-    if es.write_cs:
-        write_unity_script(folder)
     for name in skipped:
         missing[name] = ["not baked - left out of the FBX"]
     for name in live:

@@ -1,5 +1,6 @@
-// Written by the MultiCamProject Blender add-on (Export). Put the export folder inside
-// Assets/: this script lands in Editor/ next to it.
+// Written by the MultiCamProject Blender add-on (Export) to Assets/Editor/.
+// Keep ONE copy in the project (a second one stops Unity compiling) and do not commit it:
+// the settings it makes are saved in the .meta files, which are what the team needs.
 // First import only - once a texture or model has import settings, the dev's changes stay.
 using UnityEditor;
 

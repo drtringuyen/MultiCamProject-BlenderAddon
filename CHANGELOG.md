@@ -20,6 +20,16 @@
   one. Apply then stopped with "No uv_normal on ..." and the sliders stopped updating, with
   nothing written to ALB_. The preview now stays on the object it was started on.
 
+### Export: one Unity script per project (2026-11-04)
+
+- Every export folder got its own `Editor/MCPTexturePostprocessor.cs`, and two copies in one
+  Unity project stop it compiling (CS0101). When the export folder is inside a Unity project,
+  the script now goes to `Assets/Editor/`, other copies move to the Recycle Bin (noted in the
+  report), and `.git/info/exclude` keeps it out of commits on this machine. The team only needs
+  the `.meta` files. Outside a Unity project it still travels with the export folder.
+- The script is written before the textures, so a Unity refresh during a long export can't
+  import them without its settings.
+
 ### Export: a transform fix no longer sends objects back to Raw (2026-11-04)
 
 - Fix / Fix All / Fix + Export apply the transform by rewriting the mesh's local numbers, which

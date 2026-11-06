@@ -149,14 +149,16 @@ class MULTICAMPROJECT_ExportSettings(bpy.types.PropertyGroup):
                     "the typed order and renames MCP_/MAT_/ALB_/NOR_ and their files")
     folder: StringProperty(name="Folder", default="//Export/", subtype='DIR_PATH',
                            options={'PATH_SUPPORTS_BLEND_RELATIVE'},
-                           description="Folder for the FBX, Textures/, Editor/ and the report")
+                           description="Folder for the FBX, Textures/ and the report")
     split: EnumProperty(
         name="Files", default='ONE',
         items=(('ONE', "One FBX", "All objects in one FBX"),
                ('PER_OBJECT', "One per Object", "One FBX per object, named after it")))
     write_cs: BoolProperty(name="Unity Script", default=True,
-                           description="Write Editor/MCPTexturePostprocessor.cs: first import sets "
-                                       "ALB/NOR to max 8192 and NOR to Normal map")
+                           description="Write MCPTexturePostprocessor.cs: first import sets ALB/NOR "
+                                       "to max 8192 and NOR to Normal map. Inside a Unity project: "
+                                       "one copy in Assets/Editor, ignored by git on this machine, "
+                                       "other copies to the Recycle Bin")
     write_report: BoolProperty(name="Report", default=True,
                                description="Write export_report.txt (objects, stages, issues, timings)")
     active_index: IntProperty(default=-1, update=_on_row)
