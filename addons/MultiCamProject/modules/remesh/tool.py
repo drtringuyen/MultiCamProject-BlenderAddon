@@ -21,6 +21,7 @@ def _draw_settings(context, layout, tool):
     layout.prop(context.scene, "multicamproject_polycut_through", text="Cut Through")
     layout.prop(context.scene, "multicamproject_polycut_select_edges", text="Select Edges")
     layout.prop(context.scene, "multicamproject_polycut_select", text="Select Faces")
+    layout.prop(context.scene, "multicamproject_polycut_invert", text="Invert")
     layout.prop(context.scene, "multicamproject_polycut_auto_seam", text="Auto Seam")
 
 

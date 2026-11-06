@@ -176,7 +176,9 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             # Select Edges / Faces after the cut (Edit Mode), Auto Seam: no seam popup
             row.prop(context.scene, "multicamproject_polycut_select_edges", text="", icon='EDGESEL')
             row.prop(context.scene, "multicamproject_polycut_select", text="", icon='FACESEL')
+            row.prop(context.scene, "multicamproject_polycut_invert", text="", icon='ARROW_LEFTRIGHT')
             row.prop(context.scene, "multicamproject_polycut_auto_seam", text="", icon='UV_EDGESEL')
+            row.prop(context.scene, "multicamproject_polycut_close_border", text="", icon='MOD_EDGESPLIT')
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
                              text="PolyCut & Seams (Ctrl+Shift+K)",

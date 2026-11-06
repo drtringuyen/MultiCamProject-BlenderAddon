@@ -13,7 +13,7 @@ only the faces the view sees (Knife Project, both).
 While drawing, the cut is previewed on the mesh: yellow on the surface the view sees, and with
 Cut Through fainter on every layer behind it.
 
-Edit Mode: K starts PolyCut there (in place of Blender's Knife), no Ctrl needed.
+Edit Mode: Ctrl+Shift+K brings you to the tool (K is Surface Cut, Blender's Knife is Shift+K).
 
 The last cut is remembered on the mesh (its outline edges, mcp_cut_edges, and the faces inside a
 closed one, mcp_cut_inside) until the next cut: switching Select Edges / Select Faces / Auto Seam
@@ -49,6 +49,10 @@ CUT_FACES = "mcp_cut_inside"        # face attribute: the faces inside the last 
 SELECT_PROP = "multicamproject_polycut_select"              # Select Faces after the cut
 SELECT_EDGES_PROP = "multicamproject_polycut_select_edges"  # Select Edges after the cut
 AUTO_SEAM_PROP = "multicamproject_polycut_auto_seam"        # the outline a seam, no popup
+INVERT_PROP = "multicamproject_polycut_invert"              # Select Faces: the other side
+CLOSE_BORDER_PROP = "multicamproject_polycut_close_border"  # the open rim part of the outline
+CUT_RIM = "mcp_cut_rim"             # edge attribute: where the last Surface Cut ran along an open rim
+CUT_PIECE = "mcp_cut_piece"         # face attribute: the piece the last Surface Cut split
 CUT_EDGES = gn.CUT_EDGES            # edge attribute: the last cut's new edges, until the popup
 POINT_PX = 12                       # a click this near an existing point is on it (x UI scale)
 DOUBLE_SECONDS, DOUBLE_PX = 0.45, 6
@@ -96,8 +100,8 @@ def _drop(obj, name):
 
 def forget(obj):
     """The last cut is no longer remembered (a new cut starts)."""
-    _drop(obj, CUT_EDGES)
-    _drop(obj, CUT_FACES)
+    for name in (CUT_EDGES, CUT_FACES, CUT_RIM, CUT_PIECE):
+        _drop(obj, name)
 
 
 def remembers(obj):
@@ -118,6 +122,39 @@ def store_faces(obj, faces):
     if faces is not None:
         me.attributes.new(CUT_FACES, 'BOOLEAN', 'FACE').data.foreach_set("value", faces.astype(bool))
         me.update()
+
+
+def store_bools(obj, name, domain, flags):
+    """A remembered bool layer of the last cut (None: dropped)."""
+    me = obj.data
+    _drop(obj, name)
+    if flags is not None:
+        me.attributes.new(name, 'BOOLEAN', domain).data.foreach_set("value", flags.astype(bool))
+        me.update()
+
+
+def read_bools(obj, name, domain):
+    me = obj.data
+    a = me.attributes.get(name)
+    if a is None or a.domain != domain:
+        return None
+    out = np.zeros(len(me.polygons) if domain == 'FACE' else len(me.edges), bool)
+    a.data.foreach_get("value", out)
+    return out
+
+
+def selection_faces(context, obj):
+    """The faces Select Faces picks for the last cut: inside, or with Invert the rest of the
+    piece it split (the whole mesh for a PolyCut). None for an open line."""
+    inside = cut_faces(obj)
+    if inside is None or not inside.any():
+        return None
+    if not getattr(context.scene, INVERT_PROP, False):
+        return inside
+    piece = read_bools(obj, CUT_PIECE, 'FACE')
+    if piece is None:
+        piece = np.ones(len(inside), bool)
+    return piece & ~inside
 
 
 def cut_faces(obj):
@@ -807,7 +844,8 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
                     self._seamed = set_seam(obj)
                 want = select_mode(context) if n else None
                 if want:
-                    self._selected = (('FACE', select_cut(obj, faces=faces)) if want == 'FACE'
+                    sel = selection_faces(context, obj) if want == 'FACE' else None
+                    self._selected = (('FACE', select_cut(obj, faces=sel)) if sel is not None
                                       else ('EDGE', select_cut(obj, edges=edges)))
         except RuntimeError as e:
             self.report({'ERROR'}, f"PolyCut failed: {e}")
@@ -892,8 +930,10 @@ def _popup(context, title):
 
 
 def apply_last(context, what):
-    """A toggle switched on after a cut: the remembered cut gets it too. 'SEAM': its outline a
-    seam; 'FACE' / 'EDGE': Edit Mode with its inside faces / its edges selected."""
+    """A toggle switched after a cut: the remembered cut gets it too. 'SEAM': its outline a
+    seam; 'FACE' / 'EDGE': Edit Mode with its inside faces (Invert: the rest of the piece) / its
+    edges selected; 'BORDER': Close Border switched - the open rim joins the outline or leaves
+    it (and its seam follows the outline's)."""
     obj = getattr(context, "active_object", None)
     if not remembers(obj) or obj.library:
         return
@@ -902,10 +942,16 @@ def apply_last(context, what):
     try:
         if mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
-        if what == 'SEAM':
+        if what == 'BORDER':
+            _close_border(context, obj)
+            what = 'EDGE' if getattr(context.scene, SELECT_EDGES_PROP, False) else None
+            if what is not None:
+                select_cut(obj, edges=cut_flags(obj))
+                end = 'EDIT'
+        elif what == 'SEAM':
             set_seam(obj)
         else:
-            faces = cut_faces(obj) if what == 'FACE' else None
+            faces = selection_faces(context, obj) if what == 'FACE' else None
             if faces is not None and faces.any():
                 select_cut(obj, faces=faces)
             else:                   # an open line has no inside: its edges
@@ -920,6 +966,34 @@ def apply_last(context, what):
             bpy.ops.object.mode_set(mode=end)
         if end == 'EDIT' and what in {'FACE', 'EDGE'}:
             context.tool_settings.mesh_select_mode = (False, what == 'EDGE', what == 'FACE')
+
+
+def _close_border(context, obj):
+    """The open rim stretch in or out of the remembered outline; if the outline is a seam
+    already, the rim's seam follows."""
+    rim = read_bools(obj, CUT_RIM, 'EDGE')
+    if rim is None or not rim.any():
+        return
+    me = obj.data
+    edges = cut_flags(obj)
+    on = getattr(context.scene, CLOSE_BORDER_PROP, False)
+    store_flags(obj, (edges | rim) if on else (edges & ~rim))
+    seams = np.zeros(len(me.edges), bool)
+    me.edges.foreach_get("use_seam", seams)
+    path = edges & ~rim
+    if path.any() and seams[path].all():        # the outline was seamed: the rim follows
+        seams[rim] = on
+        me.edges.foreach_set("use_seam", seams)
+        me.update()
+
+
+def _invert(scene, context):
+    if getattr(scene, SELECT_PROP):
+        apply_last(context, 'FACE')
+
+
+def _border(_scene, context):
+    apply_last(context, 'BORDER')
 
 
 def _only_faces(scene, context):
@@ -942,22 +1016,11 @@ def _auto_seam(scene, context):
 
 
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_PolyCutSeam)
-_keymaps = []
 
 
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
-    kc = bpy.context.window_manager.keyconfigs.addon
-    if kc is not None:      # K in Edit Mode: PolyCut, in place of Blender's Knife
-        km = kc.keymaps.new(name="Mesh", space_type='EMPTY')
-        for kmi in [k for k in km.keymap_items
-                    if k.idname in {MULTICAMPROJECT_OT_RemeshPolyCut.bl_idname,
-                                    "multicamproject.knife_or_polycut"}
-                    and k.type == 'K' and not (k.ctrl or k.shift or k.alt)]:
-            km.keymap_items.remove(kmi)
-        _keymaps.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_RemeshPolyCut.bl_idname,
-                                                 'K', 'PRESS', head=True)))
     setattr(bpy.types.Scene, THROUGH_PROP, bpy.props.BoolProperty(
         name="Cut Through", default=True,
         description="PolyCut: on - cut through the whole mesh (the back too); off - only the "
@@ -974,17 +1037,19 @@ def register():
         name="Select Edges", default=False, update=_only_edges,
         description="PolyCut: no seam popup - Edit Mode, Edge select, the cut edges selected, "
                     "to set seams yourself"))
+    setattr(bpy.types.Scene, INVERT_PROP, bpy.props.BoolProperty(
+        name="Invert", default=False, update=_invert,
+        description="Select Faces picks the other side of the cut (the rest of the piece)"))
+    setattr(bpy.types.Scene, CLOSE_BORDER_PROP, bpy.props.BoolProperty(
+        name="Close Border", default=True, update=_border,
+        description="Surface Cut: where the cut runs along the mesh's open rim, that rim stretch "
+                    "is part of the outline (its selection and seam); off: left open"))
 
 
 def unregister():
     hide_preview()
-    for km, kmi in _keymaps:
-        try:
-            km.keymap_items.remove(kmi)
-        except (ReferenceError, RuntimeError):
-            pass
-    _keymaps.clear()
-    for prop in (THROUGH_PROP, SELECT_PROP, SELECT_EDGES_PROP, AUTO_SEAM_PROP):
+    for prop in (THROUGH_PROP, SELECT_PROP, SELECT_EDGES_PROP, AUTO_SEAM_PROP, INVERT_PROP,
+                 CLOSE_BORDER_PROP):
         if hasattr(bpy.types.Scene, prop):
             delattr(bpy.types.Scene, prop)
     for c in reversed(_CLASSES):

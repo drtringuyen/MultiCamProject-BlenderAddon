@@ -355,7 +355,6 @@ def _context_menu(self, context):
 _CLASSES = (MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude,
             MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam,
             MULTICAMPROJECT_OT_SelectedAsSeam)
-_keymaps = []
 
 
 def register():
@@ -365,12 +364,6 @@ def register():
 
 
 def unregister():
-    for km, kmi in _keymaps:
-        try:
-            km.keymap_items.remove(kmi)
-        except (ReferenceError, RuntimeError):
-            pass
-    _keymaps.clear()
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_context_menu)
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

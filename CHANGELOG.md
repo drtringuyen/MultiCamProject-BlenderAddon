@@ -2,6 +2,25 @@
 
 ## Unreleased
 
+### Surface Cut on K: a cut that walks over the surface, one island per loop (2026-11-06)
+
+- Edit Mode: K is Surface Cut, Blender's Knife moves to Shift+K. Click points (snapped like the
+  Knife: vertex, else edge, else face); first point or double click closes, Enter: open line,
+  Shift: grey closing preview, Backspace / Ctrl+Z: drop the last point, Esc: cancel.
+- The path walks face to face over the surface (a plane through two points standing on the
+  surface; wraps around a leaf's edge; steered where a leaf bends; along the open rim; the mesh's
+  edges as a last resort), so it never jumps to another surface. The first click locks the piece;
+  later clicks land on it (behind other leaves along the ray, else its nearest point).
+- Preview while drawing: yellow, red where this view cannot see the path (behind faces or turned
+  away), cyan along the open rim, orange along existing edges.
+- The cut splits the crossed edges and faces in one undo step. A closed loop splits its piece
+  into one island; the outline is exactly that island's border.
+- New toggles (03 row, tool header): Invert (Select Faces picks the rest of the piece) and Close
+  Border (the open rim stretch is part of the outline and its seam). Like the others they also
+  apply to the last cut when switched afterwards (mcp_cut_rim, mcp_cut_piece remembered).
+- K / J back to Blender's own in PolyCut: PolyCut no longer overrides K (K is Surface Cut now);
+  the J popup is gone, Vertex select right-click Selected as Seam stays.
+
 ### PolyCut: one-island seams, a live preview, Select / Auto Seam toggles, K in Edit Mode (2026-11-06)
 
 - A closed cut through the mesh gives one closed seam: the line splits the mesh into pieces and
