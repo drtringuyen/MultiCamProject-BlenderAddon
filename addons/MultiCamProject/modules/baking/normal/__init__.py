@@ -216,9 +216,24 @@ def nor_outdated(obj, scene=None):
     return bool(d.nor_fingerprint) and d.nor_fingerprint != state(obj, scene)
 
 
+def smooth_faces(obj):
+    """Every face smooth before a normal bake: a tangent bake on flat faces writes their hard
+    edges into the map. A BNo_ baked on flat faces has them already, so it is baked again."""
+    import numpy as np
+    me = obj.data
+    sharp = me.attributes.get("sharp_face")
+    if me.library or sharp is None:
+        return
+    values = np.zeros(len(sharp.data), dtype=bool)
+    sharp.data.foreach_get("value", values)
+    me.shade_smooth()
+    if values.any() and common.data(obj).bn_image is not None:
+        common.data(obj).bn_stale = True
+
+
 def generate_steps(context, obj, source):
     """07: NOR_<name> from ALB_ (see the module doc) at the object's resolution, into MAT_.
-    A generator (jobs); returns the seconds."""
+    All faces are set smooth first. A generator (jobs); returns the seconds."""
     import numpy as np
     source = usable(source)
     scene = context.scene
@@ -234,6 +249,7 @@ def generate_steps(context, obj, source):
         tex.link(scene, obj, 'NOR')
         d.last_nor_seconds = time.perf_counter() - t0
         return d.last_nor_seconds
+    smooth_faces(obj)
     alb = common.alb_source(obj)
     if alb is None or not common.file_ok(alb):
         raise RuntimeError("No ALB_ - 05 Bake Albedo first")
