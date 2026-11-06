@@ -238,6 +238,16 @@ def _uv_restore(obj, prev):
         uvs.active = uvs[prev]
 
 
+BLACK_TEXT = "{} came out completely black - the file on disk was not touched."
+
+
+def _image_black(img):
+    """A baked image holds nothing but black (Cycles reports no error for that)."""
+    px = np.empty(len(img.pixels), dtype=np.float32)
+    img.pixels.foreach_get(px)
+    return not px.reshape(-1, img.channels)[:, :3].any()
+
+
 def _work_image(name, size, colorspace, is_float=False):
     """A fresh generated image to bake a work texture into (the work texture itself keeps
     showing its file until the new one is written)."""
@@ -583,6 +593,9 @@ def source_problem(obj, context=None):
         return f"'{src.name}' is not in this scene"
     if not common.has_uv_normal(obj):
         return f"No '{common.UV_NORMAL}' UV map - unwrap the low poly first"
+    if src.data is None or not len(src.data.vertices):
+        return (f"'{src.name}' has no mesh - if it is offloaded, its scan file was not found: "
+                "wait for Google Drive to sync, then open the .blend again")
     return ""
 
 
@@ -724,6 +737,9 @@ def _bake_from_source(context, obj, normal=None):
                     yield from _bake(context, obj, sel, 'NORMAL', size, bn,
                                      use_selected_to_active=True, cage_extrusion=common.cage(obj),
                                      normal_space='TANGENT')
+        if _image_black(ba):
+            raise RuntimeError(BLACK_TEXT.format("BAo_") + " Check the Bake Source and the Cage, "
+                               "or restart Blender if a smaller size works.")
     except Exception:
         bpy.data.images.remove(ba)      # the old BAo_ / BNo_ stay as they were
         if bn is not None:
@@ -848,6 +864,8 @@ def _render_albedo(context, obj, size, route_view=None):
     with subdivided(context, obj), paint_soften.softened(obj), (
             cp.route_override(obj, route_view) if route_view else _nothing()):
         px = uv_render(context, obj, size)
+    if not px[..., :3].any():
+        raise RuntimeError(BLACK_TEXT.format("The render"))
     yield jobs.Step("Albedo: margin")
     covered = px[..., 3] > 0.0
     px[..., 3] = 1.0

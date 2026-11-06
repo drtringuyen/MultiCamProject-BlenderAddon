@@ -368,6 +368,8 @@ def check_textures(obj, scene):
             out.append(Issue(obj.name, bad, f"{tag} is {w}x{h}, not {res}", WARNING))
         if dep != depth:
             out.append(Issue(obj.name, bad, f"{tag} is {dep}-bit, not {depth}-bit", WARNING))
+        if common.file_black(img):
+            out.append(Issue(obj.name, bad, f"{tag} is completely black - bake it again", ERROR))
     if d.nor_image is not None and d.nor_image.colorspace_settings.name != 'Non-Color':
         out.append(Issue(obj.name, 'TEXTURE', "NOR is not Non-Color", WARNING))
     if d.material is None:
@@ -392,6 +394,8 @@ def check_state(obj):
     elif fingerprint.projection_outdated(obj):
         out.append(Issue(obj.name, 'OUTDATED', "BAp_ outdated - the projection changed since "
                          "the bake", WARNING))
+    elif common.file_black(common.data(obj).alb_image):
+        pass        # check_textures says so
     elif fingerprint.is_outdated(obj):
         what = {route.ORIGINAL: "BAo_ / the route", route.PROJECTION: "the projection / the route",
                 route.MIXED: "the projection or BAo_"}[route.get(obj)]

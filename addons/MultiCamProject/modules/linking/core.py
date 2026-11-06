@@ -821,6 +821,13 @@ def _on_load_incoming(_):
                           f"{rep['paths'] + rep['textures']}")
             except Exception as e:
                 print(f"[MultiCamProject] paths not checked on load: {e}")
+        try:                # scans that opened empty: their files on this computer
+            from . import originals
+            found = originals.repair_links(bpy.context.scene or bpy.data.scenes[0])
+            if found:
+                print(f"[MultiCamProject] scan links repaired on load: {found}")
+        except Exception as e:
+            print(f"[MultiCamProject] scan links not checked on load: {e}")
     if bpy.data.filepath:   # a saved work window still baking into _work(/<object>)
         try:
             for scene in bpy.data.scenes:
@@ -1778,6 +1785,11 @@ def _on_save_pre(*args):
         _relative_cameras(blend)
     except Exception as e:
         print(f"[MultiCamProject] paths not made relative: {e}")
+    try:
+        from . import originals
+        originals.relative_links()
+    except Exception as e:
+        print(f"[MultiCamProject] scan links not made relative: {e}")
     try:
         if not any(is_work_window(s) for s in bpy.data.scenes):
             remember_files()        # the main file: the work files' paths go into the .blend

@@ -20,6 +20,20 @@
   one. Apply then stopped with "No uv_normal on ..." and the sliders stopped updating, with
   nothing written to ALB_. The preview now stays on the object it was started on.
 
+### Bakes stay valid between computers; black bakes are caught (2026-11-04)
+
+- Offloaded scans were linked with this computer's full path (`D:\ggdrive\...`), so on another
+  computer they opened as empty meshes: bakes read as outdated and asked for a rebake. Links are
+  now relative, older ones turn relative on the next save, and a link that did not open is
+  looked for on this computer when the file opens.
+- A scan that did not open no longer outdates its bakes, and Originals shows a red line naming
+  it. Bake from Source, Send Out and Offload refuse it: before, they could replace the real scan
+  file with an empty one.
+- An all-black BAo_ or ALB_ no longer reads as current: the object drops out of Baked, Export
+  reports it and a rebake replaces it. A bake that comes out black now stops with an error and
+  leaves the old file alone. Blender's temp folder is made again before each Cycles bake, a
+  known cause of black bakes at 4K and above.
+
 ### Export: one Unity script per project (2026-11-04)
 
 - Every export folder got its own `Editor/MCPTexturePostprocessor.cs`, and two copies in one

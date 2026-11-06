@@ -199,8 +199,8 @@ def _source_steps(context, objs):
             jobs.skip_rest()
             break
         jobs.item_start(obj.name)
-        loaded = _originals_loaded(obj)
         try:
+            loaded = _originals_loaded(obj)     # raises when the scan's file is not found
             yield from engine.bake_from_source_steps(context, obj, normal=False)    # BAo_ only
             done.append(obj)
             jobs.item_end(obj.name)

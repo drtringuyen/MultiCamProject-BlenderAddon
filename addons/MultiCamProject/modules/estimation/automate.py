@@ -415,6 +415,7 @@ def start_over(context, obj):
     s = _settings(scene)
     if wf.is_copy(obj):
         orig = wf.source_of(obj)
+        originals.ensure_loaded(orig)       # first: it raises when the scan's file is not found
         export = roles.find(scene, 'EXPORT')
         colls = [c for c in obj.users_collection if c != export]   # OBJECTS / ROOM
         name = obj.name
@@ -423,7 +424,6 @@ def start_over(context, obj):
         if me.users == 0:
             bpy.data.meshes.remove(me)
         out.append(f"{name} deleted")
-        originals.ensure_loaded(orig)
         out += wf.reset_object(orig)
         orig_coll = roles.find(scene, 'ORIGINALS')
         for c in colls:

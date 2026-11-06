@@ -274,6 +274,24 @@ def file_ok(img):
     return cache.isfile(image_file(img))
 
 
+_black = {}         # path -> (mtime, all black): the file is read once per version
+
+
+def file_black(img):
+    """The image's PNG file holds nothing but black: a bake that failed without an error."""
+    if img is None:
+        return False
+    from . import cache, pngcheck
+    path = image_file(img)
+    exists, mtime = cache.file_state(path) if path else (False, 0.0)
+    if not exists:
+        return False
+    hit = _black.get(path)
+    if hit is None or hit[0] != mtime:
+        hit = _black[path] = (mtime, pngcheck.is_black(path))
+    return hit[1]
+
+
 def selected_meshes(context):
     """The selected meshes, without one that another selected mesh bakes from (its Bake
     Source - the scan stays selected next to its retopo / Remesh copy)."""

@@ -60,6 +60,17 @@ def record(obj):
         return None
 
 
+def scan_missing(obj):
+    """The object's mesh is a placeholder: its file in 02.OBJECTS was not found when the .blend
+    opened (Drive still syncing, another computer's path), so it reads as 0 vertices. Making it
+    local or writing it out would replace the real scan with nothing."""
+    if obj is None or obj.type != 'MESH' or obj.data is None:
+        return False
+    if obj.data.is_missing:
+        return True
+    return not len(obj.data.vertices) and bool((record(obj) or {}).get("verts"))
+
+
 def _base_dir(scene):
     from ..baking import common
     bake = os.path.normpath(common.output_dir(scene))
@@ -110,6 +121,8 @@ def can_offload(obj):
         return "linked object"
     if obj.data.library:
         return "already offloaded"
+    if scan_missing(obj):
+        return "its mesh is empty and its scan file holds the real one"
     if obj.mode != 'OBJECT':
         return "leave Edit / Sculpt Mode first"
     if not bpy.data.filepath:
@@ -153,7 +166,9 @@ def offload(obj, scene):
             local.name = name
     # link it back under the same name (another namespace than the local mesh)
     lib_path = _rel(path)
-    with bpy.data.libraries.load(lib_path, link=True) as (src, dst):
+    # relative=True: without it Blender stores the full path, this computer's Drive folder
+    with bpy.data.libraries.load(lib_path, link=True,
+                                 relative=lib_path.startswith("//")) as (src, dst):
         if name not in src.meshes:
             raise RuntimeError(f"{os.path.basename(path)} has no mesh '{name}'")
         dst.meshes = [name]
@@ -173,6 +188,9 @@ def load(obj):
     """The linked mesh made local again (editable, written with the main file)."""
     if not is_offloaded(obj):
         return False
+    if scan_missing(obj):
+        raise RuntimeError(f"{obj.name}: scan file not found ({obj.data.library.filepath}) - "
+                           "wait for Google Drive to sync, then open the .blend again")
     linked = obj.data
     lib = linked.library
     local = linked.make_local()
@@ -202,6 +220,78 @@ def offload_quiet(objs, scene):
                 offload(o, scene)
         except Exception as e:
             print(f"[MultiCamProject] {o.name}: offload skipped: {e}")
+
+
+# ---------------------------------------------------------------- the links, on any computer
+
+def _links():
+    """{library: the objects offloaded from it}."""
+    out = {}
+    for o in bpy.data.objects:
+        if is_offloaded(o):
+            out.setdefault(o.data.library, []).append(o)
+    return out
+
+
+def relative_links():
+    """Before a save: a link with a full path names this computer's Drive folder, and on
+    another computer the scan would open empty. A Save As moves '//' paths along by itself."""
+    from .core import rel_to
+    changed = []
+    if not bpy.data.filepath:
+        return changed
+    for lib in _links():
+        path = lib.filepath
+        if path and not path.startswith("//") and os.path.isfile(os.path.normpath(path)):
+            rel = rel_to(path, bpy.data.filepath)
+            if rel.startswith("//"):
+                lib.filepath = rel
+                changed.append(lib.name)
+    return changed
+
+
+def _find_scan(lib, objs, scene):
+    """Where a missing link's file is on this computer, '' when it is not here (yet)."""
+    from .core import remap_foreign
+    values = [lib.filepath] + [(record(o) or {}).get("path", "") for o in objs]
+    for value in values:
+        if not value:
+            continue
+        full = os.path.normpath(bpy.path.abspath(value))
+        if os.path.isfile(full):
+            return full
+        full = remap_foreign(value)
+        if full and os.path.isfile(full):
+            return full
+    name = os.path.basename(os.path.normpath(lib.filepath.replace("\\", os.sep)))
+    for o in objs:
+        full = os.path.join(folder_for(scene, o), name)
+        if os.path.isfile(full):
+            return full
+    return ""
+
+
+def repair_links(scene):
+    """On load: links that did not open are pointed at their file on this computer and read
+    again. Returns the names found."""
+    found = []
+    if not bpy.data.filepath:
+        return found
+    for lib, objs in _links().items():
+        if not lib.is_missing:
+            continue
+        full = _find_scan(lib, objs, scene)
+        if not full:
+            continue
+        lib.filepath = _rel(full)
+        lib.reload()
+        found.append(os.path.basename(full))
+    return found
+
+
+def missing_scans():
+    """The offloaded originals whose scan file was not found."""
+    return [o.name for objs in _links().values() for o in objs if scan_missing(o)]
 
 
 def candidates(scene):
@@ -348,6 +438,13 @@ def draw_all(layout, context):
     else:
         mode, icon = "Mixed", 'LINKED'
     row.menu(MULTICAMPROJECT_MT_Originals.bl_idname, text=f"Originals: {mode}", icon=icon)
+    from ... import steps
+    missing = steps.memo(("originals_missing", context.scene.name), missing_scans)
+    if missing:
+        warn = col.row()
+        warn.alert = True
+        warn.label(text=f"{len(missing)} scan file(s) not found ({missing[0]}...) - wait for "
+                        "Google Drive to sync, then open the .blend again", icon='ERROR')
     line = col.row()
     line.active = False
     if not n:

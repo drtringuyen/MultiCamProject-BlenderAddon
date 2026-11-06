@@ -68,13 +68,26 @@ def _source_parts(obj):
             _vec_checksum(uv, 2) if uv is not None else "no uv_normal"]
 
 
+def _source_verts(src):
+    """The Bake Source's vertex count. An offloaded scan whose file did not open reads as 0: the
+    count from when it was offloaded, or its bakes would read as outdated on that computer."""
+    if src.type != 'MESH' or src.data is None:
+        return 0
+    n = len(src.data.vertices)
+    if n:
+        return n
+    try:
+        return int(json.loads(src.get("multicamproject_offload", "{}")).get("verts", 0))
+    except (TypeError, ValueError):
+        return 0
+
+
 def _source_list(obj, cached=False, cage=None):
     d = common.data(obj)
     src = d.bake_source
     parts = list(cache.get(obj, "source_parts", _source_parts) if cached else _source_parts(obj))
     if src is not None:
-        parts += [src.name, src.data.name if src.data else "", len(src.data.vertices)
-                  if src.type == 'MESH' else 0]
+        parts += [src.name, src.data.name if src.data else "", _source_verts(src)]
     parts.append(round(common.cage(obj) if cage is None else cage, 5))
     return parts
 
@@ -103,6 +116,8 @@ def ba_outdated(obj):
     """BA_ exists but the mesh, uv_normal or the source changed since, or it was baked at
     another resolution than the object's (one resolution for all its textures)."""
     d = common.data(obj)
+    if common.file_black(d.ba_image):       # a failed bake, however current its stamp reads
+        return True
     if not d.ba_fingerprint or received(obj):
         return False
     if d.ba_size and d.ba_size != common.resolution(obj):
@@ -119,6 +134,8 @@ def ba_why(obj):
     if not ba_outdated(obj):
         return ""
     d = common.data(obj)
+    if common.file_black(d.ba_image):
+        return "its file is completely black - bake it again"
     if d.ba_size and d.ba_size != common.resolution(obj):
         return f"baked at {d.ba_size // 1024}K, set to {common.resolution(obj) // 1024}K"
     try:
@@ -304,7 +321,11 @@ def _loaded(obj):
 
 def is_outdated(obj):
     d = common.data(obj)
-    if _loaded(obj) or received(obj):
+    if _loaded(obj):
+        return False
+    if common.file_black(d.alb_image):      # a failed bake, however current its stamp reads
+        return True
+    if received(obj):
         return False
     return bool(d.fingerprint) and d.fingerprint != current(obj)
 

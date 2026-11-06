@@ -11,6 +11,7 @@ background mode and tests use run_sync, which drives the same generator blocking
 Esc (or Stop in the panel) stops after the object that is baking: stop_requested() is
 checked between objects. Blender's bake would cancel on Esc and keep a half-baked image, so
 an EscGuard sits on top of every bake job and takes the key."""
+import os
 import time
 
 import bpy
@@ -40,11 +41,19 @@ class BakeJob:
                                           selected_objects=self.selected,
                                           selected_editable_objects=self.selected)
 
+    @staticmethod
+    def _temp_folder():
+        """Cycles writes the tiles of a large bake into the session's temp folder, and with
+        that folder gone the bake comes out black without an error."""
+        os.makedirs(bpy.app.tempdir, exist_ok=True)
+
     def run_sync(self):
+        self._temp_folder()
         with self._override():
             bpy.ops.object.bake(**self.kw)
 
     def start(self):
+        self._temp_folder()
         with self._override():
             r = bpy.ops.object.bake('INVOKE_DEFAULT', **self.kw)
         if 'RUNNING_MODAL' not in r:
