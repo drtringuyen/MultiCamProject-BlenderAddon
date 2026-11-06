@@ -1,9 +1,9 @@
-"""The PolyCut tool, in the Sculpt Mode toolbar only (Edit Mode keeps Blender's own L =
-Select Linked Pick and Ctrl+LMB = extrude to cursor). Its keys work only while it is the
-active tool:
-  L         the face set under the mouse -> Set Faces
-  Ctrl+LMB  starts a PolyCut (the click is the first point); Enter / double click cuts,
-            then Set Faces on the new face set
+"""The PolyCut tool, in the Sculpt Mode toolbar only (Edit Mode keeps Blender's own
+Ctrl+LMB = extrude to cursor). Its key works only while it is the active tool:
+  Ctrl+LMB  starts a PolyCut (the click is the first point): the first point / double
+            click cuts a closed shape, Enter an open line; then Set Seam or No Seam
+The header holds Cut Through (through the whole mesh, or only the faces the view sees) and
+Select Faces / Select Edges (no popup: Edit Mode with the cut selected, to set seams yourself).
 """
 import bpy
 from bpy.types import WorkSpaceTool
@@ -11,14 +11,18 @@ from bpy.types import WorkSpaceTool
 TOOL_SCULPT = "multicamproject.polycut_sculpt"
 
 _KEYMAP = (
-    ("multicamproject.remesh_pick", {"type": 'L', "value": 'PRESS'}, None),
     ("multicamproject.remesh_poly_cut", {"type": 'LEFTMOUSE', "value": 'PRESS', "ctrl": True},
      None),
 )
 
 
 def _draw_settings(context, layout, tool):
-    layout.label(text="Ctrl+Click: PolyCut   L: face set under the mouse -> Set Faces")
+    layout.label(text="Ctrl+Click: PolyCut  ·  first point / double click: closed  ·  Enter: open")
+    layout.prop(context.scene, "multicamproject_polycut_through", text="Cut Through")
+    layout.prop(context.scene, "multicamproject_polycut_select_edges", text="Select Edges")
+    layout.prop(context.scene, "multicamproject_polycut_select", text="Select Faces")
+    layout.prop(context.scene, "multicamproject_polycut_invert", text="Invert")
+    layout.prop(context.scene, "multicamproject_polycut_auto_seam", text="Auto Seam")
 
 
 class MULTICAMPROJECT_TL_PolyCutSculpt(WorkSpaceTool):
@@ -26,9 +30,9 @@ class MULTICAMPROJECT_TL_PolyCutSculpt(WorkSpaceTool):
     bl_context_mode = 'SCULPT'
     bl_idname = TOOL_SCULPT
     bl_label = "PolyCut"
-    bl_description = ("Ctrl+Click starts a PolyCut: click points, Enter or double click cuts "
-                      "and opens Set Faces for the new face set.\n"
-                      "L: Set Faces for the face set under the mouse")
+    bl_description = ("Ctrl+Click starts a PolyCut: click points; the first point or a double "
+                      "click cuts a closed shape, Enter an open line. Then Set Seam or No Seam "
+                      "for the new edges")
     bl_icon = "ops.sculpt.lasso_face_set"
     bl_widget = None
     bl_keymap = _KEYMAP

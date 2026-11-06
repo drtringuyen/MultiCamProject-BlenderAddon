@@ -1,5 +1,5 @@
-"""Poly Cut: the mesh is split exactly along the drawn polygon and the inside gets a new
-Sculpt face set. face_set (a copy of .sculpt_face_set, which GN cannot read) is refreshed
+"""Poly Cut: the mesh is split exactly along the drawn polygon; the new edges carry
+mcp_cut_edges (poly_cut.py offers them as a seam). face_set (a copy of .sculpt_face_set, which GN cannot read) is refreshed
 after every cut and whenever the object leaves Sculpt Mode."""
 import bpy
 import numpy as np
@@ -51,7 +51,7 @@ def sync_face_sets(obj):
 
 
 def poly_cut(obj, rays, forward, near, far):
-    """Object Mode only. Returns the new face set ID and its face count."""
+    """Object Mode only. Returns the count of new edges (mcp_cut_edges)."""
     cut = cutter.build(rays, forward, near, far)
     mod = obj.modifiers.new(_TEMP_MOD, 'NODES')
     try:
@@ -66,20 +66,18 @@ def poly_cut(obj, rays, forward, near, far):
         cutter.remove(cut)
 
     me = obj.data
-    a = me.attributes.get(gn.INSIDE)
+    a = me.attributes.get(gn.CUT_EDGES)
     if a is None:
-        return None, 0
-    inside = np.zeros(len(me.polygons), bool)
-    a.data.foreach_get("value", inside)
-    me.attributes.remove(me.attributes[gn.INSIDE])
-    fs = _face_sets(me)
-    new_id = int(fs.max()) + 1 if len(fs) else 1
-    fs[inside] = new_id
-    fsa = me.attributes.get(SCULPT_FACE_SET) or me.attributes.new(SCULPT_FACE_SET, 'INT', 'FACE')
-    fsa.data.foreach_set("value", fs)
+        return 0
+    if a.domain != 'EDGE' or a.data_type != 'BOOLEAN':
+        me.attributes.remove(a)
+        return 0
+    flags = np.zeros(len(me.edges), bool)
+    a.data.foreach_get("value", flags)
+    if not flags.any():
+        me.attributes.remove(a)
     me.update()
-    sync_face_sets(obj)
-    return new_id, int(inside.sum())
+    return int(flags.sum())
 
 
 # ------------------------------------------------ keep face_set in sync after sculpting

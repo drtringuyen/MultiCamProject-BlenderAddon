@@ -2,6 +2,57 @@
 
 ## Unreleased
 
+### Surface Cut on K: a cut that walks over the surface, one island per loop (2026-11-06)
+
+- Edit Mode: K is Surface Cut, Blender's Knife moves to Shift+K. Click points (snapped like the
+  Knife: vertex, else edge, else face); first point or double click closes, Enter: open line,
+  Shift: grey closing preview, Backspace / Ctrl+Z: drop the last point, Esc: cancel.
+- The path walks face to face over the surface (a plane through two points standing on the
+  surface; wraps around a leaf's edge; steered where a leaf bends; along the open rim; the mesh's
+  edges as a last resort), so it never jumps to another surface. The first click locks the piece;
+  later clicks land on it (behind other leaves along the ray, else its nearest point).
+- Preview while drawing: yellow, red where this view cannot see the path (behind faces or turned
+  away), cyan along the open rim, orange along existing edges.
+- The cut splits the crossed edges and faces in one undo step. A closed loop splits its piece
+  into one island; the outline is exactly that island's border.
+- New toggles (03 row, tool header): Invert (Select Faces picks the rest of the piece) and Close
+  Border (the open rim stretch is part of the outline and its seam). Like the others they also
+  apply to the last cut when switched afterwards (mcp_cut_rim, mcp_cut_piece remembered).
+- K / J back to Blender's own in PolyCut: PolyCut no longer overrides K (K is Surface Cut now);
+  the J popup is gone, Vertex select right-click Selected as Seam stays.
+
+### PolyCut: one-island seams, a live preview, Select / Auto Seam toggles, K in Edit Mode (2026-11-06)
+
+- A closed cut through the mesh gives one closed seam: the line splits the mesh into pieces and
+  a piece is inside when most of its area is, so a long bent face can no longer leave a gap.
+  The seam is only the outline: no edge the cut added across a face.
+- While drawing, the cut is previewed on the mesh: yellow on the surface the view sees, fainter
+  on every layer behind it with Cut Through. Points are drawn as discs that scale with the UI
+  (they were 1 px on some GPU backends) and the first point is green once it can close the shape.
+- 03 Mesh Editing row: Select Edges, Select Faces, Auto Seam, PolyCut, Cut Through, Clear Face
+  Sets, Clean Floating. Select Edges / Faces (one at a time): no popup, Edit Mode with the cut
+  edges / the faces inside selected. Auto Seam: the outline a seam right away, no popup.
+- The last cut is remembered on the mesh (mcp_cut_edges, mcp_cut_inside) until the next one:
+  switching Select Edges / Faces / Auto Seam on afterwards applies it to that cut.
+- Edit Mode: K starts PolyCut in place of Blender's Knife; Ctrl+Shift+K also works in Edit Mode.
+  Vertex select right-click: Selected as Seam (e.g. the path J just made).
+- Known issue: PolyCut started in Edit Mode (K) does not work perfectly yet - check the result,
+  or use Ctrl+Shift+K (Sculpt Mode) for now.
+
+### PolyCut: a clean cut, then only Set Seam (2026-11-06)
+
+- PolyCut (Ctrl+Shift+K, Ctrl+Click) works like Living Lacquer's: click points, click the first
+  point (it turns green) or double click for a closed shape, Enter for an open line, Esc to cancel.
+- The mesh is cut exactly along the line. Cut Through (the tool's header and 03 Mesh Editing):
+  on - through the whole mesh, the back too; off - only the faces the view sees.
+- After the cut its outline shows in yellow and one popup asks Set Seam or No Seam. A closed shape
+  gives the border of what is inside (one island), an open line the edges on it: no seam across
+  a face the cut split. The cut stays either way; Ctrl+Z takes it back.
+- PolyCut no longer makes a face set and no longer opens Set Faces; L is gone from the tool.
+  Clear all Face Sets stays in 03.
+- Edit Mode right-click (Face select): Clear Seam and Boundary as Seam at the top, as in Living
+  Lacquer. Set Faces is no longer in the right-click and Face menus.
+
 ### Receive: the preview always shows the latest ALB_ and NOR_ (2026-11-04)
 
 - Receive now reads the object's ALB_, its inpaint and NOR_ again from their files, whether or
