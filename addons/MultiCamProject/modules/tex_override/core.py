@@ -330,6 +330,68 @@ def relink_loads(scene):
     return done
 
 
+def _loaded_textures(scene):
+    """[(object, kind)] of every texture on Load in the scene."""
+    return [(obj, kind) for obj in scene.objects
+            if obj.type == 'MESH' and not obj.library
+            and getattr(obj, "multicamproject_bake", None) is not None
+            for kind in KINDS if is_load(obj, kind)]
+
+
+def load_names(scene):
+    """The file names of every texture on Load, for the dialogs."""
+    return [name(obj, kind) for obj, kind in _loaded_textures(scene)]
+
+
+def reload_loads(scene):
+    """Every texture on Load read again from 02.Overrides (Fix All, Export): Blender keeps the
+    pixels it loaded, so a file changed outside never showed. An image edited here and not
+    saved keeps its pixels, a missing file changes nothing. Returns
+    {reloaded, unsaved, missing}: names."""
+    from ..baking import cache
+    c = _common()
+    cache.clear()           # available() must see the disk as it is now
+    rep = {"reloaded": [], "unsaved": [], "missing": []}
+    for obj, kind in _loaded_textures(scene):
+        nm = name(obj, kind)
+        if not available(scene, obj, kind):
+            if not _legacy_only(scene, obj, kind):
+                rep["missing"].append(nm)
+            continue
+        path = override_path(scene, obj, kind)
+        img = image(obj, kind)
+        if img is not None and img.is_dirty:
+            rep["unsaved"].append(nm)
+            continue
+        if img is None or img.packed_file or (os.path.normcase(c.image_file(img))
+                                              != os.path.normcase(path)):
+            link(scene, obj, kind)
+        else:
+            img.reload()
+            size = _png_width(path)
+            d = c.data(obj)
+            if size and kind == 'ALB':
+                d.alb_size = size
+            elif size:
+                d.nor_size = size
+        rep["reloaded"].append(nm)
+    cache.clear()
+    _forget()
+    return rep
+
+
+def reload_report(rep):
+    """reload_loads' result as report lines [(severity, text)]."""
+    lines = []
+    if rep["reloaded"]:
+        lines.append(('INFO', f"Reloaded {len(rep['reloaded'])} Load texture(s)"))
+    if rep["unsaved"]:
+        lines.append(('WARNING', "Not reloaded, unsaved edits here: " + ", ".join(rep["unsaved"])))
+    if rep["missing"]:
+        lines.append(('WARNING', "Load file missing: " + ", ".join(rep["missing"])))
+    return lines
+
+
 def refresh(scene, obj, kind):
     """The texture's file read again (edited outside Blender). Returns 'reloaded',
     'unsaved' (changed in Blender: kept) or ''."""

@@ -445,15 +445,19 @@ class MULTICAMPROJECT_OT_ExportFBX(bpy.types.Operator):
             self, width=460, title="Fix and Export", confirm_text="Fix + Export")
 
     def draw(self, context):
+        from ..tex_override import core as tex
         p = getattr(self, "_plan", None) or autofix.plan(context.scene)
         col = self.layout.column(align=True)
+        loads = tex.load_names(context.scene)
+        if loads:
+            col.label(text=f"Reload {len(loads)} Load texture(s)", icon='FILE_REFRESH')
         rows = [(f"Rename {len(p.rename)}", [f"{o.name} -> {n}" for o, n in p.rename.items()]),
                 (f"Fix transforms of {len(p.transforms)}", [o.name for o in p.transforms]),
                 (f"Make uv_normal (Smart UV) on {len(p.make_uv)}", [o.name for o in p.make_uv]),
                 (f"Bake {len(p.bake)} (outdated / not baked)", [o.name for o in p.bake]),
                 (f"Move {len(p.unused)} old bake(s) of this file to the Recycle Bin",
                  [os.path.basename(x) for x in p.unused])]
-        if not any(names for _t, names in rows):
+        if not any(names for _t, names in rows) and not loads:
             col.label(text="Nothing to fix", icon='CHECKMARK')
         for title, names in rows:
             if names:
@@ -490,7 +494,9 @@ FBX_ITEM = "Write FBX"
 def _export_steps(context, p):
     """ExportFBX's work: the fixes and bakes of plan `p`, then the FBX. A generator (jobs);
     returns (log, files, missing) - files None when stopped or the export failed."""
-    log = []
+    from ..tex_override import core as tex
+    # before the bakes: a NOR_ baked from a Load ALB_ reads these pixels
+    log = tex.reload_report(tex.reload_loads(context.scene))
     ok = yield from autofix.run_steps(context, p, lambda sev, text: log.append((sev, text)))
     log += [('WARNING', w) for w in p.warnings]
     if not ok:
@@ -629,8 +635,8 @@ def fixable(scene):
 
 
 class MULTICAMPROJECT_OT_ExportFixAll(bpy.types.Operator):
-    """Fix every object with a fix button (the red ones): each as its own Fix does, one
-    after the other. Nothing is exported"""
+    """Reload every Load texture from 02.Overrides, then fix every object with a fix button
+    (the red ones): each as its own Fix does, one after the other. Nothing is exported"""
     bl_idname = "multicamproject.export_fix_all"
     bl_label = "Fix All"
     bl_options = {'REGISTER', 'UNDO'}
@@ -640,25 +646,36 @@ class MULTICAMPROJECT_OT_ExportFixAll(bpy.types.Operator):
         return _poll(context)
 
     def invoke(self, context, event):
+        from ..tex_override import core as tex
         todo = fixable(context.scene)
-        if not todo:
-            self.report({'INFO'}, "Nothing the add-on can fix")
-            return {'CANCELLED'}
+        if not todo:        # only the reload to do: no dialog
+            return self.execute(context)
         self._todo = todo
+        self._loads = tex.load_names(context.scene)
         return context.window_manager.invoke_props_dialog(
             self, width=460, title=f"Fix {len(todo)} object(s)", confirm_text="Fix All")
 
     def draw(self, context):
         col = self.layout.column(align=True)
+        loads = getattr(self, "_loads", ())
+        if loads:
+            col.label(text=f"Reload {len(loads)} Load texture(s)", icon='FILE_REFRESH')
         for o, todo in getattr(self, "_todo", None) or fixable(context.scene):
             col.label(text=o.name, icon='MODIFIER')
             col.label(text="      " + ", then ".join(todo))
 
     def execute(self, context):
+        from ..tex_override import core as tex
+        # before the fixes: a NOR_ baked from a Load ALB_ reads these pixels
+        lines = tex.reload_report(tex.reload_loads(context.scene))
         objs = [o for o, _t in fixable(context.scene)]
         if not objs:
+            for sev, text in lines:
+                self.report({sev}, text)
+            if lines:
+                return {'FINISHED'}
+            self.report({'INFO'}, "Nothing the add-on can fix, no Load textures")
             return {'CANCELLED'}
-        lines = []
 
         def steps():
             for obj in objs:

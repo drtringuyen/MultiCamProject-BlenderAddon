@@ -41,21 +41,30 @@ def names_aside(ids):
 
 def copy_textures(objs, folder):
     """ALB_/NOR_ files into <folder>/Textures/ as ALB_<name>.png / NOR_<name>.png - the ALB_
-    as inpainted when it was (common.alb_source); a texture on Load (TexOverride) is its file
-    in 02.Overrides. Skipped when size and time match, and for a Locked object whose copy is
-    there (Lock Finish copied it: an override changed later is not taken until it is locked
-    again). Returns {MAT_'s image name: copied path}."""
+    as inpainted when it was (common.alb_source); a texture on Load (TexOverride) is always
+    the latest file in 02.Overrides, Locked or not. Skipped when size and time match, and for
+    a Locked object's bakes whose copy is there (Lock Finish copied them). A Locked copy also
+    stays when its override file is gone. Returns {MAT_'s image name: copied path}."""
+    from ..tex_override import core as override
     tex = os.path.join(folder, "Textures")
     os.makedirs(tex, exist_ok=True)
     out = {}
     for obj in objs:
         d = common.data(obj)
-        for img, src_img in ((d.alb_image, common.alb_source(obj)), (d.nor_image, d.nor_image)):
+        for kind, img, src_img in (('ALB', d.alb_image, common.alb_source(obj)),
+                                   ('NOR', d.nor_image, d.nor_image)):
             if img is None or src_img is None:
                 continue
             src = common.image_file(src_img)
+            latest = ""
+            if override.is_load(obj, kind):
+                latest = override.override_path(None, obj, kind)
+                if latest and os.path.isfile(latest):
+                    src = latest
+                else:
+                    latest = ""
             dst = os.path.join(tex, img.name + ".png")
-            if d.locked and os.path.isfile(dst):        # copied when it was locked
+            if d.locked and not latest and os.path.isfile(dst):     # copied when it was locked
                 out[img.name] = out[src_img.name] = dst
                 continue
             if not src or not os.path.isfile(src):

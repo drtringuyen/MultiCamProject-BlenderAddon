@@ -1263,6 +1263,29 @@ def _restamp(obj, man, taken):
         d.nor_fingerprint = stamps.get("nor_fingerprint", "")
 
 
+def _reload_shown(obj):
+    """ALB_ (with its inpaint) and NOR_ read again from their files, sent or not: Blender keeps
+    the pixels it loaded, and a Load in 02.Overrides is never sent or re-pointed, so the preview
+    stayed old when the window changed that file. Lazy, no decode here. An image edited here
+    and not saved, or whose file is gone, keeps its pixels. Returns the labels kept unsaved."""
+    from ..baking import common
+    d = common.data(obj)
+    unsaved, seen = [], set()
+    for label, img in (("ALB_", d.alb_image), ("ALB_ inpaint", getattr(d, "alb_inpaint", None)),
+                       ("NOR_", d.nor_image)):
+        if img is None or img.name in seen or img.packed_file:
+            continue
+        seen.add(img.name)
+        path = common.image_file(img)
+        if not path or not os.path.isfile(path):
+            continue
+        if img.is_dirty:
+            unsaved.append(label)
+            continue
+        img.reload()
+    return unsaved
+
+
 def _refresh(obj, scene):
     """The Refresh button for obj: MCP_ / MAT_ rebuilt with the new textures, cameras rewired."""
     try:
@@ -1396,6 +1419,12 @@ def receive(context, obj, action='REPLACE'):
                  else "No new textures"]
         if gone:
             notes.append("missing (bake again in the window): " + ", ".join(gone))
+        try:                        # after apply_modes: wherever the images point by now
+            unsaved = _reload_shown(obj)
+            if unsaved:
+                notes.append("unsaved edits here, not reloaded: " + ", ".join(unsaved))
+        except ImportError:
+            pass
         try:                        # the Polycount row shows this object, not its scan
             from ..remesh import workflow as wf
             wf.follow_in_estimation(scene, obj)

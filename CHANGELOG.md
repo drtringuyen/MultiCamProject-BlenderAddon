@@ -2,6 +2,18 @@
 
 ## Unreleased
 
+### Receive: the preview always shows the latest ALB_ and NOR_ (2026-11-04)
+
+- Receive now reads the object's ALB_, its inpaint and NOR_ again from their files, whether or
+  not the work file sent them. Before, a texture on Load in 02.Overrides kept its old pixels
+  after the work file changed that file. An image with unsaved edits in the main file is left
+  alone, and Receive's report names it.
+- Fix All and Fix + Export now reload every Load texture from 02.Overrides first. Fix All also
+  works with nothing to fix, as a one-click reload.
+- Export always takes the latest file in 02.Overrides for a texture on Load, Locked or not.
+  Before, a Locked object kept the copy made when it was locked. Baked textures on a Locked
+  object stay as they were locked, and a Locked copy stays if its override file is gone.
+
 ### Seam Fix: an old version sharing materials no longer takes over the preview (2026-11-04)
 
 - Level Seam and Blur Seam could treat another object using the same materials as the previewed
