@@ -43,8 +43,8 @@ when switched afterwards. Last cut remembered as mesh attributes until the next 
 - **Close Border** never hit a real open rim in tests - try a cut across a leaf's open edge.
 - PolyCut started in Edit Mode had known issues (that path was replaced by Surface Cut on K).
 - Long segments (30+ faces apart) fall back to edges more often - click more points.
-- `baking/normal/__init__.py` had an uncommitted change (smooth faces before a normal bake) made
-  outside this work - left uncommitted in the working copy for the user to decide.
+- `main` also has `44aabce` (Generate Normal: all faces smooth before the bake), committed by
+  another session in parallel; merged together in `62832fc`.
 
 ## Workflow notes
 - Install = copy `addons/MultiCamProject` to Blender 5.2's `scripts/addons`, then disable /
