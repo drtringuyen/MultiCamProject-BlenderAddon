@@ -2,8 +2,10 @@
 and the new edges are offered as a seam. Nothing else.
 
     Ctrl+click   start; click: add a point (the points stay on the object while you navigate)
-    close        click the first point (green under the mouse) or double click: a closed shape
-    Enter        an open line
+    end          Enter or double click: an open line, nothing closes
+    close        click the first point (green under the mouse), or Shift + Enter / Shift + double
+                 click: a closed shape
+    Shift        show the closing preview: the mouse back to the first point
     Esc          drop it
 
 Cut Through (the tool's header, 03): on - through the whole mesh (a closed shape with an Exact
@@ -51,7 +53,8 @@ SELECT_EDGES_PROP = "multicamproject_polycut_select_edges"  # Select Edges after
 AUTO_SEAM_PROP = "multicamproject_polycut_auto_seam"        # the outline a seam, no popup
 INVERT_PROP = "multicamproject_polycut_invert"              # Select Faces: the other side
 CLOSE_BORDER_PROP = "multicamproject_polycut_close_border"  # the open rim part of the outline
-CUT_RIM = "mcp_cut_rim"             # edge attribute: where the last Surface Cut ran along an open rim
+STOP_SEAM_PROP = "multicamproject_polycut_stop_at_seam"     # Surface Cut ends on the first seam
+CUT_RIM = "mcp_cut_rim"           # edge attribute: where the last Surface Cut ran along an open rim
 CUT_PIECE = "mcp_cut_piece"         # face attribute: the piece the last Surface Cut split
 CUT_EDGES = gn.CUT_EDGES            # edge attribute: the last cut's new edges, until the popup
 POINT_PX = 12                       # a click this near an existing point is on it (x UI scale)
@@ -555,10 +558,10 @@ def _knife_edges(bm, old_verts, obj, points3d, closed, region, rv3d, px=0.75):
 # ---------------------------------------------------------------- operators
 
 class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
-    """PolyCut: click points on the mesh. The first point or a double click closes the shape,
-    Enter keeps it an open line, Esc cancels. The mesh is cut exactly along it (through the
-    whole mesh or only the front, per Cut Through); then Set Seam or No Seam for the new
-    edges"""
+    """PolyCut: click points on the mesh. Enter or a double click ends it as an open line; the
+    first point or Shift + Enter / double click closes the shape; Esc cancels. The mesh is cut
+    exactly along it (through the whole mesh or only the front, per Cut Through); then Set Seam
+    or No Seam for the new edges"""
     bl_idname = "multicamproject.remesh_poly_cut"
     bl_label = "PolyCut"
     bl_options = {'REGISTER', 'UNDO'}
@@ -612,8 +615,9 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         sh.uniform_float("lineWidth", 2.0)
         sh.uniform_float("color", COLOR)
         batch_for_shader(sh, 'LINE_STRIP', {"pos": points + [self._mouse]}).draw(sh)
-        sh.uniform_float("color", (COLOR[0], COLOR[1], COLOR[2], 0.35))
-        batch_for_shader(sh, 'LINES', {"pos": [self._mouse, points[0]]}).draw(sh)
+        if self._show_close:
+            sh.uniform_float("color", (COLOR[0], COLOR[1], COLOR[2], 0.35))
+            batch_for_shader(sh, 'LINES', {"pos": [self._mouse, points[0]]}).draw(sh)
         k = _ui()
         under = self._under_mouse()
         if under is not None and self._points()[under] is not None:
@@ -695,7 +699,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         for i in range(len(pts) - 1):
             segs += self._segment(i, pts[i], pts[i + 1])
         live = self._trace(pts[-1], self._mouse)
-        closing = self._trace(self._mouse, pts[0]) if len(pts) >= 2 else []
+        closing = self._trace(self._mouse, pts[0]) if len(pts) >= 2 and self._show_close else []
         front = [q for k, a, b in segs + live if k == 0 for q in (a, b)]
         back = [q for k, a, b in segs + live if k > 0 for q in (a, b)]
         hint = [q for k, a, b in closing if k == 0 for q in (a, b)]
@@ -739,6 +743,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         self._seamed = 0
         self._mouse = self._pos(event)
         self._last_pos = self._mouse
+        self._show_close = event.shift
         if event.type == 'LEFTMOUSE':   # Ctrl+click with the tool: the first point
             self._add(context, self._mouse)
         self._last_click = time.monotonic()
@@ -749,18 +754,27 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
             self._draw_3d, (context,), 'WINDOW', 'POST_VIEW')
         context.window.cursor_modal_set('CROSSHAIR')
         context.workspace.status_text_set(
-            "PolyCut: click: point  ·  click the first point or double click: closed cut  ·  "
-            "Enter: open cut  ·  Esc: cancel")
+            "PolyCut: click: point  ·  Enter / double click: end, open  ·  "
+            "first point / Shift + Enter / Shift + double click: close  ·  "
+            "Shift: closing preview  ·  Esc: cancel")
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
+    def _finish_by_key(self, context, shift):
+        """Enter or a double click: the cut ends as an open line; with Shift it closes. Too few
+        points for that: the tool keeps running."""
+        if len(self._points3d) < (3 if shift else 2):
+            return {'RUNNING_MODAL'}
+        return self._cut_closed(context) if shift else self._cut_open(context)
+
     def modal(self, context, event):
         self._area.tag_redraw()
+        self._show_close = event.shift          # Shift: the closing preview
         if event.type == 'MOUSEMOVE':
             self._mouse = self._pos(event)
             return {'RUNNING_MODAL'}
         if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
-            return self._cut_open(context)
+            return self._finish_by_key(context, event.shift)
         if event.type in NAVIGATE or event.type.startswith(('NUMPAD_', 'NDOF_')):
             return {'PASS_THROUGH'}
         if event.type == 'ESC' and event.value == 'PRESS':
@@ -773,10 +787,11 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
             # takes a moment, which Blender's own double click counts against you
             again = (time.monotonic() - self._last_click < DOUBLE_SECONDS
                      and (Vector(p) - Vector(self._last_pos)).length < DOUBLE_PX * _ui())
-            if (event.value == 'DOUBLE_CLICK' or again or self._under_mouse() == 0) \
-                    and len(self._points3d) >= 3:
+            if self._under_mouse() == 0 and len(self._points3d) >= 3:   # the first point: closed
                 return self._cut_closed(context)
-            if not again and event.value == 'PRESS':
+            if event.value == 'DOUBLE_CLICK' or again:
+                return self._finish_by_key(context, event.shift)
+            if event.value == 'PRESS':
                 self._add(context, p)
             self._last_pos = p
             self._last_click = time.monotonic()
@@ -1044,12 +1059,16 @@ def register():
         name="Close Border", default=True, update=_border,
         description="Surface Cut: where the cut runs along the mesh's open rim, that rim stretch "
                     "is part of the outline (its selection and seam); off: left open"))
+    setattr(bpy.types.Scene, STOP_SEAM_PROP, bpy.props.BoolProperty(
+        name="Stop at Seam", default=False,
+        description="Surface Cut: the cut ends on the first seam it reaches, without closing an "
+                    "island. Its edges are selected; with Auto Seam they also become a seam"))
 
 
 def unregister():
     hide_preview()
     for prop in (THROUGH_PROP, SELECT_PROP, SELECT_EDGES_PROP, AUTO_SEAM_PROP, INVERT_PROP,
-                 CLOSE_BORDER_PROP):
+                 CLOSE_BORDER_PROP, STOP_SEAM_PROP):
         if hasattr(bpy.types.Scene, prop):
             delattr(bpy.types.Scene, prop)
     for c in reversed(_CLASSES):

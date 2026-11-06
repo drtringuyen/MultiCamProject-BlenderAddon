@@ -179,6 +179,7 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
             row.prop(context.scene, "multicamproject_polycut_invert", text="", icon='ARROW_LEFTRIGHT')
             row.prop(context.scene, "multicamproject_polycut_auto_seam", text="", icon='UV_EDGESEL')
             row.prop(context.scene, "multicamproject_polycut_close_border", text="", icon='MOD_EDGESPLIT')
+            row.prop(context.scene, "multicamproject_polycut_stop_at_seam", text="", icon='PAUSE')
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
                              text="PolyCut & Seams (Ctrl+Shift+K)",

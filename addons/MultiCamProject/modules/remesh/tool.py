@@ -17,7 +17,8 @@ _KEYMAP = (
 
 
 def _draw_settings(context, layout, tool):
-    layout.label(text="Ctrl+Click: PolyCut  ·  first point / double click: closed  ·  Enter: open")
+    layout.label(text="Ctrl+Click: PolyCut  ·  Enter / double click: open  ·  "
+                      "first point / Shift + Enter / double click: closed")
     layout.prop(context.scene, "multicamproject_polycut_through", text="Cut Through")
     layout.prop(context.scene, "multicamproject_polycut_select_edges", text="Select Edges")
     layout.prop(context.scene, "multicamproject_polycut_select", text="Select Faces")

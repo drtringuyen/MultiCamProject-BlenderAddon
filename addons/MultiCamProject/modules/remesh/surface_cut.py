@@ -9,7 +9,8 @@ shared edges instead, so the path cannot leave the surface:
                  to the nearest point of an edge near it. The first click locks the piece (the
                  connected part of the mesh) it lands on; later clicks land on that piece too -
                  looked for behind other leaves along the ray, else its nearest point (orange)
-    close        click the first point (green) or double click;  Enter: an open line
+    end          Enter or double click: an open line, nothing closes
+    close        click the first point (green), or Shift + Enter / Shift + double click
     Shift        show the closing preview (grey): the mouse back to the first point
     Backspace / Ctrl+Z   drop the last point;  Esc: cancel
     red          a part of the path this view cannot see (behind other faces or on faces turned
@@ -31,6 +32,11 @@ vertex of the cut (an open line's ends inside a face are left out). Then, shared
                           the piece (mcp_cut_piece)
     Select Edges / Faces, Invert, Auto Seam, Close Border - else the Set Seam / No Seam popup.
 One undo step.
+
+Stop at Seam (toggle): the path ends on the first seam it reaches (magenta dot in the preview). A
+click past it, or on it, finishes the cut there as an open line - no island: exactly the edges the
+cut made or ran along are selected, and a seam too with Auto Seam. A seam under the first click
+does not stop it, so a cut can run from one seam to another.
 """
 import heapq
 import math
@@ -54,6 +60,7 @@ HIDDEN_COLOR = (1.0, 0.15, 0.15, 1.0)   # a part this view cannot see
 HINT_COLOR = (0.6, 0.6, 0.6, 0.35)      # the closing preview: the mouse back to the first point
 SNAP_COLOR = (0.3, 1.0, 0.9, 1.0)       # the cursor snapped to a vertex / an edge
 CLOSE_COLOR = (0.3, 1.0, 0.4, 1.0)
+STOP_COLOR = (1.0, 0.25, 0.85, 1.0)     # Stop at Seam: where the path ends
 VERT_PX, EDGE_PX = 10.0, 6.0            # snapping distance on screen (x UI scale)
 POINT_PX = 12
 DOUBLE_SECONDS, DOUBLE_PX = 0.45, 6
@@ -356,6 +363,37 @@ class Surface:
             edges = self._edge_path(p, fp, q, fq)
         return [('EDGES', edges)] if edges else []
 
+    @staticmethod
+    def stop_at_seam(parts, start=None, end=None):
+        """A segment's path up to the first seam it reaches: (parts, where it stopped or None).
+        start / end: the vertex or edge the segment's two clicks snapped to (or None). The seam
+        the segment starts on does not count, so a cut can leave one seam for another."""
+        def on_seam(el):
+            if isinstance(el, bmesh.types.BMEdge):
+                return el.seam
+            if isinstance(el, bmesh.types.BMVert):
+                return any(e.seam for e in el.link_edges)
+            return False
+
+        def at_start(el):
+            if el is start:
+                return True
+            if isinstance(start, bmesh.types.BMVert) and isinstance(el, bmesh.types.BMEdge):
+                return start in el.verts
+            if isinstance(start, bmesh.types.BMEdge) and isinstance(el, bmesh.types.BMVert):
+                return el in start.verts
+            return False
+
+        out = []
+        for kind, stations in parts:
+            for k, (co, el) in enumerate(stations):
+                if on_seam(el) and not at_start(el):
+                    return out + [(kind, stations[:k + 1])], co
+            out.append((kind, stations))
+        if parts and on_seam(end) and not at_start(end):
+            return out, parts[-1][1][-1][0]
+        return out, None
+
     # ------------------------------------------------------------ the cut
     def cut(self, points, segments, closed):
         """Cut the path into the mesh. points: [(co, face, moved, snap, elem)]; segments[i] is
@@ -560,8 +598,9 @@ class Surface:
 
 class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
     """Surface Cut (K): click points on the mesh; the cut walks over the surface, so a closed loop
-    always closes into one island. First point / double click: close, Enter: open line, Shift:
-    the closing preview, Backspace / Ctrl+Z: drop the last point, Esc: cancel"""
+    always closes into one island. Enter / double click: end as an open line, first point or
+    Shift + Enter / double click: close, Shift: the closing preview, Backspace / Ctrl+Z: drop the
+    last point, Esc: cancel"""
     bl_idname = "multicamproject.surface_cut"
     bl_label = "Surface Cut"
     bl_options = {'REGISTER', 'UNDO'}
@@ -637,7 +676,11 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
         self._points.append((hit[0].copy(), hit[1], hit[2], hit[3], hit[4]))
         if len(self._points) >= 2:
             a, b = self._points[-2], self._points[-1]
-            self._segments.append(self._surface.segment((a[0], a[1]), (b[0], b[1])))
+            seg = self._surface.segment((a[0], a[1]), (b[0], b[1]))
+            if self._stop:
+                seg, stop = self._surface.stop_at_seam(seg, a[4], b[4])
+                self._stopped = stop is not None
+            self._segments.append(seg)
         return True
 
     def _hover(self):
@@ -646,14 +689,18 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
         if key == self._hover_key:
             return self._hover_cache
         self._hover_key = key
-        live, closing = [], []
+        live, closing, stop = [], [], None
         hit = self._pick(self._mouse)       # where the mouse lands, before the first click too
         if self._points and hit is not None:
             last, first = self._points[-1], self._points[0]
             live = self._surface.segment((last[0], last[1]), (hit[0], hit[1]))
-            if len(self._points) >= 2 and self._show_close:
+            if self._stop:
+                live, stop = self._surface.stop_at_seam(live, last[4], hit[4])
+            if len(self._points) >= 2 and self._show_close and stop is None:
                 closing = self._surface.segment((hit[0], hit[1]), (first[0], first[1]))
-        self._hover_cache = (live, closing, hit)
+                if self._stop:
+                    closing, _at = self._surface.stop_at_seam(closing, hit[4], first[4])
+        self._hover_cache = (live, closing, hit, stop)
         return self._hover_cache
 
     # ------------------------------------------------------------ drawing
@@ -699,7 +746,7 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
     def _draw_3d(self, _context):
         if bpy.context.region != self._win:
             return
-        live, closing, _hit = self._hover()
+        live, closing, _hit, _stop = self._hover()
         parts = [s for seg in self._segments for s in seg] + live
         lines = self._lines(parts, self._view())
         hint = self._lines(closing)
@@ -770,7 +817,9 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
                 first = self._screen(self._points[0][0])
                 if first:
                     self._discs([first], DOT_PX * k, CLOSE_COLOR)
-        _live, _closing, hit = self._hover()
+        _live, _closing, hit, stop = self._hover()
+        if stop is not None and (p := self._screen(stop)):
+            self._discs([p], LAST_PX * k, STOP_COLOR)
         if hit is not None:                     # the mouse on the mesh, as the Knife's cursor
             p = self._screen(hit[0])
             if p:
@@ -799,14 +848,18 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
         self._points, self._segments = [], []
         self._mouse = (event.mouse_x - self._win.x, event.mouse_y - self._win.y)
         self._last_pos, self._last_click = self._mouse, 0.0
-        self._hover_key, self._hover_cache = None, ([], [], None)
+        self._hover_key, self._hover_cache = None, ([], [], None, None)
+        self._stop = getattr(context.scene, pc.STOP_SEAM_PROP, False)
+        self._stopped = False
         self._h3 = bpy.types.SpaceView3D.draw_handler_add(self._draw_3d, (context,), 'WINDOW', 'POST_VIEW')
         self._h2 = bpy.types.SpaceView3D.draw_handler_add(self._draw_2d, (context,), 'WINDOW', 'POST_PIXEL')
         context.window.cursor_modal_set('CROSSHAIR')
         context.workspace.status_text_set(
-            "Surface Cut: click: point  ·  first point / double click: close  ·  Enter: open line  ·  "
+            "Surface Cut: click: point  ·  Enter / double click: end, open  ·  "
+            "first point / Shift + Enter / Shift + double click: close  ·  "
             "Shift: closing preview  ·  Backspace / Ctrl+Z: drop the last point  ·  "
-            "red: hidden from this view  ·  Esc: cancel")
+            "red: hidden from this view  ·  Esc: cancel"
+            + ("  ·  Stop at Seam: a click on or past a seam ends the cut there" if self._stop else ""))
         context.window_manager.modal_handler_add(self)
         return {'RUNNING_MODAL'}
 
@@ -820,19 +873,32 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
     def _finish(self, context, closed):
         if closed:
             a, b = self._points[-1], self._points[0]
-            self._segments.append(self._surface.segment((a[0], a[1]), (b[0], b[1])))
+            seg = self._surface.segment((a[0], a[1]), (b[0], b[1]))
+            if self._stop:
+                seg, stop = self._surface.stop_at_seam(seg, a[4], b[4])
+                if stop is not None:        # the way back hit a seam: no island
+                    self._stopped, closed = True, False
+            self._segments.append(seg)
         self._end(context)
         obj = context.edit_object
         result = self._surface.cut(self._points, self._segments, closed)
         if not result[0] and not result[1]:
+            bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
             self.report({'WARNING'}, "Surface Cut: nothing was cut")
             return {'CANCELLED'}
-        seamed, selected, what = apply_cut(context, obj, self._bm, result, closed)
+        seamed, selected, what = apply_cut(context, obj, self._bm, result, closed, self._stopped)
         if seamed or selected:
             self.report({'INFO'}, f"Surface Cut: {what}" + (f", seam on {seamed:,} edges" if seamed else ""))
         else:
             pc._popup(context, f"Surface Cut: {what}")
         return {'FINISHED'}
+
+    def _finish_by_key(self, context, shift):
+        """Enter or a double click: the cut ends as an open line; with Shift it closes. Too few
+        points for that: the tool keeps running."""
+        if len(self._points) >= (3 if shift else 2):
+            return self._finish(context, shift)
+        return {'RUNNING_MODAL'}
 
     def modal(self, context, event):
         self._area.tag_redraw()
@@ -850,9 +916,7 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
             self._end(context)
             return {'CANCELLED'}
         if event.type in {'RET', 'NUMPAD_ENTER'} and event.value == 'PRESS':
-            if len(self._points) >= 2:
-                return self._finish(context, False)
-            return {'RUNNING_MODAL'}
+            return self._finish_by_key(context, event.shift)
         undo = (event.type == 'BACK_SPACE' or (event.type == 'Z' and (event.ctrl or event.oskey)
                                                    and not event.shift))
         if undo and event.value == 'PRESS':
@@ -869,21 +933,25 @@ class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
             self._mouse = p
             again = (time.monotonic() - self._last_click < DOUBLE_SECONDS
                      and (Vector(p) - Vector(self._last_pos)).length < DOUBLE_PX * _ui())
-            if (event.value == 'DOUBLE_CLICK' or again or self._under_mouse() == 0) \
-                    and len(self._points) >= 3:
+            if self._under_mouse() == 0 and len(self._points) >= 3:     # the first point: closed
                 return self._finish(context, True)
-            if not again and event.value == 'PRESS':
+            if event.value == 'DOUBLE_CLICK' or again:
+                return self._finish_by_key(context, event.shift)
+            if event.value == 'PRESS':
                 self._add(p)
                 self._hover_key = None
+                if self._stopped:               # Stop at Seam: the cut ends here
+                    return self._finish(context, False)
             self._last_pos = p
             self._last_click = time.monotonic()
         return {'RUNNING_MODAL'}
 
 
-def apply_cut(context, obj, bm, result, closed):
+def apply_cut(context, obj, bm, result, closed, stopped=False):
     """After the cut (Edit Mode): remember it on the mesh and apply the toggles, as PolyCut
-    (written in Object Mode, back to Edit Mode). Returns (seam edges set, ('FACE' / 'EDGE',
-    count) or None, a summary)."""
+    (written in Object Mode, back to Edit Mode). stopped (Stop at Seam): every edge of the path,
+    rim stretch included, is selected - and a seam with Auto Seam; the other toggles do not apply.
+    Returns (seam edges set, ('FACE' / 'EDGE', count) or None, a summary)."""
     cut, rim, inside, piece, gaps = result
     bm.edges.index_update()
     bm.faces.index_update()
@@ -901,29 +969,34 @@ def apply_cut(context, obj, bm, result, closed):
         cut_a, rim_a = np.zeros(ne, bool), np.zeros(ne, bool)
         cut_a[cut_i], rim_a[rim_i] = True, True
         pc.forget(obj)
-        close_border = getattr(sc, pc.CLOSE_BORDER_PROP, True)
-        pc.store_flags(obj, cut_a | rim_a if close_border else cut_a)
-        pc.store_bools(obj, pc.CUT_RIM, 'EDGE', rim_a if rim_a.any() else None)
-        if inside_i is not None:
-            ins, pie = np.zeros(nf, bool), np.zeros(nf, bool)
-            ins[inside_i], pie[piece_i] = True, True
-            pc.store_faces(obj, ins)
-            pc.store_bools(obj, pc.CUT_PIECE, 'FACE', pie)
-        seamed = pc.set_seam(obj) if pc.auto_seam_on(context) else 0
-        want = pc.select_mode(context)
-        faces = pc.selection_faces(context, obj) if want == 'FACE' else None
-        if faces is not None:
-            selected = ('FACE', pc.select_cut(obj, faces=faces))
-        elif want:
+        if stopped:
+            pc.store_flags(obj, cut_a | rim_a)
+            seamed = pc.set_seam(obj) if pc.auto_seam_on(context) else 0
             selected = ('EDGE', pc.select_cut(obj, edges=pc.cut_flags(obj)))
-        if not seamed and not selected:
-            pc.show_preview(obj)
+        else:
+            close_border = getattr(sc, pc.CLOSE_BORDER_PROP, True)
+            pc.store_flags(obj, cut_a | rim_a if close_border else cut_a)
+            pc.store_bools(obj, pc.CUT_RIM, 'EDGE', rim_a if rim_a.any() else None)
+            if inside_i is not None:
+                ins, pie = np.zeros(nf, bool), np.zeros(nf, bool)
+                ins[inside_i], pie[piece_i] = True, True
+                pc.store_faces(obj, ins)
+                pc.store_bools(obj, pc.CUT_PIECE, 'FACE', pie)
+            seamed = pc.set_seam(obj) if pc.auto_seam_on(context) else 0
+            want = pc.select_mode(context)
+            faces = pc.selection_faces(context, obj) if want == 'FACE' else None
+            if faces is not None:
+                selected = ('FACE', pc.select_cut(obj, faces=faces))
+            elif want:
+                selected = ('EDGE', pc.select_cut(obj, edges=pc.cut_flags(obj)))
+            if not seamed and not selected:
+                pc.show_preview(obj)
     finally:
         bpy.ops.object.mode_set(mode='EDIT')
     if selected:
         context.tool_settings.mesh_select_mode = (False, selected[0] == 'EDGE', selected[0] == 'FACE')
     what = (f"{len(cut):,} edges cut" + (f", {len(rim):,} along the open rim" if rim else "")
-            + (f", island of {len(inside):,} faces" if inside else
+            + (", stopped at a seam" if stopped else f", island of {len(inside):,} faces" if inside else
                (", open line" if not closed else ", the loop does not split the piece"))
             + (f", {gaps} gap(s)" if gaps else ""))
     return seamed, selected, what
