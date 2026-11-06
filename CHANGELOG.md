@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+### PolyCut: a clean cut, then only Set Seam (2026-11-06)
+
+- PolyCut (Ctrl+Shift+K, Ctrl+Click) works like Living Lacquer's: click points, click the first
+  point (it turns green) or double click for a closed shape, Enter for an open line, Esc to cancel.
+- The mesh is cut exactly along the line. Cut Through (the tool's header and 03 Mesh Editing):
+  on - through the whole mesh, the back too; off - only the faces the view sees.
+- After the cut its outline shows in yellow and one popup asks Set Seam or No Seam. A closed shape
+  gives the border of what is inside (one island), an open line the edges on it: no seam across
+  a face the cut split. The cut stays either way; Ctrl+Z takes it back.
+- PolyCut no longer makes a face set and no longer opens Set Faces; L is gone from the tool.
+  Clear all Face Sets stays in 03.
+- Edit Mode right-click (Face select): Clear Seam and Boundary as Seam at the top, as in Living
+  Lacquer. Set Faces is no longer in the right-click and Face menus.
+
 ### Receive: the preview always shows the latest ALB_ and NOR_ (2026-11-04)
 
 - Receive now reads the object's ALB_, its inpaint and NOR_ again from their files, whether or

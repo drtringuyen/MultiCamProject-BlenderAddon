@@ -269,14 +269,68 @@ class MULTICAMPROJECT_OT_UVExtrude(bpy.types.Operator):
         return {'FINISHED'}
 
 
-_CLASSES = (MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude)
+class MULTICAMPROJECT_OT_MarkBoundarySeam(bpy.types.Operator):
+    """Mark the border of the selected faces as a seam (from Living Lacquer)"""
+    bl_idname = "multicamproject.mark_boundary_seam"
+    bl_label = "Boundary as Seam"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll_faces(cls, context)
+
+    def execute(self, context):
+        obj = context.edit_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        edges = _rim([f for f in bm.faces if f.select])
+        for e in edges:
+            e.seam = True
+        bmesh.update_edit_mesh(obj.data)
+        self.report({'INFO'}, f"Seam on {len(edges):,} border edges")
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_ClearSeam(bpy.types.Operator):
+    """Clear the seams on the selected faces: their border and the edges between them
+    (from Living Lacquer)"""
+    bl_idname = "multicamproject.clear_seam"
+    bl_label = "Clear Seam"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll_faces(cls, context)
+
+    def execute(self, context):
+        obj = context.edit_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        for f in bm.faces:
+            if f.select:
+                for e in f.edges:
+                    e.seam = False
+        bmesh.update_edit_mesh(obj.data)
+        return {'FINISHED'}
+
+
+def _context_menu(self, context):
+    """Edit Mode right-click, Face select only: at the top (keys C and B from the labels)."""
+    if context.tool_settings.mesh_select_mode[2]:
+        self.layout.operator(MULTICAMPROJECT_OT_ClearSeam.bl_idname)
+        self.layout.operator(MULTICAMPROJECT_OT_MarkBoundarySeam.bl_idname)
+        self.layout.separator()
+
+
+_CLASSES = (MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude,
+            MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam)
 
 
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(_context_menu)
 
 
 def unregister():
+    bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_context_menu)
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

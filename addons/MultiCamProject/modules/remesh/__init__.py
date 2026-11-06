@@ -1,7 +1,7 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import operators, tool, ui
+from . import operators, poly_cut, tool, ui
 
 
 def _repair():
@@ -29,6 +29,7 @@ def _on_load(_):
 
 def register():
     operators.register()
+    poly_cut.register()
     tool.register()
     ui.register()
     bpy.app.handlers.load_post.append(_on_load)
@@ -43,4 +44,5 @@ def unregister():
         bpy.app.handlers.load_post.remove(_on_load)
     ui.unregister()
     tool.unregister()
+    poly_cut.unregister()
     operators.unregister()

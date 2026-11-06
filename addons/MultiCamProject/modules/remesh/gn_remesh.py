@@ -1,5 +1,6 @@
 """MCP-PolyCut - applied once per Poly Cut (a temporary modifier): an Exact boolean splits
-the scan along the cutter's walls, nothing removed. Inside faces get remesh_inside = True.
+the scan along the cutter's walls, nothing removed. The new edges get mcp_cut_edges = True
+(PolyCut offers them as a seam, then the attribute goes).
 The scan is open, so the solver keeps bits of the cutter's walls: every cutter face is dropped.
 
 (GN-Remesh, the modifier, is the user's own group - see workflow.py.)
@@ -10,10 +11,11 @@ from ..camera_project.gn_builder import B, _iface
 from .cutter import CUTTER_ATTR
 
 CUT_GROUP = "MCP-PolyCut"
-INSIDE = "remesh_inside"
+INSIDE = "remesh_inside"            # (old files: Reset still removes it)
+CUT_EDGES = "mcp_cut_edges"         # the cut's new edges, until PolyCut's seam popup
 FACE_SET = "face_set"               # the GN-readable copy of .sculpt_face_set
-_SEAM = "_remesh_seam"
-VERSION = 4            # bump when a node layout changes
+_SEAM = CUT_EDGES
+VERSION = 5            # bump when a node layout changes
 _VERSION_KEY = "multicamproject_remesh_version"
 
 
@@ -35,7 +37,7 @@ def _store(b, geo, name, dtype, domain, value, loc):
 
 
 def _part(b, geo, edges, loc):
-    """Cut edges remembered (for the merge), the cutter's faces dropped."""
+    """Cut edges remembered (for the merge and the seam), the cutter's faces dropped."""
     x, y = loc
     geo = _store(b, geo, _SEAM, 'BOOLEAN', 'EDGE', edges, (x, y))
     rm = b.n("GeometryNodeDeleteGeometry", (x + 200, y), domain='FACE')
@@ -77,7 +79,6 @@ def build_cut():
     b.link(cutter, outside.inputs["Mesh 2"])
 
     g_in = _part(b, inside.outputs["Mesh"], inside.outputs["Intersecting Edges"], (100, 100))
-    g_in = _store(b, g_in, INSIDE, 'BOOLEAN', 'FACE', True, (500, 100))
     g_out = _part(b, outside.outputs["Mesh"], outside.outputs["Intersecting Edges"], (100, -200))
 
     join = b.n("GeometryNodeJoinGeometry", (750, 0))
@@ -90,7 +91,7 @@ def build_cut():
     b.link(_named(b, _SEAM, 'BOOLEAN', (550, -200)), seam.inputs[0])
     b.link(seam.outputs[0], merge.inputs["Selection"])
     geo = merge.outputs["Geometry"]
-    for i, name in enumerate((CUTTER_ATTR, _SEAM)):
+    for i, name in enumerate((CUTTER_ATTR,)):
         clean = b.n("GeometryNodeRemoveAttribute", (1150 + i * 200, 0))
         clean.inputs["Name"].default_value = name
         b.link(geo, clean.inputs["Geometry"])

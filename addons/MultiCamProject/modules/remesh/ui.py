@@ -178,9 +178,12 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                              text="PolyCut & Seams (Ctrl+Shift+K)",
                              icon='SCULPTMODE_HLT')
             else:
-                row.label(text="PolyCut: Ctrl+Click cut · L pick", icon='CHECKMARK')
-            # 02 Set Faces has no button: L with the tool, after each PolyCut, or Edit Mode's
-            # right-click / Face menu. Here: every face set cleared, Clean Floating
+                row.label(text="PolyCut: Ctrl+Click · then Set Seam", icon='CHECKMARK')
+            # Cut Through: through the whole mesh, or only the faces the view sees
+            row.prop(context.scene, "multicamproject_polycut_through", text="",
+                     icon='MOD_BOOLEAN' if context.scene.multicamproject_polycut_through
+                     else 'HIDE_OFF')
+            # every face set cleared (their colours confuse), Clean Floating
             row.operator("multicamproject.remesh_set_faces", text="",
                          icon='FILE_REFRESH').action = 'CLEAR_FACE_SETS'
             clean = row.row(align=True)         # Edit Mode: keep the selected mesh, rest goes
