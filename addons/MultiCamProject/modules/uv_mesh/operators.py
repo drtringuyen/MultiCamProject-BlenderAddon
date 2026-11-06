@@ -312,16 +312,50 @@ class MULTICAMPROJECT_OT_ClearSeam(bpy.types.Operator):
         return {'FINISHED'}
 
 
+class MULTICAMPROJECT_OT_SelectedAsSeam(bpy.types.Operator):
+    """Mark the selected edges as a seam (Vertex select: the edges between selected vertices,
+    e.g. the path J just made)"""
+    bl_idname = "multicamproject.selected_as_seam"
+    bl_label = "Selected as Seam"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    @classmethod
+    def poll(cls, context):
+        if context.mode != 'EDIT_MESH':
+            return False
+        if context.edit_object.data.total_edge_sel == 0:
+            cls.poll_message_set("Select vertices joined by edges first")
+            return False
+        return True
+
+    def execute(self, context):
+        obj = context.edit_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        edges = [e for e in bm.edges if e.select]
+        for e in edges:
+            e.seam = True
+        bmesh.update_edit_mesh(obj.data)
+        self.report({'INFO'}, f"Seam on {len(edges):,} selected edges")
+        return {'FINISHED'}
+
+
 def _context_menu(self, context):
-    """Edit Mode right-click, Face select only: at the top (keys C and B from the labels)."""
-    if context.tool_settings.mesh_select_mode[2]:
+    """Edit Mode right-click, at the top. Face select: Clear Seam / Boundary as Seam (keys C and
+    B); Vertex select: Selected as Seam."""
+    mode = context.tool_settings.mesh_select_mode
+    if mode[0] and not mode[2]:
+        self.layout.operator(MULTICAMPROJECT_OT_SelectedAsSeam.bl_idname, icon='UV_EDGESEL')
+        self.layout.separator()
+    if mode[2]:
         self.layout.operator(MULTICAMPROJECT_OT_ClearSeam.bl_idname)
         self.layout.operator(MULTICAMPROJECT_OT_MarkBoundarySeam.bl_idname)
         self.layout.separator()
 
 
 _CLASSES = (MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude,
-            MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam)
+            MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam,
+            MULTICAMPROJECT_OT_SelectedAsSeam)
+_keymaps = []
 
 
 def register():
@@ -331,6 +365,12 @@ def register():
 
 
 def unregister():
+    for km, kmi in _keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except (ReferenceError, RuntimeError):
+            pass
+    _keymaps.clear()
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_context_menu)
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

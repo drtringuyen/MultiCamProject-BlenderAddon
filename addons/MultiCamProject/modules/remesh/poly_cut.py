@@ -10,7 +10,23 @@ Cut Through (the tool's header, 03): on - through the whole mesh (a closed shape
 boolean, MCP-PolyCut, nothing removed; an open line with Knife Project, Cut Through); off -
 only the faces the view sees (Knife Project, both).
 
-After the cut its outline shows in yellow (closed: the border of what is inside, one island;
+While drawing, the cut is previewed on the mesh: yellow on the surface the view sees, and with
+Cut Through fainter on every layer behind it.
+
+Edit Mode: K starts PolyCut there (in place of Blender's Knife), no Ctrl needed.
+
+The last cut is remembered on the mesh (its outline edges, mcp_cut_edges, and the faces inside a
+closed one, mcp_cut_inside) until the next cut: switching Select Edges / Select Faces / Auto Seam
+on afterwards applies it to that cut too.
+
+Auto Seam (the tool's header, 03): the outline becomes a seam right away, no popup.
+
+Select Faces / Select Edges (the tool's header, 03; one at a time): no popup, Edit Mode with
+the cut selected, to set seams yourself. Faces: the faces inside a closed shape, Face select
+(right-click: Boundary as Seam); an open line has no inside, so its cut edges. Edges: the cut
+edges, Edge select (right-click: Mark Seam).
+
+Otherwise, after the cut its outline shows in yellow (closed: the border of what is inside, one island;
 open: the cut edges on the line - never an edge the cut added across a face) and a popup asks:
 Set Seam or No Seam. The cut
 stays either way (Ctrl+Z takes it back). Behaviour from Living Lacquer's Poly Cut; the cut
@@ -29,15 +45,22 @@ from mathutils import Vector
 from . import core, cutter, gn_remesh as gn, workflow as wf
 
 THROUGH_PROP = "multicamproject_polycut_through"
+CUT_FACES = "mcp_cut_inside"        # face attribute: the faces inside the last closed cut
+SELECT_PROP = "multicamproject_polycut_select"              # Select Faces after the cut
+SELECT_EDGES_PROP = "multicamproject_polycut_select_edges"  # Select Edges after the cut
+AUTO_SEAM_PROP = "multicamproject_polycut_auto_seam"        # the outline a seam, no popup
 CUT_EDGES = gn.CUT_EDGES            # edge attribute: the last cut's new edges, until the popup
-POINT_PX = 12                       # a click this near an existing point is on it
+POINT_PX = 12                       # a click this near an existing point is on it (x UI scale)
 DOUBLE_SECONDS, DOUBLE_PX = 0.45, 6
+DOT_PX, LAST_PX, HOVER_PX = 4.0, 6.0, 9.0   # disc radii (x UI scale)
 SAMPLES = 12                        # interior rays per axis: does the shape cover the object
 COLOR = (1.0, 0.85, 0.2, 1.0)
 CLOSE_COLOR = (0.3, 1.0, 0.4, 1.0)
 NAVIGATE = {'MIDDLEMOUSE', 'WHEELUPMOUSE', 'WHEELDOWNMOUSE', 'TRACKPADPAN', 'TRACKPADZOOM',
             'MOUSEROTATE', 'MOUSESMARTZOOM'}
 _preview = {"lines": None, "handle": None}
+TRACE_PX = 6.0          # the preview samples the drawn line this often (x UI scale)
+TRACE_LAYERS = 12       # Cut Through: at most this many surfaces behind each other
 
 
 def inside(p, poly):
@@ -65,18 +88,46 @@ def cut_flags(obj):
     return flags
 
 
-def forget(obj):
-    a = obj.data.attributes.get(CUT_EDGES)
+def _drop(obj, name):
+    a = obj.data.attributes.get(name)
     if a is not None:
         obj.data.attributes.remove(a)
 
 
+def forget(obj):
+    """The last cut is no longer remembered (a new cut starts)."""
+    _drop(obj, CUT_EDGES)
+    _drop(obj, CUT_FACES)
+
+
+def remembers(obj):
+    return obj is not None and obj.type == 'MESH' and CUT_EDGES in obj.data.attributes
+
+
 def store_flags(obj, flags):
     me = obj.data
-    forget(obj)
+    _drop(obj, CUT_EDGES)
     me.attributes.new(CUT_EDGES, 'BOOLEAN', 'EDGE').data.foreach_set("value", flags)
     me.update()
     return int(flags.sum())
+
+
+def store_faces(obj, faces):
+    me = obj.data
+    _drop(obj, CUT_FACES)
+    if faces is not None:
+        me.attributes.new(CUT_FACES, 'BOOLEAN', 'FACE').data.foreach_set("value", faces.astype(bool))
+        me.update()
+
+
+def cut_faces(obj):
+    me = obj.data
+    a = me.attributes.get(CUT_FACES)
+    if a is None or a.domain != 'FACE':
+        return None
+    faces = np.zeros(len(me.polygons), bool)
+    a.data.foreach_get("value", faces)
+    return faces
 
 
 def set_seam(obj):
@@ -143,7 +194,7 @@ ON_LINE_PX = 1.0        # an edge is on the drawn line when both ends and its mi
 
 def _project(co, view):
     """World points (n, 3) -> region pixels (n, 2); NaN behind the eye."""
-    full, width, height = view
+    full, width, height = view[:3]
     h = co @ full[:3, :3].T + full[:3, 3]
     w = co @ full[3, :3] + full[3, 3]
     out = np.full((len(co), 2), np.nan)
@@ -177,10 +228,11 @@ def _inside_polygon(q, poly):
     return inside
 
 
-def outline_only(obj, flags, points3d, closed, view):
+def outline_only(obj, flags, points3d, closed, view, through=True):
     """The cut's new edges reduced to the drawn outline: no edge that the cut added across a face
     (a diagonal of a split face, a sliver between two cuts). Closed: the border of everything
-    inside the shape (one loop, the inside is one island); open: the cut edges on the line."""
+    inside the shape (one loop, the inside is one island); open: the cut edges on the line.
+    Returns (edges, the faces inside - closed only, else None)."""
     me = obj.data
     mw = np.array(obj.matrix_world, np.float64)
     co = np.empty(len(me.vertices) * 3, np.float64)
@@ -192,33 +244,165 @@ def outline_only(obj, flags, points3d, closed, view):
     line = _project(np.array([tuple(p) for p in points3d], np.float64), view)
     line = [p for p in line if not np.isnan(p).any()]
     if len(line) < 2:
-        return flags
+        return flags, None
     segs = list(zip(line, line[1:] + (line[:1] if closed else [])))
     v2 = _project(co, view)
     near_v = _dist_to_line(v2, segs) <= ON_LINE_PX
     mid = _project((co[ev[:, 0]] + co[ev[:, 1]]) / 2.0, view)
     on = near_v[ev[:, 0]] & near_v[ev[:, 1]] & (_dist_to_line(mid, segs) <= ON_LINE_PX)
     if not closed:
-        return flags & on
+        return flags & on, None
     # every face is now wholly in or out of the shape: its centre says which
     totals = np.empty(len(me.polygons), np.int64)
     me.polygons.foreach_get("loop_total", totals)
     centres = np.empty(len(me.polygons) * 3, np.float64)
     me.polygons.foreach_get("center", centres)
     centres = centres.reshape(-1, 3) @ mw[:3, :3].T + mw[:3, 3]
-    inside = _inside_polygon(_project(centres, view), line)
+    in_shape = _inside_polygon(_project(centres, view), line)
     loop_edge = np.empty(len(me.loops), np.int64)
     me.loops.foreach_get("edge_index", loop_edge)
     loop_face = np.repeat(np.arange(len(me.polygons)), totals)
     n = len(me.edges)
+    if not through:
+        # front only: the outline has gaps where nearer faces hide farther ones, so it does not
+        # split the mesh into pieces - the cut edges on the line are the seam, and the selection
+        # is every face the view sees inside the shape
+        border = flags & on
+        return border, _visible(obj, in_shape, centres, view)
+    # through: the line splits the mesh into pieces. A piece is inside when most of its area is
+    # (one long or bent face's centre can sit across the line: a whole piece cannot). The seam is
+    # every edge on the line between an inside and an outside piece - also an edge the mesh
+    # already had there - so the loop closes and the inside is one island.
+    areas = np.empty(len(me.polygons), np.float64)
+    me.polygons.foreach_get("area", areas)
+    piece = _pieces(on, loop_edge, loop_face, len(me.polygons))
+    count = int(piece.max()) + 1 if len(piece) else 0
+    share = np.bincount(piece, weights=areas * in_shape, minlength=count)
+    total = np.bincount(piece, weights=areas, minlength=count)
+    inside = (share > 0.5 * np.maximum(total, 1e-30))[piece]
     tot = np.bincount(loop_edge, minlength=n)
     ins = np.bincount(loop_edge[inside[loop_face]], minlength=n)
-    border = (ins > 0) & (ins < tot)
-    return border & on
+    border = (ins > 0) & (ins < tot) & on
+    return border, inside
+
+
+def _pieces(cuts, loop_edge, loop_face, n_faces):
+    """A piece number per face: faces joined through edges that are not in `cuts`."""
+    parent = np.arange(n_faces)
+
+    def find(a):
+        while parent[a] != a:
+            parent[a] = parent[parent[a]]
+            a = parent[a]
+        return a
+
+    first = {}
+    for e, f in zip(loop_edge.tolist(), loop_face.tolist()):
+        if cuts[e]:
+            continue
+        g = first.setdefault(e, f)
+        if g != f:
+            ra, rb = find(f), find(g)
+            if ra != rb:
+                parent[ra] = rb
+    roots = np.array([find(f) for f in range(n_faces)], np.int64)
+    _u, piece = np.unique(roots, return_inverse=True)
+    return piece
+
+
+def select_cut(obj, faces=None, edges=None):
+    """Object Mode: exactly these faces (or edges) selected, for Edit Mode."""
+    me = obj.data
+    vs = np.zeros(len(me.vertices), bool)
+    es = np.zeros(len(me.edges), bool)
+    fs = np.zeros(len(me.polygons), bool)
+    if faces is not None:
+        totals = np.empty(len(me.polygons), np.int64)
+        me.polygons.foreach_get("loop_total", totals)
+        loop_face = np.repeat(np.arange(len(me.polygons)), totals)
+        lv = np.empty(len(me.loops), np.int64)
+        me.loops.foreach_get("vertex_index", lv)
+        le = np.empty(len(me.loops), np.int64)
+        me.loops.foreach_get("edge_index", le)
+        fs = faces.astype(bool)
+        sel = fs[loop_face]
+        vs[lv[sel]] = True
+        es[le[sel]] = True
+    else:
+        ev = np.empty(len(me.edges) * 2, np.int64)
+        me.edges.foreach_get("vertices", ev)
+        es = edges.astype(bool)
+        vs[ev.reshape(-1, 2)[es].ravel()] = True
+    me.vertices.foreach_set("select", vs)
+    me.edges.foreach_set("select", es)
+    me.polygons.foreach_set("select", fs)
+    me.update()
+    return int(fs.sum()) if faces is not None else int(es.sum())
+
+
+def auto_seam_on(context):
+    return getattr(context.scene, AUTO_SEAM_PROP, False)
+
+
+def select_mode(context):
+    """'FACE', 'EDGE' or None (the seam popup)."""
+    if getattr(context.scene, SELECT_PROP, False):
+        return 'FACE'
+    if getattr(context.scene, SELECT_EDGES_PROP, False):
+        return 'EDGE'
+    return None
+
+
+def _ui():
+    return bpy.context.preferences.system.ui_scale
+
+
+def _discs(centres, radius, color):
+    """Filled circles in region pixels (point sizes are not honoured on every GPU backend)."""
+    if not centres:
+        return
+    import math
+    ring = [(math.cos(a * math.tau / 16), math.sin(a * math.tau / 16)) for a in range(16)]
+    tris = []
+    for cx, cy in centres:
+        for i in range(16):
+            (x0, y0), (x1, y1) = ring[i], ring[(i + 1) % 16]
+            tris += [(cx, cy), (cx + x0 * radius, cy + y0 * radius), (cx + x1 * radius, cy + y1 * radius)]
+    sh = gpu.shader.from_builtin('UNIFORM_COLOR')
+    sh.uniform_float("color", color)
+    batch_for_shader(sh, 'TRIS', {"pos": tris}).draw(sh)
 
 
 def view_of(region, rv3d):
-    return (np.array(rv3d.perspective_matrix, np.float64), region.width, region.height)
+    return (np.array(rv3d.perspective_matrix, np.float64), region.width, region.height,
+            rv3d.view_matrix.inverted(), rv3d.is_perspective)
+
+
+def _visible(obj, faces, centres, view):
+    """Of the faces, those the view sees (the first face a ray from the eye meets)."""
+    from mathutils.bvhtree import BVHTree
+    _full, _w, _h, view_inv, persp = view
+    me = obj.data
+    co = np.empty(len(me.vertices) * 3, np.float64)
+    me.vertices.foreach_get("co", co)
+    tree = BVHTree.FromPolygons(co.reshape(-1, 3).tolist(), [list(p.vertices) for p in me.polygons],
+                                all_triangles=False)
+    inv = obj.matrix_world.inverted()
+    eye = inv @ view_inv.translation
+    look = (inv.to_3x3() @ (view_inv.to_3x3() @ Vector((0.0, 0.0, -1.0)))).normalized()
+    size = max(obj.dimensions.length, 1e-6)
+    out = np.zeros(len(faces), bool)
+    for i in np.nonzero(faces)[0].tolist():
+        c = inv @ Vector(centres[i])
+        if persp:
+            start, d = eye, (c - eye).normalized()
+        else:
+            d = look
+            start = c - d * (10.0 * max(size, 1.0))
+        loc, _n, hit, _dist = tree.ray_cast(start, d)
+        # the face itself, or a hit right at its centre (a neighbour sharing the spot)
+        out[i] = hit is None or hit == i or (loc - c).length <= 1e-3 * size
+    return out
 
 
 # ---------------------------------------------------------------- the cuts (Object Mode)
@@ -345,7 +529,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     @classmethod
     def poll(cls, context):
         obj = context.active_object
-        if not (obj is not None and obj.type == 'MESH' and context.mode == 'SCULPT'
+        if not (obj is not None and obj.type == 'MESH' and context.mode in {'SCULPT', 'EDIT_MESH'}
                 and context.area is not None and context.area.type == 'VIEW_3D'):
             return False
         if wf.decimate_pending(obj):
@@ -373,7 +557,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         return out
 
     def _under_mouse(self):
-        best, found = POINT_PX, None
+        best, found = POINT_PX * _ui(), None
         for i, p in enumerate(self._points()):
             if p is not None:
                 d = (Vector(p) - Vector(self._mouse)).length
@@ -393,20 +577,100 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         batch_for_shader(sh, 'LINE_STRIP', {"pos": points + [self._mouse]}).draw(sh)
         sh.uniform_float("color", (COLOR[0], COLOR[1], COLOR[2], 0.35))
         batch_for_shader(sh, 'LINES', {"pos": [self._mouse, points[0]]}).draw(sh)
-        dots = gpu.shader.from_builtin('UNIFORM_COLOR')
-        gpu.state.point_size_set(7.0)
-        dots.uniform_float("color", (1.0, 1.0, 1.0, 1.0))
-        batch_for_shader(dots, 'POINTS', {"pos": points}).draw(dots)
-        gpu.state.point_size_set(11.0)
-        dots.uniform_float("color", COLOR)          # the last point clicked
-        batch_for_shader(dots, 'POINTS', {"pos": [points[-1]]}).draw(dots)
+        k = _ui()
         under = self._under_mouse()
         if under is not None and self._points()[under] is not None:
             closing = under == 0 and len(self._points3d) >= 3
-            gpu.state.point_size_set(15.0)
-            dots.uniform_float("color", CLOSE_COLOR if closing else (1.0, 1.0, 1.0, 1.0))
-            batch_for_shader(dots, 'POINTS', {"pos": [self._points()[under]]}).draw(dots)
-        gpu.state.point_size_set(1.0)
+            _discs([self._points()[under]], HOVER_PX * k, CLOSE_COLOR if closing else (1.0, 1.0, 1.0, 0.9))
+        _discs(points, DOT_PX * k, (1.0, 1.0, 1.0, 1.0))
+        _discs([points[-1]], LAST_PX * k, COLOR)        # the last point clicked
+        if len(self._points3d) >= 3 and self._points()[0] is not None:
+            _discs([self._points()[0]], DOT_PX * k, CLOSE_COLOR)   # the first point closes the shape
+        gpu.state.blend_set('NONE')
+
+    # ------------------------------------------------------------ the cut's preview on the mesh
+    def _build_tree(self, context, obj):
+        from mathutils.bvhtree import BVHTree
+        if obj.mode == 'EDIT':
+            bm = bmesh.from_edit_mesh(obj.data)
+            self._tree = BVHTree.FromBMesh(bm)
+        else:
+            bm = bmesh.new()
+            bm.from_mesh(obj.data)
+            self._tree = BVHTree.FromBMesh(bm)
+            bm.free()
+        self._mw = obj.matrix_world.copy()
+        self._inv = self._mw.inverted()
+        self._eps = max(obj.dimensions.length, 1e-6) * 1e-5
+        self._through = through_on(context)
+        self._traces = {}
+        self._view_key = None
+
+    def _hits(self, p):
+        """World points where the ray under the region pixel p meets the mesh, nearest first
+        (only the first without Cut Through)."""
+        o = view3d_utils.region_2d_to_origin_3d(self._win, self._rv3d, p)
+        d = view3d_utils.region_2d_to_vector_3d(self._win, self._rv3d, p).normalized()
+        lo = self._inv @ o
+        ld = (self._inv.to_3x3() @ d).normalized()
+        out = []
+        start = lo
+        for _ in range(TRACE_LAYERS if self._through else 1):
+            loc, _n, _i, _dist = self._tree.ray_cast(start, ld)
+            if loc is None:
+                break
+            out.append(self._mw @ loc)
+            start = loc + ld * self._eps
+        return o, d, out
+
+    def _trace(self, a, b):
+        """The drawn segment a -> b (region pixels) on the mesh: [(layer, p, q)...] in world."""
+        a, b = Vector(a), Vector(b)
+        steps = max(1, int((b - a).length / (TRACE_PX * _ui())))
+        rays = [self._hits(a.lerp(b, i / steps)) for i in range(steps + 1)]
+        out = []
+        for (o1, _d1, h1), (o2, d2, h2) in zip(rays, rays[1:]):
+            for k in range(min(len(h1), len(h2))):
+                # same surface: no bigger depth jump than a few times the gap between the rays
+                lateral = (h1[k] - (o2 + d2 * (h1[k] - o1).length)).length
+                if (h1[k] - h2[k]).length <= 4.0 * lateral + 10 * self._eps:
+                    out.append((k, h1[k], h2[k]))
+        return out
+
+    def _segment(self, i, a, b):
+        key = (i, a, b)
+        hit = self._traces.get(key)
+        if hit is None:
+            hit = self._traces[key] = self._trace(a, b)
+        return hit
+
+    def _draw_3d(self, _context):
+        if bpy.context.region != self._win:
+            return
+        pts = self._points()
+        if not pts or None in pts:
+            return
+        view_key = (tuple(tuple(r) for r in self._rv3d.perspective_matrix), self._win.width, self._win.height)
+        if view_key != self._view_key:     # navigated: the drawn line covers other faces now
+            self._view_key = view_key
+            self._traces = {}
+        segs = []
+        for i in range(len(pts) - 1):
+            segs += self._segment(i, pts[i], pts[i + 1])
+        live = self._trace(pts[-1], self._mouse)
+        closing = self._trace(self._mouse, pts[0]) if len(pts) >= 2 else []
+        front = [q for k, a, b in segs + live if k == 0 for q in (a, b)]
+        back = [q for k, a, b in segs + live if k > 0 for q in (a, b)]
+        hint = [q for k, a, b in closing if k == 0 for q in (a, b)]
+        sh = gpu.shader.from_builtin('POLYLINE_UNIFORM_COLOR')
+        gpu.state.blend_set('ALPHA')
+        gpu.state.depth_test_set('NONE')
+        sh.uniform_float("viewportSize", gpu.state.viewport_get()[2:])
+        for lines, width, alpha in ((back, 1.5, 0.45), (hint, 1.5, 0.3), (front, 3.0, 1.0)):
+            if lines:
+                sh.uniform_float("lineWidth", width)
+                sh.uniform_float("color", (COLOR[0], COLOR[1], COLOR[2], alpha))
+                batch_for_shader(sh, 'LINES', {"pos": lines}).draw(sh)
         gpu.state.blend_set('NONE')
 
     def _pos(self, event):
@@ -414,6 +678,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
 
     def _end(self, context):
         bpy.types.SpaceView3D.draw_handler_remove(self._handle, 'WINDOW')
+        bpy.types.SpaceView3D.draw_handler_remove(self._handle_3d, 'WINDOW')
         context.workspace.status_text_set(None)
         context.window.cursor_modal_restore()
         self._area.tag_redraw()
@@ -422,7 +687,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     def invoke(self, context, event):
         obj = context.active_object
         hide_preview()
-        if cut_flags(obj).any():        # a popup left unanswered: its edges are dropped
+        if remembers(obj) or CUT_FACES in obj.data.attributes:     # the last cut: forgotten
             mode = obj.mode
             bpy.ops.object.mode_set(mode='OBJECT')
             forget(obj)
@@ -433,13 +698,18 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         if self._win is None:
             return {'CANCELLED'}
         self._points3d = []
+        self._selected = None
+        self._seamed = 0
         self._mouse = self._pos(event)
         self._last_pos = self._mouse
         if event.type == 'LEFTMOUSE':   # Ctrl+click with the tool: the first point
             self._add(context, self._mouse)
         self._last_click = time.monotonic()
+        self._build_tree(context, obj)
         self._handle = bpy.types.SpaceView3D.draw_handler_add(
             self._draw, (context,), 'WINDOW', 'POST_PIXEL')
+        self._handle_3d = bpy.types.SpaceView3D.draw_handler_add(
+            self._draw_3d, (context,), 'WINDOW', 'POST_VIEW')
         context.window.cursor_modal_set('CROSSHAIR')
         context.workspace.status_text_set(
             "PolyCut: click: point  ·  click the first point or double click: closed cut  ·  "
@@ -465,7 +735,7 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
             # the clock runs from when the last click was done: adding a point on a dense mesh
             # takes a moment, which Blender's own double click counts against you
             again = (time.monotonic() - self._last_click < DOUBLE_SECONDS
-                     and (Vector(p) - Vector(self._last_pos)).length < DOUBLE_PX)
+                     and (Vector(p) - Vector(self._last_pos)).length < DOUBLE_PX * _ui())
             if (event.value == 'DOUBLE_CLICK' or again or self._under_mouse() == 0) \
                     and len(self._points3d) >= 3:
                 return self._cut_closed(context)
@@ -478,6 +748,15 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
     def _done(self, context, obj, n):
         if not n:
             self.report({'WARNING'}, "The line does not cross the mesh: nothing cut")
+            return {'FINISHED'}
+        seam = f"seam on {self._seamed:,} edges" if self._seamed else ""
+        if self._selected:
+            what = "faces inside the cut" if self._selected[0] == 'FACE' else "cut edges"
+            self.report({'INFO'}, f"PolyCut: {self._selected[1]:,} {what} selected"
+                                  + (f", {seam}" if seam else ""))
+            return {'FINISHED'}
+        if self._seamed:
+            self.report({'INFO'}, f"PolyCut: {seam}")
             return {'FINISHED'}
         show_preview(obj)
         _popup(context, f"PolyCut: {n:,} new edges")
@@ -520,17 +799,31 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
             else:
                 n = cut_knife(context, obj, pts3d, self._area, self._win, True, False)
             if n:
-                n = store_flags(obj, outline_only(obj, cut_flags(obj), pts3d, True,
-                                                  view_of(region, rv3d)))
-            if n:
-                show_preview(obj)
+                edges, faces = outline_only(obj, cut_flags(obj), pts3d, True,
+                                            view_of(region, rv3d), through)
+                n = store_flags(obj, edges)
+                store_faces(obj, faces if n else None)
+                if n and auto_seam_on(context):
+                    self._seamed = set_seam(obj)
+                want = select_mode(context) if n else None
+                if want:
+                    self._selected = (('FACE', select_cut(obj, faces=faces)) if want == 'FACE'
+                                      else ('EDGE', select_cut(obj, edges=edges)))
         except RuntimeError as e:
             self.report({'ERROR'}, f"PolyCut failed: {e}")
             n = 0
         finally:
-            if obj.mode != mode:
-                bpy.ops.object.mode_set(mode=mode)
+            self._back(context, obj, mode)
         return self._done(context, obj, n)
+
+    def _back(self, context, obj, mode):
+        """Select after Cut: Edit Mode, Face / Edge select; else the mode it was in."""
+        if self._selected:
+            bpy.ops.object.mode_set(mode='EDIT')
+            context.tool_settings.mesh_select_mode = (False, self._selected[0] == 'EDGE',
+                                                      self._selected[0] == 'FACE')
+        elif obj.mode != mode:
+            bpy.ops.object.mode_set(mode=mode)
 
     def _cut_open(self, context):
         pts3d = list(self._points3d)
@@ -544,16 +837,18 @@ class MULTICAMPROJECT_OT_RemeshPolyCut(bpy.types.Operator):
         try:
             n = cut_knife(context, obj, pts3d, self._area, self._win, False, through_on(context))
             if n:
-                n = store_flags(obj, outline_only(obj, cut_flags(obj), pts3d, False,
-                                                  view_of(self._win, self._rv3d)))
-            if n:
-                show_preview(obj)
+                edges, _faces = outline_only(obj, cut_flags(obj), pts3d, False,
+                                             view_of(self._win, self._rv3d))
+                n = store_flags(obj, edges)
+                if n and auto_seam_on(context):
+                    self._seamed = set_seam(obj)
+                if n and select_mode(context):     # an open line has no inside: its edges
+                    self._selected = ('EDGE', select_cut(obj, edges=edges))
         except RuntimeError as e:
             self.report({'ERROR'}, f"Knife Project failed: {e}")
             n = 0
         finally:
-            if obj.mode != mode:
-                bpy.ops.object.mode_set(mode=mode)
+            self._back(context, obj, mode)
         return self._done(context, obj, n)
 
 
@@ -578,8 +873,7 @@ class MULTICAMPROJECT_OT_PolyCutSeam(bpy.types.Operator):
         if mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
         try:
-            n = set_seam(obj) if self.action == 'SEAM' else 0
-            forget(obj)
+            n = set_seam(obj) if self.action == 'SEAM' else 0     # the cut stays remembered
         finally:
             if mode != 'OBJECT':
                 bpy.ops.object.mode_set(mode=mode)
@@ -597,21 +891,101 @@ def _popup(context, title):
     context.window_manager.popup_menu(draw, title=title, icon='QUESTION')
 
 
+def apply_last(context, what):
+    """A toggle switched on after a cut: the remembered cut gets it too. 'SEAM': its outline a
+    seam; 'FACE' / 'EDGE': Edit Mode with its inside faces / its edges selected."""
+    obj = getattr(context, "active_object", None)
+    if not remembers(obj) or obj.library:
+        return
+    mode = obj.mode
+    end = mode
+    try:
+        if mode != 'OBJECT':
+            bpy.ops.object.mode_set(mode='OBJECT')
+        if what == 'SEAM':
+            set_seam(obj)
+        else:
+            faces = cut_faces(obj) if what == 'FACE' else None
+            if faces is not None and faces.any():
+                select_cut(obj, faces=faces)
+            else:                   # an open line has no inside: its edges
+                what = 'EDGE'
+                select_cut(obj, edges=cut_flags(obj))
+            end = 'EDIT'
+        hide_preview()
+    except RuntimeError as e:
+        print(f"[MultiCamProject] PolyCut: the last cut could not be applied: {e}")
+    finally:
+        if obj.mode != end:
+            bpy.ops.object.mode_set(mode=end)
+        if end == 'EDIT' and what in {'FACE', 'EDGE'}:
+            context.tool_settings.mesh_select_mode = (False, what == 'EDGE', what == 'FACE')
+
+
+def _only_faces(scene, context):
+    if getattr(scene, SELECT_PROP):
+        if getattr(scene, SELECT_EDGES_PROP):
+            setattr(scene, SELECT_EDGES_PROP, False)
+        apply_last(context, 'FACE')
+
+
+def _only_edges(scene, context):
+    if getattr(scene, SELECT_EDGES_PROP):
+        if getattr(scene, SELECT_PROP):
+            setattr(scene, SELECT_PROP, False)
+        apply_last(context, 'EDGE')
+
+
+def _auto_seam(scene, context):
+    if getattr(scene, AUTO_SEAM_PROP):
+        apply_last(context, 'SEAM')
+
+
 _CLASSES = (MULTICAMPROJECT_OT_RemeshPolyCut, MULTICAMPROJECT_OT_PolyCutSeam)
+_keymaps = []
 
 
 def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
+    kc = bpy.context.window_manager.keyconfigs.addon
+    if kc is not None:      # K in Edit Mode: PolyCut, in place of Blender's Knife
+        km = kc.keymaps.new(name="Mesh", space_type='EMPTY')
+        for kmi in [k for k in km.keymap_items
+                    if k.idname in {MULTICAMPROJECT_OT_RemeshPolyCut.bl_idname,
+                                    "multicamproject.knife_or_polycut"}
+                    and k.type == 'K' and not (k.ctrl or k.shift or k.alt)]:
+            km.keymap_items.remove(kmi)
+        _keymaps.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_RemeshPolyCut.bl_idname,
+                                                 'K', 'PRESS', head=True)))
     setattr(bpy.types.Scene, THROUGH_PROP, bpy.props.BoolProperty(
         name="Cut Through", default=True,
         description="PolyCut: on - cut through the whole mesh (the back too); off - only the "
                     "faces the view sees"))
+    setattr(bpy.types.Scene, AUTO_SEAM_PROP, bpy.props.BoolProperty(
+        name="Auto Seam", default=False, update=_auto_seam,
+        description="PolyCut: the cut's outline becomes a seam right away, no popup (with Select "
+                    "Faces / Edges: the seam, then the selection)"))
+    setattr(bpy.types.Scene, SELECT_PROP, bpy.props.BoolProperty(
+        name="Select Faces", default=False, update=_only_faces,
+        description="PolyCut: no seam popup - Edit Mode, Face select, the faces inside the cut "
+                    "selected (an open line: its edges), to set seams yourself"))
+    setattr(bpy.types.Scene, SELECT_EDGES_PROP, bpy.props.BoolProperty(
+        name="Select Edges", default=False, update=_only_edges,
+        description="PolyCut: no seam popup - Edit Mode, Edge select, the cut edges selected, "
+                    "to set seams yourself"))
 
 
 def unregister():
     hide_preview()
-    if hasattr(bpy.types.Scene, THROUGH_PROP):
-        delattr(bpy.types.Scene, THROUGH_PROP)
+    for km, kmi in _keymaps:
+        try:
+            km.keymap_items.remove(kmi)
+        except (ReferenceError, RuntimeError):
+            pass
+    _keymaps.clear()
+    for prop in (THROUGH_PROP, SELECT_PROP, SELECT_EDGES_PROP, AUTO_SEAM_PROP):
+        if hasattr(bpy.types.Scene, prop):
+            delattr(bpy.types.Scene, prop)
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)

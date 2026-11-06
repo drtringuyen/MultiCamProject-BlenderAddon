@@ -2,7 +2,8 @@
 Ctrl+LMB = extrude to cursor). Its key works only while it is the active tool:
   Ctrl+LMB  starts a PolyCut (the click is the first point): the first point / double
             click cuts a closed shape, Enter an open line; then Set Seam or No Seam
-The header holds Cut Through (through the whole mesh, or only the faces the view sees).
+The header holds Cut Through (through the whole mesh, or only the faces the view sees) and
+Select Faces / Select Edges (no popup: Edit Mode with the cut selected, to set seams yourself).
 """
 import bpy
 from bpy.types import WorkSpaceTool
@@ -18,6 +19,9 @@ _KEYMAP = (
 def _draw_settings(context, layout, tool):
     layout.label(text="Ctrl+Click: PolyCut  ·  first point / double click: closed  ·  Enter: open")
     layout.prop(context.scene, "multicamproject_polycut_through", text="Cut Through")
+    layout.prop(context.scene, "multicamproject_polycut_select_edges", text="Select Edges")
+    layout.prop(context.scene, "multicamproject_polycut_select", text="Select Faces")
+    layout.prop(context.scene, "multicamproject_polycut_auto_seam", text="Auto Seam")
 
 
 class MULTICAMPROJECT_TL_PolyCutSculpt(WorkSpaceTool):

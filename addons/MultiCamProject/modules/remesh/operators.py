@@ -710,7 +710,7 @@ def register():
     kc = bpy.context.window_manager.keyconfigs.addon
     if kc is not None:
         # Ctrl+Shift+ (free in the 3D View, none of Blender's own keys replaced):
-        #   K  PolyCut tool       Object + Sculpt Mode (the button goes to Sculpt itself)
+        #   K  PolyCut tool       Object, Sculpt + Edit Mode (it goes to Sculpt itself)
         #   D  Decimate Brush     Object + Sculpt Mode
         #   F  its Dyntopo detail Sculpt, only in the Decimate Brush session (poll)
         #   L  Clean Floating     Edit Mode
@@ -721,7 +721,8 @@ def register():
                 ("Sculpt", ((poly, 'K'), (dec, 'D'),
                             (MULTICAMPROJECT_OT_RemeshDetailSize.bl_idname, 'F'))),
                 ("Object Mode", ((poly, 'K'), (dec, 'D'))),
-                ("Mesh", ((MULTICAMPROJECT_OT_RemeshCleanFloating.bl_idname, 'L'),))):
+                ("Mesh", ((MULTICAMPROJECT_OT_RemeshCleanFloating.bl_idname, 'L'),
+                          (poly, 'K')))):
             km = kc.keymaps.new(name=km_name, space_type='EMPTY')
             ours = {i for i, _k in items}       # left behind by a reload: not one more set
             for kmi in [k for k in km.keymap_items if k.idname in ours]:

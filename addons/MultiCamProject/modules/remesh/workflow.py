@@ -429,7 +429,7 @@ _OUR_GROUPS = ("GN-CameraProject", "GN-CamProject", "GN-Final", "MCP", "GN-Remes
 # mesh layers the add-on writes (UV_cam1..6 by prefix); the scan's own UVs, colors and
 # custom normals stay
 _OUR_ATTRS = ("uv_normal", "VCMix", "VCMix2", "uv_index", "face_set", "remesh_inside",
-              "remesh_cutter", "_remesh_seam", "mcp_cut_edges", ".sculpt_face_set")
+              "remesh_cutter", "_remesh_seam", "mcp_cut_edges", "mcp_cut_inside", ".sculpt_face_set")
 _OUR_KEYS = (APPLIED_KEY, "multicamproject_version", "multicamproject_remesh_version",
              "multicamproject_final_version")
 

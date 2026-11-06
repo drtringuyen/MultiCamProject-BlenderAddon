@@ -2,6 +2,24 @@
 
 ## Unreleased
 
+### PolyCut: one-island seams, a live preview, Select / Auto Seam toggles, K in Edit Mode (2026-11-06)
+
+- A closed cut through the mesh gives one closed seam: the line splits the mesh into pieces and
+  a piece is inside when most of its area is, so a long bent face can no longer leave a gap.
+  The seam is only the outline: no edge the cut added across a face.
+- While drawing, the cut is previewed on the mesh: yellow on the surface the view sees, fainter
+  on every layer behind it with Cut Through. Points are drawn as discs that scale with the UI
+  (they were 1 px on some GPU backends) and the first point is green once it can close the shape.
+- 03 Mesh Editing row: Select Edges, Select Faces, Auto Seam, PolyCut, Cut Through, Clear Face
+  Sets, Clean Floating. Select Edges / Faces (one at a time): no popup, Edit Mode with the cut
+  edges / the faces inside selected. Auto Seam: the outline a seam right away, no popup.
+- The last cut is remembered on the mesh (mcp_cut_edges, mcp_cut_inside) until the next one:
+  switching Select Edges / Faces / Auto Seam on afterwards applies it to that cut.
+- Edit Mode: K starts PolyCut in place of Blender's Knife; Ctrl+Shift+K also works in Edit Mode.
+  Vertex select right-click: Selected as Seam (e.g. the path J just made).
+- Known issue: PolyCut started in Edit Mode (K) does not work perfectly yet - check the result,
+  or use Ctrl+Shift+K (Sculpt Mode) for now.
+
 ### PolyCut: a clean cut, then only Set Seam (2026-11-06)
 
 - PolyCut (Ctrl+Shift+K, Ctrl+Click) works like Living Lacquer's: click points, click the first

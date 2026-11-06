@@ -173,16 +173,18 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                       if context.mode == 'SCULPT' else None)
             on_tool = active is not None and active.idname == tool.tool_id()
             row = col.row(align=True)
+            # Select Edges / Faces after the cut (Edit Mode), Auto Seam: no seam popup
+            row.prop(context.scene, "multicamproject_polycut_select_edges", text="", icon='EDGESEL')
+            row.prop(context.scene, "multicamproject_polycut_select", text="", icon='FACESEL')
+            row.prop(context.scene, "multicamproject_polycut_auto_seam", text="", icon='UV_EDGESEL')
             if not on_tool:
                 row.operator("multicamproject.remesh_enter_tool",
                              text="PolyCut & Seams (Ctrl+Shift+K)",
                              icon='SCULPTMODE_HLT')
             else:
                 row.label(text="PolyCut: Ctrl+Click · then Set Seam", icon='CHECKMARK')
-            # Cut Through: through the whole mesh, or only the faces the view sees
-            row.prop(context.scene, "multicamproject_polycut_through", text="",
-                     icon='MOD_BOOLEAN' if context.scene.multicamproject_polycut_through
-                     else 'HIDE_OFF')
+            # Cut Through (pressed): through the whole mesh; off: only the faces the view sees
+            row.prop(context.scene, "multicamproject_polycut_through", text="", icon='MOD_BOOLEAN')
             # every face set cleared (their colours confuse), Clean Floating
             row.operator("multicamproject.remesh_set_faces", text="",
                          icon='FILE_REFRESH').action = 'CLEAR_FACE_SETS'
