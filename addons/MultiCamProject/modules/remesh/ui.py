@@ -217,6 +217,9 @@ class MULTICAMPROJECT_PT_Remesh(bpy.types.Panel):
                 tog.alert = on_density and not dyn          # the brush does nothing without it
                 tog.operator("sculpt.dynamic_topology_toggle", text="", icon='MESH_ICOSPHERE',
                              depress=dyn)
+            # Silhouette Decimate: a decimated preview beside it, outline + seams kept
+            from . import silhouette
+            silhouette.draw(rest, context, obj)
 
         if module_manager.is_loaded("uv_mesh"):        # uvTube / uvExtrude / Close Hole
             from ..uv_mesh import ui as uv_ui
