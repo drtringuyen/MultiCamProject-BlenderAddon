@@ -4,12 +4,13 @@ from . import tube
 
 
 def draw_row(layout, context):
-    """03's uvMesh row: [uvTube] [uvExtrude] [Close Hole] - each greyed out until Edit Mode
-    has the right selection (edges / faces)."""
+    """03's uvMesh row: [uvTube] [uvExtrude] [Boundary Extrude] [Close Hole] - each greyed out
+    until Edit Mode has the right selection (edges / faces)."""
     row = layout.row(align=True)
     row.scale_y = 1.25
     row.operator("multicamproject.uv_tube", text="uvTube", icon='MOD_SCREW')
     row.operator("multicamproject.uv_extrude", text="uvExtrude", icon='FACESEL')
+    row.operator("multicamproject.boundary_extrude", text="Boundary Extrude", icon='EDGESEL')
     row.operator("multicamproject.close_hole", text="Close Hole", icon='MOD_TRIANGULATE')
 
 

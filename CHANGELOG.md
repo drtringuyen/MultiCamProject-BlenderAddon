@@ -2,6 +2,29 @@
 
 ## Unreleased
 
+### Knife back on K, Surface Cut on Shift+K (2026-11-10)
+
+- Edit Mode: K is Blender's own Knife again; Surface Cut moves to Shift+K (in place of Blender's
+  Knife Select Through).
+
+### Boundary Extrude (2026-11-06)
+
+- uvMesh row and Edit Mode right-click (face select): every seam on the selected faces is cleared,
+  their border too; the faces stay and an exact copy of them, joined to their border by walls,
+  moves along their normal. Click / Enter confirms, Esc takes everything back. Only the copy's
+  border is a seam, and the copy stays selected.
+- A copy rather than an n-gon: it keeps the surface's shape, so it cannot poke through it.
+- A whole closed part has no border and is refused with nothing changed.
+
+### Stop at Seam; Enter / double click end a cut open (2026-11-06)
+
+- Stop at Seam (new toggle, Surface Cut only): the path ends on the first seam it reaches, a
+  magenta dot in the preview. A click on or past it finishes the cut without an island: its edges
+  selected, and a seam with Auto Seam. A seam under the first click does not stop it.
+- Surface Cut and PolyCut finish the same way: Enter / double click end as an open line; Shift +
+  Enter / Shift + double click or a click on the first point close it; too few points: the tool
+  keeps running. PolyCut's closing preview only shows while Shift is held.
+
 ### Surface Cut on K: a cut that walks over the surface, one island per loop (2026-11-06)
 
 - Edit Mode: K is Surface Cut, Blender's Knife moves to Shift+K. Click points (snapped like the

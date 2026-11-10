@@ -1,4 +1,4 @@
-"""Surface Cut (K in Edit Mode; Blender's Knife moves to Shift+K): a cut that walks over the
+"""Surface Cut (Shift+K in Edit Mode; K stays Blender's Knife): a cut that walks over the
 surface, so a closed loop always closes and splits its piece into one clean island.
 
 Blender's Knife cuts what lies under a 2D line in the view, so where the surface turns away the
@@ -597,7 +597,7 @@ class Surface:
 # ---------------------------------------------------------------- the operator
 
 class MULTICAMPROJECT_OT_SurfaceCut(bpy.types.Operator):
-    """Surface Cut (K): click points on the mesh; the cut walks over the surface, so a closed loop
+    """Surface Cut (Shift+K): click points on the mesh; the cut walks over the surface, so a closed loop
     always closes into one island. Enter / double click: end as an open line, first point or
     Shift + Enter / double click: close, Shift: the closing preview, Backspace / Ctrl+Z: drop the
     last point, Esc: cancel"""
@@ -1010,14 +1010,10 @@ def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
     kc = bpy.context.window_manager.keyconfigs.addon
-    if kc is not None:      # Edit Mode: K = Surface Cut, Shift+K = Blender's Knife (its K settings)
+    if kc is not None:      # Edit Mode: Shift+K = Surface Cut; K stays Blender's Knife
         km = kc.keymaps.new(name="Mesh", space_type='EMPTY')
         _keymaps.append((km, km.keymap_items.new(MULTICAMPROJECT_OT_SurfaceCut.bl_idname,
-                                                 'K', 'PRESS', head=True)))
-        knife = km.keymap_items.new("mesh.knife_tool", 'K', 'PRESS', shift=True, head=True)
-        knife.properties.use_occlude_geometry = True
-        knife.properties.only_selected = False
-        _keymaps.append((km, knife))
+                                                 'K', 'PRESS', shift=True, head=True)))
 
 
 def unregister():

@@ -15,7 +15,7 @@ only the faces the view sees (Knife Project, both).
 While drawing, the cut is previewed on the mesh: yellow on the surface the view sees, and with
 Cut Through fainter on every layer behind it.
 
-Edit Mode: Ctrl+Shift+K brings you to the tool (K is Surface Cut, Blender's Knife is Shift+K).
+Edit Mode: Ctrl+Shift+K brings you to the tool (Shift+K is Surface Cut, K is Blender's Knife).
 
 The last cut is remembered on the mesh (its outline edges, mcp_cut_edges, and the faces inside a
 closed one, mcp_cut_inside) until the next cut: switching Select Edges / Select Faces / Auto Seam

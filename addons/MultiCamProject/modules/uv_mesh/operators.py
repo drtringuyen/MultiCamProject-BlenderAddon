@@ -7,11 +7,19 @@ uvExtrude: the selection's seams are cleared and its boundary marked, Blender's 
 extrude-along-normal runs (Enter / click confirms, Esc / right-click cancels - and a cancel
 takes everything back, seams included). After it: the base ring is a seam, the top ring is
 not (the cap unfolds with its walls), and each closed wall ring gets one seam on a random
-vertical edge, so cap + walls unfold as one island in uv_normal."""
+vertical edge, so cap + walls unfold as one island in uv_normal.
+
+Boundary Extrude: every seam on the selection is cleared, its border too; the selected faces stay
+where they are and an exact copy of them, joined to their border by walls, moves along the
+selection's normal with the same Enter / click / Esc. A copy rather than an n-gon: it keeps the
+surface's shape, so it cannot poke through it. Only the copy's border is a seam, the copy stays
+selected. The border edges keep their faces, so where the rest of the mesh continues past the border they have
+three faces each."""
 import random
 
 import bmesh
 import bpy
+from mathutils import Matrix, Vector
 
 
 def _face_mode(context):
@@ -269,6 +277,127 @@ class MULTICAMPROJECT_OT_UVExtrude(bpy.types.Operator):
         return {'FINISHED'}
 
 
+# ---------------------------------------------------------------- Boundary Extrude
+
+def boundary_start(bm, faces):
+    """Before the move: every seam on `faces` cleared (their border too), then an exact copy of
+    them (same vertices, same faces) joined to their border by walls, its border the only seam.
+    Only the copy is selected. Returns its vertices, or None when `faces` have no border."""
+    rim = _rim(faces)
+    if not rim:
+        return None
+    for f in faces:
+        for e in f.edges:
+            e.seam = False
+    source = {f for f in faces}
+    edges = {e for f in faces for e in f.edges}
+    verts = {v for f in faces for v in f.verts}
+    made = bmesh.ops.duplicate(bm, geom=list(verts) + list(edges) + list(faces))
+    vmap, emap = made["vert_map"], made["edge_map"]
+    for e in rim:
+        lp = next(lp for lp in e.link_loops if lp.face in source)
+        u, v = lp.vert, lp.link_loop_next.vert
+        wall = bm.faces.new((vmap[v], vmap[u], u, v))     # against the copy's own way along it
+        wall.material_index, wall.smooth = lp.face.material_index, lp.face.smooth
+        emap[e].seam = True
+    copy = [g for g in made["geom"] if isinstance(g, bmesh.types.BMFace)]
+    for elems in (bm.faces, bm.edges, bm.verts):
+        for x in elems:
+            x.select = False
+    for f in copy:
+        f.select = True
+    bm.select_flush_mode()
+    return [g for g in made["geom"] if isinstance(g, bmesh.types.BMVert)]
+
+
+def boundary_finish(bm, direction):
+    """After the move (the copy selected): moved against the faces' own normals, the copy and its
+    walls turn round, so they face the way they went. Returns the copy's face count."""
+    top = {f for f in bm.faces if f.select}
+    for f in top:
+        f.normal_update()
+    if sum((f.normal * f.calc_area() for f in top), Vector()).dot(direction) < 0.0:
+        walls = {g for e in _rim(top) for g in e.link_faces if g not in top}
+        bmesh.ops.reverse_faces(bm, faces=list(top | walls))
+    for e in _rim(top):
+        for f in e.link_faces:
+            f.normal_update()
+    return len(top)
+
+
+class MULTICAMPROJECT_OT_BoundaryExtrude(bpy.types.Operator):
+    """Clear every seam on the selected faces, then raise an exact copy of them along their
+    normal, joined to their border by walls; only the copy's border is a seam. The faces stay.
+    Click / Enter confirms, Esc cancels"""
+    bl_idname = "multicamproject.boundary_extrude"
+    bl_label = "Boundary Extrude"
+    bl_options = {'REGISTER'}
+
+    @classmethod
+    def poll(cls, context):
+        return _poll_faces(cls, context)
+
+    def invoke(self, context, event):
+        obj = context.edit_object
+        bm = bmesh.from_edit_mesh(obj.data)
+        faces = [f for f in bm.faces if f.select]
+        area_normal = sum((f.normal * f.calc_area() for f in faces), Vector())
+        local = area_normal.normalized() if area_normal.length > 1e-12 else Vector((0.0, 0.0, 1.0))
+        self._backup = bm.copy()          # Esc puts this back (seams and selection too)
+        verts = boundary_start(bm, faces)
+        if verts is None:
+            self._backup.free()
+            self.report({'WARNING'}, "Boundary Extrude: a whole closed part has no border")
+            return {'CANCELLED'}
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        self._obj = obj.name
+        bm.verts.index_update()
+        self._start = [(v.index, v.co.copy()) for v in verts]
+        wm = context.window_manager
+        wm.modal_handler_add(self)
+        self._timer = wm.event_timer_add(0.05, window=context.window)
+        # a move along the selection's normal: its own modal, run after ours so it sees the
+        # events first
+        bpy.ops.transform.translate('INVOKE_REGION_WIN', orient_type='GLOBAL',
+                                    orient_matrix=_axis_matrix(obj, local),
+                                    orient_matrix_type='GLOBAL',
+                                    constraint_axis=(False, False, True))
+        return {'RUNNING_MODAL'}
+
+    def modal(self, context, event):
+        if _moving(context):
+            return {'PASS_THROUGH'}
+        context.window_manager.event_timer_remove(self._timer)
+        obj = bpy.data.objects.get(self._obj)
+        if obj is None or obj.mode != 'EDIT':
+            self._backup.free()
+            return {'CANCELLED'}
+        bm = bmesh.from_edit_mesh(obj.data)
+        bm.verts.ensure_lookup_table()
+        moves = [bm.verts[i].co - co for i, co in self._start if i < len(bm.verts)]
+        if not any(d.length > 1e-6 for d in moves):     # the move was cancelled: all of it goes back
+            bpy.ops.object.mode_set(mode='OBJECT')
+            self._backup.to_mesh(obj.data)
+            self._backup.free()
+            bpy.ops.object.mode_set(mode='EDIT')
+            self.report({'INFO'}, "Boundary Extrude cancelled")
+            return {'CANCELLED'}
+        self._backup.free()
+        n = boundary_finish(bm, sum(moves, Vector()))
+        bmesh.update_edit_mesh(obj.data, loop_triangles=True, destructive=True)
+        bpy.ops.ed.undo_push(message="Boundary Extrude")
+        self.report({'INFO'}, f"Boundary Extrude: a copy of {n:,} faces, its border a seam")
+        return {'FINISHED'}
+
+
+def _axis_matrix(obj, local):
+    """World orientation with Z along the local direction `local` (the matrix a move along one
+    axis needs)."""
+    z = (obj.matrix_world.inverted().transposed().to_3x3() @ local).normalized()
+    x = z.orthogonal().normalized()
+    return Matrix((x, z.cross(x), z)).transposed()
+
+
 class MULTICAMPROJECT_OT_MarkBoundarySeam(bpy.types.Operator):
     """Mark the border of the selected faces as a seam (from Living Lacquer)"""
     bl_idname = "multicamproject.mark_boundary_seam"
@@ -349,11 +478,12 @@ def _context_menu(self, context):
     if mode[2]:
         self.layout.operator(MULTICAMPROJECT_OT_ClearSeam.bl_idname)
         self.layout.operator(MULTICAMPROJECT_OT_MarkBoundarySeam.bl_idname)
+        self.layout.operator(MULTICAMPROJECT_OT_BoundaryExtrude.bl_idname, icon='EDGESEL')
         self.layout.separator()
 
 
 _CLASSES = (MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude,
-            MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam,
+            MULTICAMPROJECT_OT_BoundaryExtrude, MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam,
             MULTICAMPROJECT_OT_SelectedAsSeam)
 
 
