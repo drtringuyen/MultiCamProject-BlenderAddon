@@ -94,10 +94,12 @@ def calculate(context):
     found = [(obj, *measure(obj, dg)) for obj in coll.all_objects if obj.type == 'MESH']
     found.sort(key=lambda f: -f[1])
     budgets = split([a for _o, a, _t in found], s.budget, s.minimum)
+    picks = {r.name: _picks(r) for r in s.rows}     # Automate's picks outlive the rebuild
     s.rows.clear()
     for (obj, area, tris), budget in zip(found, budgets):
         row = s.rows.add()
         row.name, row.area, row.tris, row.budget = obj.name, area, tris, budget
+        _restore_picks(row, picks.get(obj.name))
     # ROOM (the walls): listed with their stage and triangles, never part of the budget
     from ... import roles
     room = roles.find(context.scene, 'ROOM')
@@ -108,8 +110,24 @@ def calculate(context):
         area, tris = measure(obj, dg)
         row = s.rows.add()
         row.name, row.area, row.tris, row.budget, row.room = obj.name, area, tris, 0, True
+        _restore_picks(row, picks.get(obj.name))
     s.collection_name, s.calculated_budget = coll.name, s.budget
     return coll
+
+
+PICKS = ("auto_step", "auto_name", "auto_from", "auto_local", "auto_share", "auto_filled")
+
+
+def _picks(row):
+    """A row's Automate picks (the Stage popup), to carry over a Calculate."""
+    return {k: getattr(row, k) for k in PICKS}
+
+
+def _restore_picks(row, picks):
+    if not picks:
+        return
+    for k, v in picks.items():
+        setattr(row, k, v)
 
 
 def _row(s, obj):
