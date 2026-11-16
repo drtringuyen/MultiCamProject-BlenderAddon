@@ -24,6 +24,8 @@ from . import gate
 
 STAGES = {      # stage -> (label, icon)
     'RAW': ("Raw", 'STRIP_COLOR_09'),
+    'TO_BAKE': ("To Bake", 'STRIP_COLOR_05'),      # 02 done, BAo_ never baked
+    'OUTDATED': ("Outdated", 'STRIP_COLOR_02'),    # 02 done, its bakes no longer match
     'PROCESSED': ("Processed", 'STRIP_COLOR_03'),
     'BAKED': ("Baked", 'STRIP_COLOR_04'),
     'RECEIVED': ("Received", 'STRIP_COLOR_04'),     # Baked, from its work window
@@ -216,6 +218,8 @@ def _state(obj, scene):
         stage = 'RECEIVED' if _received(obj) else 'BAKED'
     elif 3 in done:
         stage = 'PROCESSED'
+    elif 2 in done:     # the mesh is ready: not Raw, whether BAo_ is missing or outdated
+        stage = 'OUTDATED' if 3 in made else 'TO_BAKE'
     else:
         stage = 'RAW'
     return State(workflow(obj), done, stage, made)

@@ -805,7 +805,7 @@ def draw_stage(layout, context, obj, units):
     if not pick and not made(obj):
         return steps.draw_stage(layout, context, obj, units=units)
     stg = steps.stage(obj, context.scene)
-    if not pick and stg not in {'RAW', 'PROCESSED'}:
+    if not pick and stg not in {'RAW', 'TO_BAKE', 'PROCESSED'}:
         return steps.draw_stage(layout, context, obj, units=units)
     col = layout.row(align=True)
     col.ui_units_x = units
