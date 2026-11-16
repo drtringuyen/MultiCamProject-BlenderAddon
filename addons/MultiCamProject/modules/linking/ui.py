@@ -264,10 +264,26 @@ def _budget_block(row):
     cell.prop(bpy.context.scene, "multicamproject_budget_color", text="")
 
 
+def _draw_split(layout, context, obj):
+    """Split Parts (Export) of the work object, folded like a sub-panel - the same list and
+    buttons as Object Data > Split Parts."""
+    from ... import module_manager
+    if obj is None or obj.type != 'MESH' or not module_manager.is_loaded("export"):
+        return
+    from ..export import split
+    header, body = layout.panel("multicamproject_work_split", default_closed=False)
+    n = len(split.part_names(obj.data))
+    header.label(text=f"Split Parts (Export){f' · {n}' if n else ''}", icon='MOD_EXPLODE')
+    if body is not None:
+        split.draw_parts(body, context, obj)
+
+
 def draw_work(layout, context):
-    """A work window: where it came from, Send Back, where its bakes go."""
-    box = layout.box().column(align=True)
+    """A work window: Split Parts (export) of its object, where it came from, Send Back,
+    where its bakes go."""
     scene = context.scene
+    _draw_split(layout, context, core.work_object(scene))
+    box = layout.box().column(align=True)
     main = os.path.basename(scene.get(core.WORK_KEY, ""))
     box.label(text=f"Work window: {scene.get(core.WORK_OBJECT_KEY, '')} of {main}",
               icon='LINKED')

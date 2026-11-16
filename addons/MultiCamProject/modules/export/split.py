@@ -484,53 +484,57 @@ class MULTICAMPROJECT_PT_SplitParts(bpy.types.Panel):
         return obj is not None and obj.type == 'MESH'
 
     def draw(self, context):
-        layout = self.layout
-        obj = context.object
-        edit = obj.mode == 'EDIT' and context.edit_object == obj
-        st = shown_stats(obj)
-        names = part_names(obj.data)
-        if edit and st is not None:      # parts added in this Edit Mode session
-            names = sorted(st[0])
-        col = layout.column(align=True)
-        if not names:
-            col.label(text="No parts - the FBX gets this object whole")
-        for name in names:
-            row = col.row(align=True)
-            n = st[0].get(name) if st is not None else None
-            row.label(text=label(name), icon='MESH_DATA')
-            row.label(text="" if n is None else f"{n} faces")
-            sub = row.row(align=True)
-            sub.enabled = edit
-            op = sub.operator("multicamproject.split_assign", text="", icon='ADD')
-            op.part, op.remove = name, False
-            op = sub.operator("multicamproject.split_assign", text="", icon='REMOVE')
-            op.part, op.remove = name, True
-            op = sub.operator("multicamproject.split_select", text="", icon='RESTRICT_SELECT_OFF')
-            op.part, op.deselect = name, False
-            op = sub.operator("multicamproject.split_select", text="", icon='RESTRICT_SELECT_ON')
-            op.part, op.deselect = name, True
-            sub.operator("multicamproject.split_delete", text="", icon='X').part = name
-        if st is not None and names:
-            _counts, over, none = st
-            box = layout.column(align=True)
-            if over:
-                box.label(text=f"{over} faces in two parts - export gives them to the first",
-                          icon='ERROR')
-            box.label(text=(f"{none} faces stay on this object" if none
-                            else "Every face in a part - this object becomes an empty"),
-                      icon='INFO')
-        row = layout.row(align=True)
-        row.enabled = edit
-        row.operator("multicamproject.split_add", icon='ADD')
-        row = layout.row(align=True)
-        row.enabled = edit
-        row.operator("multicamproject.split_select_overlaps", icon='ERROR').unassigned = False
-        row.operator("multicamproject.split_select_overlaps", text="Select Unassigned",
-                     icon='SELECT_SET').unassigned = True
-        if any(g.name.startswith(PREFIX) for g in obj.vertex_groups):
-            layout.operator("multicamproject.split_from_vgroups", icon='GROUP_VERTEX')
-        if not edit:
-            layout.label(text="Edit Mode: select faces, then Add / + / -")
+        draw_parts(self.layout, context, context.object)
+
+
+def draw_parts(layout, context, obj):
+    """The Split Parts list + buttons for `obj` (Object Data, and the work window's IO
+    Folders & Collections)."""
+    edit = obj.mode == 'EDIT' and context.edit_object == obj
+    st = shown_stats(obj)
+    names = part_names(obj.data)
+    if edit and st is not None:      # parts added in this Edit Mode session
+        names = sorted(st[0])
+    col = layout.column(align=True)
+    if not names:
+        col.label(text="No parts - the FBX gets this object whole")
+    for name in names:
+        row = col.row(align=True)
+        n = st[0].get(name) if st is not None else None
+        row.label(text=label(name), icon='MESH_DATA')
+        row.label(text="" if n is None else f"{n} faces")
+        sub = row.row(align=True)
+        sub.enabled = edit
+        op = sub.operator("multicamproject.split_assign", text="", icon='ADD')
+        op.part, op.remove = name, False
+        op = sub.operator("multicamproject.split_assign", text="", icon='REMOVE')
+        op.part, op.remove = name, True
+        op = sub.operator("multicamproject.split_select", text="", icon='RESTRICT_SELECT_OFF')
+        op.part, op.deselect = name, False
+        op = sub.operator("multicamproject.split_select", text="", icon='RESTRICT_SELECT_ON')
+        op.part, op.deselect = name, True
+        sub.operator("multicamproject.split_delete", text="", icon='X').part = name
+    if st is not None and names:
+        _counts, over, none = st
+        box = layout.column(align=True)
+        if over:
+            box.label(text=f"{over} faces in two parts - export gives them to the first",
+                      icon='ERROR')
+        box.label(text=(f"{none} faces stay on this object" if none
+                        else "Every face in a part - this object becomes an empty"),
+                  icon='INFO')
+    row = layout.row(align=True)
+    row.enabled = edit
+    row.operator("multicamproject.split_add", icon='ADD')
+    row = layout.row(align=True)
+    row.enabled = edit
+    row.operator("multicamproject.split_select_overlaps", icon='ERROR').unassigned = False
+    row.operator("multicamproject.split_select_overlaps", text="Select Unassigned",
+                 icon='SELECT_SET').unassigned = True
+    if any(g.name.startswith(PREFIX) for g in obj.vertex_groups):
+        layout.operator("multicamproject.split_from_vgroups", icon='GROUP_VERTEX')
+    if not edit:
+        layout.label(text="Edit Mode: select faces, then Add / + / -")
 
 
 _classes = (MULTICAMPROJECT_OT_SplitAdd, MULTICAMPROJECT_OT_SplitAssign,
