@@ -19,6 +19,7 @@ import random
 
 import bmesh
 import bpy
+from bpy.props import BoolProperty
 from mathutils import Matrix, Vector
 
 
@@ -448,6 +449,15 @@ class MULTICAMPROJECT_OT_SelectedAsSeam(bpy.types.Operator):
     bl_label = "Selected as Seam"
     bl_options = {'REGISTER', 'UNDO'}
 
+    clear: BoolProperty(name="Clear", description="Clear the seam on the selected edges instead",
+                        default=False, options={'SKIP_SAVE'})
+
+    @classmethod
+    def description(cls, context, props):
+        if props.clear:
+            return "Clear the seam on the selected edges"
+        return cls.__doc__
+
     @classmethod
     def poll(cls, context):
         if context.mode != 'EDIT_MESH':
@@ -462,18 +472,21 @@ class MULTICAMPROJECT_OT_SelectedAsSeam(bpy.types.Operator):
         bm = bmesh.from_edit_mesh(obj.data)
         edges = [e for e in bm.edges if e.select]
         for e in edges:
-            e.seam = True
+            e.seam = not self.clear
         bmesh.update_edit_mesh(obj.data)
-        self.report({'INFO'}, f"Seam on {len(edges):,} selected edges")
+        self.report({'INFO'}, f"Seam {'cleared on' if self.clear else 'on'} "
+                              f"{len(edges):,} selected edges")
         return {'FINISHED'}
 
 
 def _context_menu(self, context):
     """Edit Mode right-click, at the top. Face select: Clear Seam / Boundary as Seam (keys C and
-    B); Vertex select: Selected as Seam."""
+    B); Vertex / Edge select: Selected as Seam / Clear Selected Seam."""
     mode = context.tool_settings.mesh_select_mode
-    if mode[0] and not mode[2]:
-        self.layout.operator(MULTICAMPROJECT_OT_SelectedAsSeam.bl_idname, icon='UV_EDGESEL')
+    if not mode[2]:
+        idname = MULTICAMPROJECT_OT_SelectedAsSeam.bl_idname
+        self.layout.operator(idname, icon='UV_EDGESEL').clear = False
+        self.layout.operator(idname, text="Clear Selected Seam").clear = True
         self.layout.separator()
     if mode[2]:
         self.layout.operator(MULTICAMPROJECT_OT_ClearSeam.bl_idname)
