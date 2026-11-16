@@ -517,7 +517,8 @@ def _send_out(context, obj, start, save_as, main, headless=False):
                    scene.render.pixel_aspect_x, scene.render.pixel_aspect_y],
         "unit_system": scene.unit_settings.system,
         "unit_scale": scene.unit_settings.scale_length, "start": start, "save_as": save_as,
-        "target": _target(context, obj), "headless": headless, "color": color_settings(scene)}
+        "target": _target(context, obj), "headless": headless, "color": color_settings(scene),
+        "scene_props": driver_scene_props(scene)}
     settings_path = os.path.join(job_dir(job_id), SETTINGS_FILE)
     with open(settings_path, "w", encoding="utf-8") as f:
         json.dump(settings, f)
@@ -774,6 +775,45 @@ def take_incoming(scene):
     return old.name
 
 
+def _scene_drivers():
+    """(variable target, scene prop key) of every material driver that reads a scene's
+    custom property - delivery scans drive their Emission Strength from
+    scene["scan_emission_strength"]."""
+    for mat in bpy.data.materials:
+        ad = mat.node_tree.animation_data if mat.node_tree else None
+        for fc in (ad.drivers if ad else ()):
+            for var in fc.driver.variables:
+                for t in var.targets:
+                    path = t.data_path
+                    if t.id_type == 'SCENE' and path.startswith('["') and path.endswith('"]'):
+                        yield t, path[2:-2]
+
+
+def driver_scene_props(scene):
+    """{key: value} of the scene props the materials' drivers read (sent to a work window)."""
+    out = {}
+    for _t, key in _scene_drivers():
+        value = scene.get(key)
+        if isinstance(value, (int, float)):
+            out[key] = value
+    return out
+
+
+def fix_scene_drivers(scene, values=None):
+    """Material drivers whose scene is not in this file (a work window has its own scene):
+    they read `scene` again, with the main file's values. Without it Emission Strength is 0
+    and Bake from Source comes out black. Returns how many were fixed."""
+    values = values or {}
+    n = 0
+    for t, key in _scene_drivers():
+        if key not in scene:        # (unknown: 1.0 - the scan's own colors)
+            scene[key] = values.get(key, 1.0)
+        if t.id is None or t.id.name not in bpy.data.scenes:
+            t.id = scene
+            n += 1
+    return n
+
+
 _take_tries = [0]
 
 
@@ -795,6 +835,20 @@ def _take_later():
     except Exception as e:      # never break opening the file
         print(f"[MultiCamProject] new mesh from the main file not taken: {e}")
         return None
+    if is_work_window(scene):   # Decimate, uv_normal, cameras, projection cleared - once
+        from . import prepare  # (a new mesh from the main file gets them too)
+        if name:
+            scene[prepare.PREPARED_KEY] = False
+        with bpy.context.temp_override(window=wm.windows[0]):   # BAo_ bakes as a job
+            lines = prepare.run_once(bpy.context, scene)
+        if lines and not name:
+            win = wm.windows[0]
+
+            def draw_prepared(menu, _context):
+                for line in lines:
+                    menu.layout.label(text=line)
+            with bpy.context.temp_override(window=win):
+                wm.popup_menu(draw_prepared, title="Work file prepared", icon='CHECKMARK')
     if name:
         print(f"[MultiCamProject] new mesh from the main file - the previous one is '{name}' "
               f"in '{OLD_COLLECTION}'")

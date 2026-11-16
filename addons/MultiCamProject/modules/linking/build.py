@@ -232,8 +232,9 @@ def _build():
     r.resolution_x, r.resolution_y, r.pixel_aspect_x, r.pixel_aspect_y = settings["render"]
     scene.unit_settings.system = settings["unit_system"]
     scene.unit_settings.scale_length = settings["unit_scale"]
-    importlib.import_module(f"{settings['addon']}.modules.linking.core").apply_color(
-        scene, settings.get("color"))     # the main file's view transform, not AgX
+    lk = importlib.import_module(f"{settings['addon']}.modules.linking.core")
+    lk.apply_color(scene, settings.get("color"))    # the main file's view transform, not AgX
+    lk.fix_scene_drivers(scene, settings.get("scene_props"))   # scan Emission: not 0 here
     s = getattr(scene, "multicamproject_bake_settings", None)
     if s is not None:           # every bake here goes to the hand-off folder, never the real one
         s.output_dir = os.path.join(settings["bakes"], "")
@@ -271,6 +272,11 @@ def _build():
         except Exception as e2:
             print(f"[MultiCamProject] work window: layout skipped: {e2}")
     _mute_pending(obj)          # (set_final may have switched GN on again)
+    try:                        # Decimate, uv_normal, cameras, projection cleared (prepare.py)
+        importlib.import_module(f"{settings['addon']}.modules.linking.prepare").run_once(
+            bpy.context, scene)
+    except Exception as e:      # never stop the window over it
+        print(f"[MultiCamProject] work window: not prepared: {e}")
     if obj is not None:         # last: its evaluation is the one the first draw uses too
         for win in bpy.context.window_manager.windows:
             for area in win.screen.areas:
