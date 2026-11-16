@@ -446,7 +446,7 @@ class MULTICAMPROJECT_OT_SelectedAsSeam(bpy.types.Operator):
     """Mark the selected edges as a seam (Vertex select: the edges between selected vertices,
     e.g. the path J just made)"""
     bl_idname = "multicamproject.selected_as_seam"
-    bl_label = "Selected as Seam"
+    bl_label = "Mark Seam"
     bl_options = {'REGISTER', 'UNDO'}
 
     clear: BoolProperty(name="Clear", description="Clear the seam on the selected edges instead",
@@ -481,7 +481,7 @@ class MULTICAMPROJECT_OT_SelectedAsSeam(bpy.types.Operator):
 
 def _context_menu(self, context):
     """Edit Mode right-click, at the top. Face select: Clear Seam / Boundary as Seam (keys C and
-    B); Vertex / Edge select: Selected as Seam / Clear Selected Seam."""
+    B); Vertex / Edge select: Mark Seam (M) / Clear Selected Seam (C)."""
     mode = context.tool_settings.mesh_select_mode
     if not mode[2]:
         idname = MULTICAMPROJECT_OT_SelectedAsSeam.bl_idname
