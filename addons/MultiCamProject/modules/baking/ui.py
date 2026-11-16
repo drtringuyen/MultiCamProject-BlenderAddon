@@ -357,10 +357,10 @@ class MULTICAMPROJECT_PT_Baking(bpy.types.Panel):
 
         if switches and module_manager.is_loaded("tex_override"):
             from ..tex_override import ui as tex_ui
-            tex_ui.draw_switch(left, obj, 'ALB')
+            tex_ui.draw_switch(left, obj, 'ALB', refresh=True)
             inpaint()
             left.separator(factor=0.5)
-            tex_ui.draw_switch(left, obj, 'NOR')
+            tex_ui.draw_switch(left, obj, 'NOR', refresh=True)
         else:
             left.operator("multicamproject.bake_albedo", text="05. Bake Albedo",
                           icon='RENDER_STILL')

@@ -9,13 +9,17 @@ def is_on():
     return module_manager.is_loaded("tex_override")
 
 
-def draw_switch(layout, obj, kind):
+def draw_switch(layout, obj, kind, refresh=False):
     """[ALB_Bake v]: ALB_Bake / ALB_Load (NOR_) - "ALB_Load (not found)" without its file
-    in 02.Overrides (picking it stays on Bake)."""
+    in 02.Overrides (picking it stays on Bake). `refresh`: on Load, a [refresh] beside it
+    that rereads the file from 02.Overrides."""
     d = obj.multicamproject_bake
     row = layout.row(align=True)
     row.enabled = not d.locked
     row.prop(d, "alb_pick" if kind == 'ALB' else "nor_pick", text="")
+    if refresh and core.is_load(obj, kind):
+        op = row.operator("multicamproject.tex_refresh", text="", icon='FILE_REFRESH')
+        op.kind, op.object_name = kind, obj.name
     return row
 
 
