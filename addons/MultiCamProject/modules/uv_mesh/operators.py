@@ -482,7 +482,21 @@ def _context_menu(self, context):
         self.layout.separator()
 
 
-_CLASSES = (MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude,
+def _uv_context_menu(self, context):
+    """UV Editor right-click, at the top. UV Sync Selection on: the 3D View's seam entries (the
+    mesh selection is the UV selection). Off: Blender's UV seam operators, which read the UV
+    selection - Mark / Clear Seam on the selected UV edges, Seams from Islands."""
+    if context.tool_settings.use_uv_select_sync:
+        _context_menu(self, context)
+        return
+    layout = self.layout
+    layout.operator("uv.mark_seam", text="Mark Seam", icon='UV_EDGESEL').clear = False
+    layout.operator("uv.mark_seam", text="Clear Seam").clear = True
+    layout.operator("uv.seams_from_islands", text="Seams from Islands").mark_seams = True
+    layout.separator()
+
+
+_CLASSES =(MULTICAMPROJECT_OT_CloseHole, MULTICAMPROJECT_OT_UVExtrude,
             MULTICAMPROJECT_OT_BoundaryExtrude, MULTICAMPROJECT_OT_MarkBoundarySeam, MULTICAMPROJECT_OT_ClearSeam,
             MULTICAMPROJECT_OT_SelectedAsSeam)
 
@@ -491,9 +505,11 @@ def register():
     for c in _CLASSES:
         bpy.utils.register_class(c)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.prepend(_context_menu)
+    bpy.types.IMAGE_MT_uvs_context_menu.prepend(_uv_context_menu)
 
 
 def unregister():
+    bpy.types.IMAGE_MT_uvs_context_menu.remove(_uv_context_menu)
     bpy.types.VIEW3D_MT_edit_mesh_context_menu.remove(_context_menu)
     for c in reversed(_CLASSES):
         bpy.utils.unregister_class(c)
