@@ -258,40 +258,41 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
         if self.target != 'ASK':            # a choice of the ALB_ popup
             return self.execute(context)
         obj = _target(self, context)
-        if self.kind == 'ALB':
-            return self._ask(context, obj)
-        why = self._why_not(context, obj, self.kind)
-        if why:
-            self.report({'WARNING'}, why)
-            return {'CANCELLED'}
-        from ..baking import cache
-        dst = core.override_path(context.scene, obj, self.kind)
-        there = cache.isfile(dst)
-        msg = ("The file in 02.Overrides is replaced by the texture as Blender shows it "
-               "(the old one to the Recycle Bin)" if there
-               else "Into 02.Overrides - pick Load to use it")
-        return context.window_manager.invoke_confirm(
-            self, event, title=(f"Overwrite {os.path.basename(dst)}?" if there
-                                else f"Export {os.path.basename(dst)}?"),
-            message=msg, confirm_text="Overwrite" if there else "Export",
-            icon='WARNING' if there else 'QUESTION')
+        if self.kind != 'ALB':
+            why = self._why_not(context, obj, self.kind)
+            if why:
+                self.report({'WARNING'}, why)
+                return {'CANCELLED'}
+        return self._ask(context, obj)
 
     def _ask(self, context, obj):
-        """ALB_: [Overwrite BAo_] [Override ALB_] [Cancel] - a choice that can't be done is
+        """A menu at the mouse. ALB_: [Overwrite BAo_] [Override ALB_] [Cancel]; NOR_:
+        [Overwrite/Export NOR_ (02.Overrides)] [Cancel]. A choice that can't be done is
         greyed, with why."""
         from ..baking import cache
         if obj is None:
             self.report({'WARNING'}, "No mesh")
             return {'CANCELLED'}
         scene, name, kind = context.scene, obj.name, self.kind
-        bao_path = self._bao_path(scene, obj)
         ovr_path = core.override_path(scene, obj, kind)
-        choices = (('BAO', f"{'Overwrite' if cache.isfile(bao_path) else 'Write'} "
-                           f"{os.path.basename(bao_path)}", 'IMAGE_DATA',
-                    self._why_not(context, obj, kind, 'BAO')),
-                   ('OVERRIDE', f"{'Override' if cache.isfile(ovr_path) else 'Export'} "
-                                f"{os.path.basename(ovr_path)} (02.Overrides)", 'EXPORT',
-                    self._why_not(context, obj, kind)))
+        ovr_there = cache.isfile(ovr_path)
+        choices = []
+        if kind == 'ALB':
+            bao_path = self._bao_path(scene, obj)
+            choices.append(('BAO', f"{'Overwrite' if cache.isfile(bao_path) else 'Write'} "
+                                   f"{os.path.basename(bao_path)}", 'IMAGE_DATA',
+                            self._why_not(context, obj, kind, 'BAO')))
+            ovr_verb = 'Override' if ovr_there else 'Export'
+        else:
+            ovr_verb = 'Overwrite' if ovr_there else 'Export'
+        choices.append(('OVERRIDE', f"{ovr_verb} {os.path.basename(ovr_path)} (02.Overrides)",
+                        'EXPORT', self._why_not(context, obj, kind)))
+        if kind == 'ALB':
+            info = "Writes the texture as Blender shows it now"
+        elif ovr_there:
+            info = "Replaced by the texture as Blender shows it (old one to the Recycle Bin)"
+        else:
+            info = "The texture as Blender shows it - pick Load to use it"
         idname = MULTICAMPROJECT_OT_TexExportOverride.bl_idname
 
         def draw(menu, _context):
@@ -303,7 +304,7 @@ class MULTICAMPROJECT_OT_TexExportOverride(bpy.types.Operator):
                 op.kind, op.object_name, op.target = kind, name, target
             r = col.row()
             r.active = False
-            r.label(text="Writes the texture as Blender shows it now", icon='INFO')
+            r.label(text=info, icon='INFO')
             col.separator()
             op = col.operator(idname, text="Cancel", icon='CANCEL')
             op.kind, op.object_name, op.target = kind, name, 'CANCEL'
