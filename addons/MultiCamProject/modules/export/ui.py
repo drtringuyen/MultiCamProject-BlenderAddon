@@ -213,6 +213,7 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
         self._draw_info(layout, scene, es, scene_row=False)
         self._draw_summary(layout, per, grouped)
         self._draw_active(layout, context, per)
+        self._draw_split(layout, context, per)
 
         # [One FBX v] Folder [path.........][dir]
         row = layout.row(align=True)
@@ -337,6 +338,21 @@ class MULTICAMPROJECT_PT_Export(bpy.types.Panel):
                 r.operator(op, text=fix_label)
             elif fix_label:
                 r.label(text=f"({fix_label})")
+
+    @staticmethod
+    def _draw_split(layout, context, per):
+        """Split Parts of the active EXPORT object, folded like a sub-panel - the same list
+        and buttons as Object Data > Split Parts."""
+        obj = context.active_object
+        if obj is None or obj.type != 'MESH' or obj.name not in per:
+            return
+        from . import split
+        header, body = layout.panel("multicamproject_export_split", default_closed=False)
+        n = len(split.part_names(obj.data))
+        header.label(text=f"Split Parts · {obj.name}{f' · {n}' if n else ''}",
+                     icon='MOD_EXPLODE')
+        if body is not None:
+            split.draw_parts(body, context, obj)
 
     @staticmethod
     def _draw_active(layout, context, per):

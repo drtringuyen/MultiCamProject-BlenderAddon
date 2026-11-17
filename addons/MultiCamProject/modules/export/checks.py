@@ -457,7 +457,10 @@ def check_split(obj, scene):
     from . import split
     if not split.part_names(obj.data):
         return []
-    counts, over, none = split.stats(obj.data)
+    st = split.shown_stats(obj)         # Edit Mode: the bmesh, the mesh is stale there
+    if st is None:
+        return []
+    counts, over, none = st
     parts = [split.label(n) for n, c in counts.items() if c]
     out = [Issue(obj.name, 'SPLIT_INFO', f"split into {len(parts)}: {', '.join(parts)}"
                  + (f" + {none} faces on itself" if none else " (an empty)"), INFO)]

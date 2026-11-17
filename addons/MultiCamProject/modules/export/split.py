@@ -30,7 +30,9 @@ def masks(me):
     n = len(me.polygons)
     for name in part_names(me):
         a = np.zeros(n, dtype=np.int32)
-        me.attributes[name].data.foreach_get("value", a)
+        data = me.attributes[name].data
+        if len(data) == n:      # Edit Mode: a part added there has no mesh data yet
+            data.foreach_get("value", a)
         out[name] = a != 0
     return out
 
