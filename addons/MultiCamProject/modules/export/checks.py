@@ -245,7 +245,7 @@ def check_uv(obj):
     known = {common.UV_NORMAL}
     if cp.keeps_scan(obj):          # a low poly's scan UV means nothing (GN-Final drops it)
         known.add(cp._scan_uv(obj, []))
-    extra = [u.name for u in me.uv_layers if u.name not in known and not u.name.startswith("UV_cam")]
+    extra = [u.name for u in me.uv_layers if u.name not in known and not cp.ours_uv(u.name)]
     if extra:
         out.append(Issue(obj.name, 'UV_EXTRA', f"extra UV maps {', '.join(extra)} "
                          "(only uv_normal goes into the FBX)", INFO))

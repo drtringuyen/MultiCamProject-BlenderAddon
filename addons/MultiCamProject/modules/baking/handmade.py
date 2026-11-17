@@ -85,7 +85,8 @@ def _uv_normal(obj, uv_name):
         return ""
     uv = uvs.get(uv_name) if uv_name else None
     if uv is None:
-        cands = [u for u in uvs if not u.name.startswith("UV_cam")]
+        from ..camera_project.core import ours_uv
+        cands = [u for u in uvs if not ours_uv(u.name)]
         if len(cands) != 1:
             uv = next((u for u in cands if u.active_render), None)
         else:

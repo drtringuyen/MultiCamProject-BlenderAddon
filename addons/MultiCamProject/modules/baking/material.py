@@ -48,6 +48,8 @@ def release(obj):
 def _normal_maps(obj):
     """The Normal Map nodes of obj's MAT_ and Processing material (MCP_)."""
     mats = [common.data(obj).material]
+    from . import tiles_view
+    mats += tiles_view.materials(obj)
     cam = getattr(obj, "multicamproject_cam", None)
     if cam is not None:
         mats.append(cam.material)

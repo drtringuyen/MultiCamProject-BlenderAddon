@@ -241,6 +241,8 @@ def generate_steps(context, obj, source):
         secs = yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=True)
         material.build(obj, context.scene)
         final.write_inputs(obj, context.scene)
+        from .. import tiles_view
+        tiles_view.refresh(obj, context.scene)
         return secs
     source = usable(source)
     scene = context.scene

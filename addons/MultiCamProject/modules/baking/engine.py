@@ -966,6 +966,9 @@ def bake_albedo_steps(context, obj):
     if tiles_bake.is_on(obj):           # Texture Tiles: one ALB_ per tile through uv_final
         secs = yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=False)
         material.build(obj, context.scene)
+        from . import tiles_view
+        tiles_view.build_materials(obj)
+        gn_final.set_final(obj, context.scene, True)        # GN-Tiles follows
         return secs
     scene = context.scene
     d = common.data(obj)

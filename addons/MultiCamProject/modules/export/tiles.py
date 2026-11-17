@@ -22,6 +22,7 @@ from . import split
 
 UV_FINAL = "uv_final"
 UNWRAP_TMP = "MCP_TILE_UNWRAP"
+TILE_ATTR = "MCP_TILE"          # INT face attribute: the face's tile (baking/tiles_view)
 MAIN = "Main"
 PALETTE = ((0.95, 0.55, 0.15), (0.20, 0.65, 0.95), (0.95, 0.80, 0.15), (0.45, 0.85, 0.35),
            (0.85, 0.35, 0.75), (0.30, 0.85, 0.80), (0.95, 0.35, 0.35), (0.65, 0.55, 0.95))
@@ -64,6 +65,12 @@ def _toggled(self, context):
         if not len(self.tiles):
             start_tiles(obj)
         schedule(obj)
+    else:
+        try:
+            from ..baking import tiles_view
+            tiles_view.remove(obj)          # Final shows the one MAT_ again
+        except ImportError:
+            pass
     _redraw()
 
 
@@ -81,6 +88,7 @@ class MULTICAMPROJECT_PG_Tile(bpy.types.PropertyGroup):
                                default=(0.95, 0.55, 0.15), update=_overlay_changed)
     # the tile's bakes (baking/tiles_bake.py); the first tile's ALB_ / NOR_ are also the
     # object's own alb_image / nor_image
+    material: PointerProperty(type=bpy.types.Material)     # MAT_<obj>_<tile> (tiles_view)
     ba_image: PointerProperty(type=bpy.types.Image)
     alb_image: PointerProperty(type=bpy.types.Image)
     nor_image: PointerProperty(type=bpy.types.Image)
@@ -324,6 +332,13 @@ def build(context, obj, force=False):
                 uv[ft[lf] == k, 0] += k - ok
                 done['shift'].append(k)
         uvs[UV_FINAL].uv.foreach_set("vector", uv.ravel())
+        att = me.attributes.get(TILE_ATTR)
+        if att is not None and (att.domain != 'FACE' or att.data_type != 'INT'):
+            me.attributes.remove(att)
+            att = None
+        if att is None:
+            att = me.attributes.new(TILE_ATTR, 'INT', 'FACE')
+        att.data.foreach_set("value", ft.astype(np.int32))      # GN-Tiles reads it
     finally:
         for coll, a in saved.items():
             if len(getattr(me, coll)) == len(a):

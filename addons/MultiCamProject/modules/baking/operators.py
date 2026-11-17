@@ -853,8 +853,9 @@ def renamable_uv(obj):
     the add-on's (UV_cam*, uv_old). None when there is uv_normal already or no such map."""
     if obj is None or obj.type != 'MESH' or common.has_uv_normal(obj):
         return None
+    from ..camera_project import core as cp_core
     uvs = [u for u in obj.data.uv_layers
-           if not u.name.startswith("UV_cam") and u.name != handmade.UV_OLD]
+           if not cp_core.ours_uv(u.name) and u.name != handmade.UV_OLD]
     active = obj.data.uv_layers.active
     return active if active in uvs else (uvs[0] if uvs else None)
 

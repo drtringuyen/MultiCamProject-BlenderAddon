@@ -155,6 +155,8 @@ def ensure_modifier(obj):
         mod = obj.modifiers.new(MOD_NAME, 'NODES')
     wrapper.ensure(obj, mod, ng)
     last = len(obj.modifiers) - 1
+    if obj.modifiers[-1].name == "GN-Tiles" and obj.modifiers[-1] != mod:
+        last -= 1                       # Texture Tiles' step runs after GN-Final
     if list(obj.modifiers).index(mod) != last:
         with bpy.context.temp_override(object=obj, active_object=obj):
             bpy.ops.object.modifier_move_to_index(modifier=mod.name, index=last)
@@ -293,4 +295,6 @@ def set_final(obj, scene, on):
         if uvs.get(d.prev_uv_render):
             uvs[d.prev_uv_render].active_render = True
         d.prev_uv_active = d.prev_uv_render = ""
+    from . import tiles_view
+    tiles_view.sync(obj, on)            # Texture Tiles: each tile's layout + MAT_
     obj.update_tag()

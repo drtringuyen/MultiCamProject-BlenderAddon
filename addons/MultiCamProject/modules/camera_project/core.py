@@ -306,10 +306,20 @@ def _is_ours(mat):
     return bool(mat.get(MAT_TAG) or mat.get(BAKED_TAG)) or mat.name.startswith(LEGACY_PREFIX)
 
 
+# Texture Tiles' layout and the temporary maps of its unwrap / bake (export/tiles.py,
+# baking/tiles_bake.py): the add-on's own, never a scan UV
+TILE_UVS = ("uv_final", "MCP_TILE_UV", "MCP_TILE_UNWRAP")
+
+
+def ours_uv(name):
+    """A UV map the add-on makes (UV_camN, uv_normal, the tiles' maps)."""
+    return name.startswith("UV_cam") or name == UV_NORMAL or name in TILE_UVS
+
+
 def _scan_uv(obj, warnings):
-    """The scan's UV map - the mesh's only one besides the addon's UV_camN and the
-    bake target uv_normal."""
-    uvs = [u for u in obj.data.uv_layers if not u.name.startswith("UV_cam") and u.name != UV_NORMAL]
+    """The scan's UV map - the mesh's only one besides the addon's UV_camN, the bake
+    target uv_normal and Texture Tiles' uv_final."""
+    uvs = [u for u in obj.data.uv_layers if not ours_uv(u.name)]
     if not uvs:
         warnings.append("Mesh has no UV map - original scan textures skipped")
         return None

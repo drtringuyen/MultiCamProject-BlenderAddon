@@ -22,7 +22,8 @@ PREVIEW_OUT = "MCP Preview Output"
 PREVIEW_EMIT = "MCP Preview Emission"
 LIMITS = {'PREVIEW': 'CLAMP_2048', 'FINAL': 'CLAMP_8192'}
 # the tags of MCP_ (camera_project) and MAT_ (baking) - camera_project.core MAT_TAG / BAKED_TAG
-TAGS = ("multicamproject_material", "multicamproject_baked")
+TAGS = ("multicamproject_material", "multicamproject_baked",
+        "multicamproject_tile_mat")        # + Texture Tiles' MAT_<obj>_<tile> (tiles_view)
 ITEMS = (('PREVIEW', "Preview", "Fast: the add-on's materials as flat color (Emission), no "
                                 "lighting or normal maps, textures capped at 2K",
           'LIGHTPROBE_SPHERE', 0),
