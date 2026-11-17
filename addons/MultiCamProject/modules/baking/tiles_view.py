@@ -100,6 +100,13 @@ def build_materials(obj):
     return out
 
 
+def tile_images(obj):
+    """[(ALB_, NOR_)] of the tiles after the first (the first one's are the object's)."""
+    if not is_on(obj):
+        return []
+    return [(x.alb_image, x.nor_image) for x in _tiles().tiles_of(obj).tiles[1:]]
+
+
 def materials(obj):
     """The tile materials of obj (for the normal toggle, the export)."""
     if not is_on(obj):
@@ -143,6 +150,7 @@ def _group(obj):
     b.link(gi.outputs[0], st.inputs["Geometry"])
     b.link(sub.outputs["Vector"], st.inputs["Value"])
     g = st.outputs["Geometry"]
+    g = _color_from_tiles(obj, b, g, tile, sub)
     for k, x in enumerate(_tiles().tiles_of(obj).tiles):
         if k == 0 or x.material is None:
             continue
@@ -158,6 +166,47 @@ def _group(obj):
         g = sm.outputs["Geometry"]
     b.link(g, go.inputs[0])
     return ng
+
+
+def _color_from_tiles(obj, b, g, tile, uv):
+    """During an export (gn_final.albedo_on) that takes Color from ALB: Color sampled from
+    each face's own tile ALB_ (GN-Final sampled the first tile's through the processing
+    uv_normal). Outside an export no image is held: GN would make each 8K a 1 GB float."""
+    from . import gn_final
+    scene = bpy.context.scene
+    if not gn_final._albedo_on or not gn_final.uses_alb(obj, scene):
+        return g
+    t = _tiles().tiles_of(obj)
+    col = None
+    for k, x in enumerate(t.tiles):
+        img = common.alb_source(obj) if k == 0 else x.alb_image
+        if img is None:
+            continue
+        tex = b.n("GeometryNodeImageTexture", (220 * k - 200, -700), interpolation='Linear',
+                  extension='EXTEND')
+        tex.inputs["Image"].default_value = img
+        b.link(uv.outputs["Vector"], tex.inputs["Vector"])
+        if col is None:
+            col = tex.outputs["Color"]
+            continue
+        eq = b.n("FunctionNodeCompare", (220 * k - 200, -900), data_type='INT',
+                 operation='EQUAL')
+        b.link(tile.outputs["Attribute"], eq.inputs["A"])
+        eq.inputs["B"].default_value = k
+        sw = b.n("GeometryNodeSwitch", (220 * k, -800), input_type='RGBA')
+        b.link(eq.outputs["Result"], sw.inputs["Switch"])
+        b.link(col, sw.inputs["False"])
+        b.link(tex.outputs["Color"], sw.inputs["True"])
+        col = sw.outputs["Output"]
+    if col is None:
+        return g
+    st = b.n("GeometryNodeStoreNamedAttribute", (0, -600), data_type='BYTE_COLOR',
+             domain='CORNER')
+    st.inputs["Name"].default_value = common.COLOR
+    st.label = "Color from the tile's ALB_"
+    b.link(g, st.inputs["Geometry"])
+    b.link(col, st.inputs["Value"])
+    return st.outputs["Geometry"]
 
 
 def _modifier(obj):

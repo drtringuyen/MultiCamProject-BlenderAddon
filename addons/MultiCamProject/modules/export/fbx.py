@@ -49,15 +49,19 @@ def copy_textures(objs, folder):
     tex = os.path.join(folder, "Textures")
     os.makedirs(tex, exist_ok=True)
     out = {}
+    from ..baking import tiles_view
     for obj in objs:
         d = common.data(obj)
-        for kind, img, src_img in (('ALB', d.alb_image, common.alb_source(obj)),
-                                   ('NOR', d.nor_image, d.nor_image)):
+        entries = [('ALB', d.alb_image, common.alb_source(obj)),
+                   ('NOR', d.nor_image, d.nor_image)]
+        for alb, nor in tiles_view.tile_images(obj):         # Texture Tiles: 2 more per tile
+            entries += [('TILE', alb, alb), ('TILE', nor, nor)]
+        for kind, img, src_img in entries:
             if img is None or src_img is None:
                 continue
             src = common.image_file(src_img)
             latest = ""
-            if override.is_load(obj, kind):
+            if kind != 'TILE' and override.is_load(obj, kind):
                 latest = override.override_path(None, obj, kind)
                 if latest and os.path.isfile(latest):
                     src = latest
@@ -78,12 +82,14 @@ def copy_textures(objs, folder):
     return out
 
 
-def _export_material(obj, copies, temps):
-    """A temporary copy of MAT_ whose images point at the copied textures."""
+def _export_material(obj, copies, temps, src=None):
+    """A temporary copy of MAT_ (or `src`, a tile's MAT_) whose images point at the copied
+    textures."""
     d = common.data(obj)
-    if d.material is None:
+    src = src or d.material
+    if src is None:
         return None
-    mat = d.material.copy()
+    mat = src.copy()
     temps["materials"].append(mat)
     for n in mat.node_tree.nodes:
         if n.type == 'TEX_IMAGE' and n.image is not None and n.image.name in copies:
@@ -121,10 +127,86 @@ def _trim(me, mat):
     return missing
 
 
+def _tile_materials(obj, me, copies, temps, mat):
+    """Texture Tiles: one material per tile (the first: MAT_), each face on its tile's
+    (MCP_TILE, which GN-Tiles used too). Returns what is missing."""
+    from ..baking import tiles_view
+    from . import tiles
+    t = tiles.tiles_of(obj)
+    mats = [mat]
+    missing = []
+    for x in t.tiles[1:]:
+        m = _export_material(obj, copies, temps, x.material) if x.material else None
+        if m is None:
+            missing.append(f"MAT_ of tile {x.name}")
+        else:
+            temps["mat_names"].append((m, x.material.name))
+        mats.append(m)
+    att = me.attributes.get(tiles.TILE_ATTR)
+    ft = np.zeros(len(me.polygons), dtype=np.int32)
+    if att is not None and att.domain == 'FACE':
+        att.data.foreach_get("value", ft)
+        me.attributes.remove(att)
+    else:
+        missing.append("tile of each face (MCP_TILE)")
+    me.materials.clear()
+    for m in mats:
+        me.materials.append(m)
+    me.polygons.foreach_set("material_index", np.clip(ft, 0, len(mats) - 1))
+    return missing
+
+
+def _compact_materials(me):
+    """Only the materials the mesh's faces use (a split piece holds one tile)."""
+    n = len(me.materials)
+    if n < 2:
+        return
+    mi = np.empty(len(me.polygons), dtype=np.int32)
+    me.polygons.foreach_get("material_index", mi)
+    used = sorted(set(np.unique(mi).tolist()))
+    if len(used) == n:
+        return
+    keep = [me.materials[i] for i in used]
+    remap = np.zeros(n, dtype=np.int32)
+    for new, old in enumerate(used):
+        remap[old] = new
+    me.materials.clear()
+    for m in keep:
+        me.materials.append(m)
+    me.polygons.foreach_set("material_index", remap[mi])
+
+
+KEEP_NORMALS = "MCP_SPLIT_NORMAL"
+
+
+def _keep_normals(me):
+    """The whole mesh's normals, kept as plain vectors per corner before the split (custom
+    normals are stored relative to the corner's own normal, which the split changes):
+    _set_kept_normals puts them back on each piece - else each piece gets its own along the
+    cut and the seam shades hard in Unity (15 degrees median on the bed)."""
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    me.corner_normals.foreach_get("vector", n)
+    att = me.attributes.new(KEEP_NORMALS, 'FLOAT_VECTOR', 'CORNER')
+    att.data.foreach_set("vector", n)
+
+
+def _set_kept_normals(me):
+    att = me.attributes.get(KEEP_NORMALS)
+    if att is None:
+        return
+    n = np.empty(len(me.loops) * 3, dtype=np.float32)
+    att.data.foreach_get("vector", n)
+    me.attributes.remove(me.attributes[KEEP_NORMALS])
+    if len(me.loops):
+        me.normals_split_custom_set(n.reshape(-1, 3).tolist())
+
+
 def make_copies(context, objs, copies, coll, temps):
     """Temporary copies of the evaluated Final objects; an object with split parts gets a
-    child per part (split.pieces) and is an empty when no face is left on it.
+    child per part (split.pieces) and is an empty when no face is left on it. Texture
+    Tiles: one material per tile, each piece keeps the ones it uses.
     Returns {copy: missing items}."""
+    from . import tiles
     dg = context.evaluated_depsgraph_get()
     out = {}
     for obj in objs:
@@ -132,7 +214,14 @@ def make_copies(context, objs, copies, coll, temps):
                                              depsgraph=dg)
         mat = _export_material(obj, copies, temps)
         missing = _trim(me, mat)
+        if tiles.is_on(obj):
+            missing += _tile_materials(obj, me, copies, temps, mat)
+        if split.part_names(me):
+            _keep_normals(me)
         parts, rest = split.pieces(me)
+        for m in [me] + [pme for _lab, pme, _c in parts]:
+            _compact_materials(m)
+            _set_kept_normals(m)
         if rest:
             temps["meshes"].append((me, obj.data.name))
             cp = bpy.data.objects.new(obj.name + "_copy", me)
@@ -236,7 +325,8 @@ def export_steps(context, fix_log=()):
         yield jobs.Step("Evaluating the Final meshes", 0.4)
         from ..baking import material as bake_material
         from ... import quality
-        mats = [m for o in objs for m in quality.object_materials(o)]
+        from ..baking import tiles_view
+        mats = [m for o in objs for m in quality.object_materials(o) + tiles_view.materials(o)]
         with common.shown(context, objs), bake_material.normals_on(objs), quality.final(mats), \
                 gn_final.albedo_on(objs, scene):
             context.view_layer.update()         # Color sampled from ALB in the copies
@@ -244,6 +334,8 @@ def export_steps(context, fix_log=()):
         context.view_layer.update()
         originals = list(objs) + [o.data for o in objs]
         originals += [common.data(o).material for o in objs if common.data(o).material]
+        from ..baking import tiles_view
+        originals += [m for o in objs for m in tiles_view.materials(o)]   # their names too
         originals += [img for img in bpy.data.images if img.name in {n for _i, n in temps["images"]}]
         with names_aside(originals):
             for cp, name in temps["objects"]:

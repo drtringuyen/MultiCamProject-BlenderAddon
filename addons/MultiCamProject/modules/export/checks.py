@@ -54,6 +54,8 @@ SUMMARY = {
               "Object Data > Split Parts > Select Overlaps / rename"),
     'OVERRIDE_FILE': ("{n} loaded texture(s) missing in 02.Overrides", None,
                       "put the file back, or switch it to Bake (07)"),
+    'TILES': ("{n} with Texture Tiles problems", None,
+              "Object Data > Split Parts > Texture Tiles"),
 }
 
 DECIMATE = "Decimate"       # remesh.workflow.DECIMATE (export works without the module)
@@ -154,10 +156,13 @@ def stale_export_textures(scene, keep_names):
 
 def export_texture_names(scene):
     """The ALB_/NOR_ names an export of EXPORT writes into <export>/Textures/."""
+    from ..baking import tiles_view
     names = []
     for o in common.export_objects(scene):
         d = common.data(o)
         names += [img.name for img in (d.alb_image, d.nor_image) if img is not None]
+        names += [img.name for pair in tiles_view.tile_images(o) for img in pair
+                  if img is not None]
     return names
 
 
@@ -474,14 +479,47 @@ def check_split(obj, scene):
     return out
 
 
+def check_tiles(obj, scene):
+    """Texture Tiles: uv_final current, one tile per face, every tile baked and current."""
+    from . import tiles
+    if not tiles.is_on(obj):
+        return []
+    from ..baking import tiles_bake
+    if obj.mode != 'OBJECT':
+        return []
+    why = tiles_bake.problem(obj)
+    if why:
+        return [Issue(obj.name, 'TILES', why, ERROR)]
+    out = []
+    if tiles.outdated(obj):
+        out.append(Issue(obj.name, 'TILES', "uv_final out of date (rebuilds in Object Mode)",
+                         WARNING))
+    st = tiles_bake.state(obj, scene)
+    used = [(n, f, x) for n, f, x in st if x != 'empty']
+    out.append(Issue(obj.name, 'TILES_INFO', f"{len(used)} texture tiles: "
+                     + ", ".join(n for n, _f, _x in used), INFO))
+    missing = [n for n, _f, x in used if x == 'missing']
+    old = [n for n, _f, x in used if x == 'outdated']
+    if missing:
+        out.append(Issue(obj.name, 'NOT_BAKED', f"tile(s) not baked: {', '.join(missing)}",
+                         ERROR))
+    if old:
+        out.append(Issue(obj.name, 'OUTDATED', f"tile(s) outdated: {', '.join(old)}", WARNING))
+    return out
+
+
 def object_issues(obj, scene, plan):
     from ..baking import handmade
     names = check_names(obj, plan) if scene.multicamproject_export.auto_names else []
     if handmade.is_handmade(obj):
         return names + check_handmade(obj) + check_mesh(obj) + check_split(obj, scene)
-    return (names + check_materials(obj) + check_uv(obj) + check_color(obj, scene)
+    from . import tiles
+    uv = check_uv(obj)
+    if tiles.is_on(obj):            # the FBX gets uv_final's tiles, not uv_normal
+        uv = [i for i in uv if i.code not in ('UV_BAD', 'UV_EXTRA')]
+    return (names + check_materials(obj) + uv + check_color(obj, scene)
             + check_transform(obj) + check_mesh(obj) + check_textures(obj, scene)
-            + check_state(obj) + check_split(obj, scene))
+            + check_state(obj) + check_split(obj, scene) + check_tiles(obj, scene))
 
 
 # ---------------------------------------------------------------- scenes

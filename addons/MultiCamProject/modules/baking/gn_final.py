@@ -210,16 +210,19 @@ def albedo_on(objs, scene):
     """ALB on GN-Final for the time of an export, then off again. GN made the images
     float (4x the memory): their buffers are freed, the next draw reads the 8-bit file."""
     global _albedo_on
+    from . import tiles_view
     _albedo_on = True
     try:
         for o in objs:
             write_inputs(o, scene)
+            tiles_view.sync(o)              # Texture Tiles: Color from each tile's ALB_
         yield
     finally:
         _albedo_on = False
         for o in objs:
             try:
                 write_inputs(o, scene)
+                tiles_view.sync(o)
             except ReferenceError:
                 pass
         free_float_albedo()
@@ -230,10 +233,11 @@ def free_float_albedo():
     for obj in bpy.data.objects:
         if obj.library or obj.type != 'MESH':
             continue
-        img = common.data(obj).alb_image
-        if img is not None and img.has_data and img.is_float and not img.is_dirty \
-                and img.source == 'FILE':
-            img.buffers_free()
+        from . import tiles_view
+        for img in [common.data(obj).alb_image] + [a for a, _n in tiles_view.tile_images(obj)]:
+            if img is not None and img.has_data and img.is_float and not img.is_dirty \
+                    and img.source == 'FILE':
+                img.buffers_free()
 
 
 def drop_albedo():
