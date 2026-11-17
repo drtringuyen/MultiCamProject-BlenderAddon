@@ -49,13 +49,8 @@ def names(obj, k):
 
 
 def _tile_hash(obj, k):
-    import json
-    t = _tiles().tiles_of(obj)
-    try:
-        built = json.loads(t.built) if t.built else {}
-    except ValueError:
-        built = {}
-    return (built.get(str(t.tiles[k].uid)) or ["", k])[0]
+    """The tile's faces and their uv_final (hand edits count)."""
+    return _tiles().tile_hash(obj, k)
 
 
 def ba_stamp(obj, k, scene):
@@ -115,6 +110,11 @@ def problem(obj):
     _ft, over = tt.face_tiles(obj)
     if over:
         return f"{over} faces in two split parts - each face needs one tile (Select Overlaps)"
+    off = tt.misplaced(obj)
+    if off:
+        return (f"{sum(off.values())} faces of uv_final not on their tile ("
+                + ", ".join(t.tiles[k].name for k in sorted(off) if k < len(t.tiles))
+                + ") - Unwrap the tile or move them")
     return ""
 
 
@@ -359,9 +359,8 @@ def bake_steps(context, obj, albedo=True, normal=True, force=False):
     t0 = time.perf_counter()
     if obj.mode != 'OBJECT':
         raise RuntimeError("Object Mode needed")
-    if tt.outdated(obj):
-        yield jobs.Step("uv_final: updating the tiles")
-        tt.build(context, obj)
+    tt.sync_parts(obj)
+    tt.write_tile_attr(obj)             # GN-Tiles / export read the face's tile
     why = problem(obj) or route.problem(obj)
     if why:
         raise RuntimeError(why)

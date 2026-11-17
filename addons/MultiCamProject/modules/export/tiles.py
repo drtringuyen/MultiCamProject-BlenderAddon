@@ -6,12 +6,13 @@ map, uv_final, holds every tile side by side like UDIM: tile k (0-based) fills
 u in [k, k+1], v in [0, 1]. uv_normal is not touched - projection, BAo_ and the paint
 masks keep working on it; only the final bakes go through uv_final (one 8K per tile).
 
-uv_final is automatic: it is rebuilt when the switch goes on, when a part moves to
-another tile, when tiles are added / removed / reordered and when the faces of a part
-change (checked when the object leaves Edit Mode). Only the tiles whose faces changed
-are unwrapped again (Smart UV of just those faces); a reorder only shifts them."""
+uv_final is made once when the switch goes on: a copy of uv_normal, then each tile's
+parts unwrapped by their seams, packed to fill 0-1 and moved onto the tile. After that
+it is yours: edit it by hand ("Work on" picks the active UV map) or unwrap one tile /
+all tiles again with the buttons. Nothing re-unwraps it by itself; a reorder only shifts
+the tiles, and faces off their tile are reported. MCP_TILE (the face's tile) follows
+the parts automatically."""
 import hashlib
-import json
 
 import bpy
 import numpy as np
@@ -103,7 +104,37 @@ class MULTICAMPROJECT_PG_TilePart(bpy.types.PropertyGroup):
                        items=_tile_items, update=_changed)
 
 
+_WORK_UVS = (UV_FINAL, "uv_normal")
+
+
+def _work_uv_get(self):
+    me = self.id_data.data if isinstance(self.id_data, bpy.types.Object) else None
+    uvs = getattr(me, "uv_layers", None)
+    act = uvs.active.name if uvs is not None and uvs.active else ""
+    return 0 if act == UV_FINAL else 1
+
+
+def _work_uv_set(self, value):
+    me = self.id_data.data if isinstance(self.id_data, bpy.types.Object) else None
+    uvs = getattr(me, "uv_layers", None)
+    if uvs is None:
+        return
+    layer = uvs.get(_WORK_UVS[value])
+    if layer is not None:
+        uvs.active = layer          # the UV Editor shows and edits the active map
+    _drop_batches()
+    _redraw()
+
+
 class MULTICAMPROJECT_PG_Tiles(bpy.types.PropertyGroup):
+    work_uv: EnumProperty(
+        name="Work on", description="The UV map you see and edit in the UV Editor (the "
+        "active UV map). Bakes always use the right one",
+        items=((UV_FINAL, "uv_final", "The final layout: one 0-1 square per tile, side by "
+                "side. Edit it like any UV map; the Unwrap buttons redo a tile", 'UV', 0),
+               ("uv_normal", "uv_normal", "The processing UV: projection, BAo_ and the paint "
+                "masks", 'UV_DATA', 1)),
+        get=_work_uv_get, set=_work_uv_set)
     enabled: BoolProperty(
         name="Texture Tiles",
         description="Bake this object into one texture per tile (one 8K each) instead of one "
@@ -113,7 +144,7 @@ class MULTICAMPROJECT_PG_Tiles(bpy.types.PropertyGroup):
     active: IntProperty()
     parts: CollectionProperty(type=MULTICAMPROJECT_PG_TilePart)
     next_uid: IntProperty(default=1)
-    built: StringProperty()         # JSON {uid: [face hash, tile index]} of the last build
+    built: StringProperty()         # unused (old automatic builds); kept in the manifest
     note: StringProperty()          # the last build's message ('' = fine)
     show_3d: BoolProperty(name="Tiles in 3D View", default=True,
                           description="Tint the faces by their tile's color (Object Mode)",
@@ -191,64 +222,110 @@ def face_tiles(obj, me=None):
     return part_tile[own], over
 
 
-def _hash(faces, n):
-    h = hashlib.md5(np.int64(n).tobytes())
-    h.update(np.ascontiguousarray(faces, dtype=np.int32).tobytes())
-    return h.hexdigest()[:16]
-
-
-def plan(obj):
-    """What a build has to do: {uid: (hash, new index, 'keep'|'shift'|'unwrap')}, the
-    face tiles, overlaps."""
-    t = tiles_of(obj)
-    ft, over = face_tiles(obj)
-    n = len(obj.data.polygons)
-    try:
-        old = json.loads(t.built) if t.built else {}
-    except ValueError:
-        old = {}
-    has_uv = obj.data.uv_layers.get(UV_FINAL) is not None
-    out = {}
-    for k, x in enumerate(t.tiles):
-        h = _hash(np.nonzero(ft == k)[0], n)
-        prev = old.get(str(x.uid))
-        if not has_uv or prev is None or prev[0] != h:
-            act = 'unwrap'
-        elif prev[1] != k:
-            act = 'shift'
-        else:
-            act = 'keep'
-        out[x.uid] = (h, k, act, prev[1] if prev else k)
-    return out, ft, over
-
-
-def outdated(obj):
-    """True when uv_final does not match the tiles (cheap: hashes the face lists)."""
-    if not is_on(obj) or obj.mode != 'OBJECT':
-        return False
-    if {p.name for p in tiles_of(obj).parts} != set(split.part_names(obj.data)):
-        return True                 # a part added / deleted: the map follows at the build
-    p, _ft, _over = plan(obj)
-    return any(v[2] != 'keep' for v in p.values())
-
-
-# ---------------------------------------------------------------- build uv_final
+# ---------------------------------------------------------------- uv_final
 
 def _loop_faces(me):
-    ls = np.empty(len(me.polygons), dtype=np.int32)
     lt = np.empty(len(me.polygons), dtype=np.int32)
-    me.polygons.foreach_get("loop_start", ls)
     me.polygons.foreach_get("loop_total", lt)
     return np.repeat(np.arange(len(me.polygons), dtype=np.int32), lt)
 
 
-TILE_ANGLE = 1.5533             # 89 degrees: a scan's noisy faces make thousands of tiny
-                                # islands at 66, and their margins eat the tile
+def _final_uv(me):
+    layer = me.uv_layers.get(UV_FINAL)
+    if layer is None:
+        return None
+    uv = np.empty(len(me.loops) * 2, dtype=np.float32)
+    layer.uv.foreach_get("vector", uv)
+    return uv.reshape(-1, 2)
 
 
-def _smart_uv(context, obj, select):
-    """Smart UV Project of the faces in `select` into the active UV map (0-1), then packed
-    again by their concave shape (the Bed test tile: 7% -> about 2.5x the fill)."""
+def tile_hash(obj, k):
+    """Tile k's faces and their uv_final: a bake stamp changes when either does (a part
+    moved, the tile unwrapped again or edited by hand). Object Mode."""
+    me = obj.data
+    ft, _over = face_tiles(obj)
+    faces = np.nonzero(ft == k)[0]
+    h = hashlib.md5(np.int64(len(me.polygons)).tobytes())
+    h.update(np.ascontiguousarray(faces, dtype=np.int32).tobytes())
+    uv = _final_uv(me)
+    if uv is not None:
+        h.update(np.ascontiguousarray(uv[(ft == k)[_loop_faces(me)]]).tobytes())
+    return h.hexdigest()[:16]
+
+
+_place_cache = {}
+
+
+def misplaced(obj):
+    """{tile index: faces whose uv_final is not on their tile} (u in [k, k+1], v in 0-1,
+    judged by the face's UV centre). Object Mode, cached 2 s for the panel."""
+    import time
+    me = obj.data
+    if obj.mode != 'OBJECT' or me.uv_layers.get(UV_FINAL) is None:
+        return {}
+    now = time.monotonic()
+    key = (len(me.polygons), tuple(p.tile for p in tiles_of(obj).parts),
+           tuple(x.uid for x in tiles_of(obj).tiles))
+    hit = _place_cache.get(obj.name)
+    if hit and hit[1] == key and now - hit[0] < 2.0:
+        return hit[2]
+    uv = _final_uv(me)
+    lf = _loop_faces(me)
+    n = len(me.polygons)
+    cnt = np.maximum(np.bincount(lf, minlength=n), 1)
+    cu = np.bincount(lf, weights=uv[:, 0], minlength=n) / cnt
+    cv = np.bincount(lf, weights=uv[:, 1], minlength=n) / cnt
+    ft, _over = face_tiles(obj)
+    bad = (np.floor(cu) != ft) | (cv < 0.0) | (cv > 1.0)
+    out = {int(k): int(v) for k, v in zip(*np.unique(ft[bad], return_counts=True))}
+    _place_cache[obj.name] = (now, key, out)
+    return out
+
+
+def make_uv_final(obj):
+    """uv_final as a copy of uv_normal (else of the active UV map); the active map stays.
+    Returns the layer."""
+    from ..camera_project import core as cp
+    me = obj.data
+    uvs = me.uv_layers
+    layer = uvs.get(UV_FINAL)
+    if layer is not None:
+        return layer
+    src = uvs.get(cp.UV_NORMAL) or uvs.active
+    prev = uvs.active.name if uvs.active else ""
+    if src is not None:
+        uvs.active = src
+    layer = uvs.new(name=UV_FINAL, do_init=src is not None)     # copies the active map
+    if layer is None:
+        raise RuntimeError("No room for uv_final (8 UV maps at most)")
+    if uvs.get(prev):
+        uvs.active = uvs[prev]
+    return layer
+
+
+def write_tile_attr(obj):
+    """MCP_TILE (the face's tile, read by GN-Tiles) from the parts. Object Mode."""
+    me = obj.data
+    ft, over = face_tiles(obj)
+    att = me.attributes.get(TILE_ATTR)
+    if att is not None and (att.domain != 'FACE' or att.data_type != 'INT'):
+        me.attributes.remove(att)
+        att = None
+    if att is None:
+        att = me.attributes.new(TILE_ATTR, 'INT', 'FACE')
+    else:
+        old = np.empty(len(me.polygons), dtype=np.int32)
+        att.data.foreach_get("value", old)
+        if np.array_equal(old, ft):
+            return ft, over
+    att.data.foreach_set("value", ft.astype(np.int32))
+    me.update()
+    return ft, over
+
+
+def _unwrap(context, obj, select):
+    """Unwrap the faces in `select` into the active UV map by their seams (the tile's
+    border cuts too), then pack the islands to fill 0-1."""
     from ..baking import common
     s = common.settings(context.scene)
     res = common.resolution(obj, context.scene)
@@ -261,8 +338,8 @@ def _smart_uv(context, obj, select):
     bpy.ops.object.mode_set(mode='EDIT')
     try:
         bpy.ops.mesh.select_mode(type='FACE', use_extend=False, use_expand=False)
-        bpy.ops.uv.smart_project(angle_limit=TILE_ANGLE, island_margin=margin,
-                                 area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+        bpy.ops.uv.unwrap(method='ANGLE_BASED', fill_holes=True, correct_aspect=True,
+                          margin_method='FRACTION', margin=margin)
         bpy.ops.uv.select_all(action='SELECT')
         bpy.ops.uv.pack_islands(shape_method='CONCAVE', margin_method='FRACTION',
                                 margin=margin, rotate=True)
@@ -270,8 +347,9 @@ def _smart_uv(context, obj, select):
         bpy.ops.object.mode_set(mode='OBJECT')
 
 
-def build(context, obj, force=False):
-    """Make uv_final match the tiles. Returns a one-line message; raises on bad state."""
+def unwrap_tiles(context, obj, only=None):
+    """Unwrap each tile's parts again on uv_final (by your seams), pack them to fill 0-1
+    and move them onto their tile. `only`: one tile index. Object Mode. Returns a message."""
     if obj.mode != 'OBJECT':
         raise RuntimeError("Object Mode needed")
     t = tiles_of(obj)
@@ -279,17 +357,13 @@ def build(context, obj, force=False):
         raise RuntimeError("No tiles")
     sync_parts(obj)
     me = obj.data
-    p, ft, over = plan(obj)
-    if force:
-        p = {u: (h, k, 'unwrap', ok) for u, (h, k, _a, ok) in p.items()}
+    make_uv_final(obj)
+    ft, over = write_tile_attr(obj)
     uvs = me.uv_layers
     prev_active = uvs.active.name if uvs.active else ""
     prev_render = next((u.name for u in uvs if u.active_render), "")
-    layer = uvs.get(UV_FINAL)
-    if layer is None:
-        layer = uvs.new(name=UV_FINAL, do_init=False)
-    nl = len(me.loops)
     lf = _loop_faces(me)
+    nl = len(me.loops)
     saved = {}
     for coll in ("vertices", "edges", "polygons"):
         a = np.empty(len(getattr(me, coll)), dtype=bool)
@@ -297,48 +371,34 @@ def build(context, obj, force=False):
         saved[coll] = a
     ts = context.scene.tool_settings
     select_mode = tuple(ts.mesh_select_mode)
-    done = {'unwrap': [], 'shift': []}
+    done = []
     try:
-        uv = np.empty(nl * 2, dtype=np.float32)
-        layer.uv.foreach_get("vector", uv)
-        uv = uv.reshape(-1, 2)
+        uv = _final_uv(me)
         from ..baking.engine import selection
-        jobs_ = [(u, k, ok) for u, (h, k, act, ok) in p.items() if act == 'unwrap']
-        if jobs_:
-            with selection(context, obj, [obj]):
-                with context.temp_override(active_object=obj, object=obj,
-                                           selected_objects=[obj],
-                                           selected_editable_objects=[obj]):
-                    for _u, k, _ok in jobs_:
-                        faces = ft == k
-                        if not faces.any():
-                            continue
-                        # a UV map of its own: the other tiles' islands would share the
-                        # packing (the Bed tile filled 7% instead of 15%)
-                        tmp = uvs.new(name=UNWRAP_TMP, do_init=False)
-                        try:
-                            uvs.active = tmp
-                            _smart_uv(context, obj, faces)
-                            t_uv = np.empty(nl * 2, dtype=np.float32)
-                            uvs[UNWRAP_TMP].uv.foreach_get("vector", t_uv)
-                        finally:
+        with selection(context, obj, [obj]):
+            with context.temp_override(active_object=obj, object=obj, selected_objects=[obj],
+                                       selected_editable_objects=[obj]):
+                for k in range(len(t.tiles)):
+                    if only is not None and k != only:
+                        continue
+                    faces = ft == k
+                    if not faces.any():
+                        continue
+                    # a UV map of its own: the other tiles' islands would share the packing
+                    tmp = uvs.new(name=UNWRAP_TMP, do_init=False)
+                    try:
+                        uvs.active = tmp
+                        _unwrap(context, obj, faces)
+                        t_uv = np.empty(nl * 2, dtype=np.float32)
+                        uvs[UNWRAP_TMP].uv.foreach_get("vector", t_uv)
+                    finally:
+                        if uvs.get(UNWRAP_TMP):
                             uvs.remove(uvs[UNWRAP_TMP])
-                        loops = faces[lf]
-                        uv[loops] = t_uv.reshape(-1, 2)[loops]
-                        uv[loops, 0] += k               # Smart UV packed it into 0-1
-                        done['unwrap'].append(k)
-        for u, (h, k, act, ok) in p.items():
-            if act == 'shift' and k != ok:
-                uv[ft[lf] == k, 0] += k - ok
-                done['shift'].append(k)
+                    loops = faces[lf]
+                    uv[loops] = t_uv.reshape(-1, 2)[loops]
+                    uv[loops, 0] += k
+                    done.append(t.tiles[k].name)
         uvs[UV_FINAL].uv.foreach_set("vector", uv.ravel())
-        att = me.attributes.get(TILE_ATTR)
-        if att is not None and (att.domain != 'FACE' or att.data_type != 'INT'):
-            me.attributes.remove(att)
-            att = None
-        if att is None:
-            att = me.attributes.new(TILE_ATTR, 'INT', 'FACE')
-        att.data.foreach_set("value", ft.astype(np.int32))      # GN-Tiles reads it
     finally:
         for coll, a in saved.items():
             if len(getattr(me, coll)) == len(a):
@@ -349,20 +409,33 @@ def build(context, obj, force=False):
             uvs.active = uvs[prev_active]
         if uvs.get(prev_render):
             uvs[prev_render].active_render = True
-    t.built = json.dumps({str(u): [h, k] for u, (h, k, _a, _ok) in p.items()})
     _drop_batches()
-    msg = []
-    if done['unwrap']:
-        msg.append("unwrapped " + ", ".join(t.tiles[k].name for k in done['unwrap']))
-    if done['shift']:
-        msg.append("moved " + ", ".join(t.tiles[k].name for k in done['shift']))
-    if over:
-        msg.append(f"{over} faces in two parts (first part wins)")
+    _place_cache.pop(obj.name, None)
     t.note = f"{over} faces in two parts - Select Overlaps, fix before baking" if over else ""
-    return "uv_final: " + ("; ".join(msg) if msg else "up to date")
+    msg = "uv_final: unwrapped " + (", ".join(done) if done else "nothing")
+    if over:
+        msg += f"; {over} faces in two parts (first part wins)"
+    return msg
 
 
-# ---------------------------------------------------------------- automatic rebuild
+def shift_tiles(obj, old_index):
+    """Tiles reordered: move each tile's uv_final by its index change (the layout stays).
+    `old_index`: {uid: index before}."""
+    me = obj.data
+    uv = _final_uv(me)
+    if uv is None or obj.mode != 'OBJECT':
+        return
+    ft, _over = face_tiles(obj)
+    lt = ft[_loop_faces(me)]
+    for k, x in enumerate(tiles_of(obj).tiles):
+        d = k - old_index.get(x.uid, k)
+        if d:
+            uv[lt == k, 0] += d
+    me.uv_layers[UV_FINAL].uv.foreach_set("vector", uv.ravel())
+    me.update()
+
+
+# ---------------------------------------------------------------- MCP_TILE follows the parts
 
 _pending = set()
 _timer = {"on": False}
@@ -370,6 +443,8 @@ _timer = {"on": False}
 
 def schedule(obj):
     _pending.add(obj.name)
+    _drop_batches(obj.name)
+    _place_cache.pop(obj.name, None)
     if not _timer["on"]:
         _timer["on"] = True
         bpy.app.timers.register(_run, first_interval=0.3)
@@ -381,6 +456,9 @@ def _window():
 
 
 def _run():
+    """Switched on: uv_final made and unwrapped once, then the map you work on. Always:
+    MCP_TILE written. uv_final is never unwrapped again by itself - that is the Unwrap
+    button, so your hand edits stay."""
     from ..baking import jobs
     if jobs.busy():
         return 2.0
@@ -393,18 +471,24 @@ def _run():
         if obj.mode != 'OBJECT':
             left.add(name)                  # again when it leaves Edit Mode
             continue
-        if obj.multicamproject_bake.locked:
-            tiles_of(obj).note = "Locked Finish - uv_final not rebuilt"
-            continue
         try:
-            if win is not None:
-                with bpy.context.temp_override(window=win):
-                    print(f"[MultiCamProject] {obj.name}: {build(bpy.context, obj)}")
+            sync_parts(obj)
+            if obj.data.uv_layers.get(UV_FINAL) is None:
+                if obj.multicamproject_bake.locked:
+                    tiles_of(obj).note = "Locked Finish - uv_final not made"
+                    continue
+                if win is not None:
+                    with bpy.context.temp_override(window=win):
+                        msg = unwrap_tiles(bpy.context, obj)
+                else:
+                    msg = unwrap_tiles(bpy.context, obj)
+                obj.data.uv_layers.active = obj.data.uv_layers[UV_FINAL]
+                print(f"[MultiCamProject] {obj.name}: {msg}")
             else:
-                print(f"[MultiCamProject] {obj.name}: {build(bpy.context, obj)}")
+                write_tile_attr(obj)
         except Exception as e:          # noqa: BLE001 - shown in the panel, never raised
-            tiles_of(obj).note = f"uv_final not built: {e}"
-            print(f"[MultiCamProject] {obj.name}: uv_final not built: {e}")
+            tiles_of(obj).note = f"uv_final not made: {e}"
+            print(f"[MultiCamProject] {obj.name}: uv_final not made: {e}")
     _pending.clear()
     _pending.update(left)
     _redraw()
@@ -416,17 +500,25 @@ def _run():
 
 @bpy.app.handlers.persistent
 def _on_depsgraph(scene, depsgraph):
-    """Leaving Edit Mode (or a Decimate applied) changes the faces: rebuild the tiles
-    whose faces changed."""
+    """Leaving Edit Mode (parts re-assigned, uv_final edited): MCP_TILE again, overlays
+    redrawn."""
     for u in depsgraph.updates:
         if not u.is_updated_geometry:
             continue
         obj = u.id.original if isinstance(u.id, bpy.types.Object) else None
         if obj is None or not is_on(obj) or obj.mode != 'OBJECT' or obj.name in _pending:
             continue
-        _drop_batches(obj.name)         # vertices may have moved (Edit Mode left)
+        _drop_batches(obj.name)
+        _place_cache.pop(obj.name, None)
         try:
-            if outdated(obj):
+            att = obj.data.attributes.get(TILE_ATTR)
+            if att is None or len(att.data) != len(obj.data.polygons):
+                schedule(obj)
+                continue
+            ft, _o = face_tiles(obj)
+            old = np.empty(len(ft), dtype=np.int32)
+            att.data.foreach_get("value", old)
+            if not np.array_equal(old, ft):
                 schedule(obj)
         except Exception:       # noqa: BLE001 - mesh mid-change
             pass
@@ -492,28 +584,52 @@ class MULTICAMPROJECT_OT_TileMove(bpy.types.Operator):
         new = self.index + self.step
         if not (0 <= self.index < len(t.tiles) and 0 <= new < len(t.tiles)):
             return {'CANCELLED'}
+        old = {x.uid: i for i, x in enumerate(t.tiles)}
         t.tiles.move(self.index, new)
+        shift_tiles(obj, old)           # each tile's islands go along, layout kept
         schedule(obj)
         return {'FINISHED'}
-
-
-class MULTICAMPROJECT_OT_TileRebuild(bpy.types.Operator):
-    """Unwrap every tile of uv_final again (Smart UV per tile)"""
-    bl_idname = "multicamproject.tile_rebuild"
-    bl_label = "Rebuild uv_final"
-    bl_options = {'REGISTER', 'UNDO'}
 
     @classmethod
     def poll(cls, context):
         return is_on(context.object) and context.mode == 'OBJECT'
 
+
+class MULTICAMPROJECT_OT_TileRebuild(bpy.types.Operator):
+    """Unwrap the tile's parts again on uv_final by your seams, pack the islands to fill
+    0-1 and move them onto their tile. Hand edits of that tile are replaced"""
+    bl_idname = "multicamproject.tile_rebuild"
+    bl_label = "Unwrap Tiles"
+    bl_options = {'REGISTER', 'UNDO'}
+
+    index: IntProperty(default=-1, options={'SKIP_SAVE'})      # -1 = every tile
+
+    @classmethod
+    def poll(cls, context):
+        return is_on(context.object) and context.mode in {'OBJECT', 'EDIT_MESH'}
+
+    @classmethod
+    def description(cls, context, props):
+        if props.index >= 0:
+            return ("Unwrap this tile's parts again on uv_final by your seams, pack them to "
+                    "fill 0-1 and move them onto the tile. Hand edits of this tile are "
+                    "replaced")
+        return cls.__doc__
+
     def execute(self, context):
         obj = context.object
+        edit = obj.mode == 'EDIT'
+        if edit:
+            bpy.ops.object.mode_set(mode='OBJECT')
         try:
-            self.report({'INFO'}, build(context, obj, force=True))
+            self.report({'INFO'}, unwrap_tiles(context, obj,
+                                               None if self.index < 0 else self.index))
         except RuntimeError as e:
             self.report({'ERROR'}, str(e))
             return {'CANCELLED'}
+        finally:
+            if edit:
+                bpy.ops.object.mode_set(mode='EDIT')
         _redraw()
         return {'FINISHED'}
 
@@ -542,10 +658,15 @@ def draw_tiles(layout, context, obj):
         return
     head.prop(t, "show_3d", text="", icon='SHADING_SOLID')
     head.prop(t, "show_uv", text="", icon='UV_DATA')
+    if obj.data.uv_layers.get(UV_FINAL) is not None:
+        row = box.row(align=True)
+        row.label(text="Work on", icon='GROUP_UVS')
+        row.prop(t, "work_uv", expand=True)
     from ..baking import common
     res = common.resolution(obj, context.scene)
     counts = _tile_counts(obj)
     baked = _bake_states(obj, context.scene)
+    off = misplaced(obj)
     col = box.column(align=True)
     for i, x in enumerate(t.tiles):
         row = col.row(align=True)
@@ -570,6 +691,9 @@ def draw_tiles(layout, context, obj):
             b.ui_units_x = 4
             b.label(text={'ok': "Baked", 'outdated': "Outdated", 'missing': "Not baked"}[st],
                     icon={'ok': 'CHECKMARK', 'outdated': 'TIME', 'missing': 'DOT'}[st])
+        op = row.operator("multicamproject.tile_rebuild", text="", icon='UV',
+                          depress=bool(off.get(i)))
+        op.index = i
         op = row.operator("multicamproject.tile_move", text="", icon='TRIA_LEFT')
         op.index, op.step = i, -1
         op = row.operator("multicamproject.tile_move", text="", icon='TRIA_RIGHT')
@@ -577,7 +701,7 @@ def draw_tiles(layout, context, obj):
         row.operator("multicamproject.tile_remove", text="", icon='X').index = i
     row = box.row(align=True)
     row.operator("multicamproject.tile_add", icon='ADD')
-    row.operator("multicamproject.tile_rebuild", icon='FILE_REFRESH')
+    row.operator("multicamproject.tile_rebuild", text="Unwrap All Tiles", icon='UV').index = -1
     used = len(counts) if counts else len(t.tiles)
     box.label(text=f"{used} textures of {res // 1024}K - parts pick their tile above",
               icon='TEXTURE')
@@ -585,8 +709,10 @@ def draw_tiles(layout, context, obj):
                    "then ALB_ and NOR_", icon='INFO')
     if obj.data.uv_layers.get(UV_FINAL) is None:
         box.label(text="uv_final not made yet", icon='ERROR')
-    elif obj.mode == 'OBJECT' and outdated(obj):
-        box.label(text="uv_final out of date - rebuilding", icon='TIME')
+    elif off:
+        box.label(text="Not on their tile: " + ", ".join(
+            f"{t.tiles[k].name} {n} faces" for k, n in sorted(off.items())
+            if k < len(t.tiles)) + " - Unwrap (or move them by hand)", icon='ERROR')
     if t.note:
         box.label(text=t.note, icon='ERROR')
 
@@ -594,7 +720,7 @@ def draw_tiles(layout, context, obj):
 def _tile_counts(obj):
     if obj.mode != 'OBJECT':
         return {}
-    key = (obj.name, tiles_of(obj).built, len(obj.data.polygons))
+    key = (obj.name, _parts_key(obj), len(obj.data.polygons))
     hit = _counts_cache.get(obj.name)
     if hit and hit[0] == key:
         return hit[1]
@@ -656,9 +782,14 @@ def _colors(obj):
     return np.array([tuple(x.color) for x in t.tiles] or [(1, 1, 1)], dtype=np.float32)
 
 
+def _parts_key(obj):
+    t = tiles_of(obj)
+    return (tuple((p.name, p.tile) for p in t.parts), tuple(x.uid for x in t.tiles))
+
+
 def _key(obj):
     t = tiles_of(obj)
-    return (t.built, len(obj.data.polygons), len(obj.data.vertices),
+    return (_parts_key(obj), len(obj.data.polygons), len(obj.data.vertices),
             tuple(tuple(round(c, 3) for c in x.color) for x in t.tiles))
 
 

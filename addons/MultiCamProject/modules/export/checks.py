@@ -491,9 +491,10 @@ def check_tiles(obj, scene):
     if why:
         return [Issue(obj.name, 'TILES', why, ERROR)]
     out = []
-    if tiles.outdated(obj):
-        out.append(Issue(obj.name, 'TILES', "uv_final out of date (rebuilds in Object Mode)",
-                         WARNING))
+    off = tiles.misplaced(obj)
+    if off:
+        out.append(Issue(obj.name, 'TILES', f"{sum(off.values())} faces of uv_final not on "
+                         "their tile (Unwrap the tile or move them)", ERROR))
     st = tiles_bake.state(obj, scene)
     used = [(n, f, x) for n, f, x in st if x != 'empty']
     out.append(Issue(obj.name, 'TILES_INFO', f"{len(used)} texture tiles: "

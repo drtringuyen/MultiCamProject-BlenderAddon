@@ -3,7 +3,7 @@
 GN-Final is the user's group and stays as it is. A small per-object modifier GN-Tiles
 runs right after it, only while Final is on:
   1. uv_normal = uv_final - (tile, 0) on every corner (MCP_TILE: the tile of each face,
-     written by export/tiles.build) - so MAT_ and everything else that reads uv_normal
+     written by export/tiles.write_tile_attr) - so MAT_ and everything else that reads uv_normal
      (the exporter too) sees the tile's own 0-1 layout
   2. Set Material MAT_<obj>_<tile> on the faces of tile 1.. (tile 0 keeps MAT_<obj>)
 The tile materials carry their own tag (not MAT_'s): matsync never takes them for
