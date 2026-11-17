@@ -337,6 +337,13 @@ class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
     bl_label = "Send Back to Main File"
     bl_options = {'REGISTER'}
 
+    how: bpy.props.EnumProperty(
+        items=(('ASK', "Ask", "Outdated bakes: ask first"),
+               ('BAKE', "Bake + Send Back Final", "Bake what is outdated (ALB_ / NOR_, every "
+                "Texture Tile), lock and send back"),
+               ('AS_IS', "Send as it is", "Send the mesh, painting and bakes as they are now")),
+        default='ASK', options={'SKIP_SAVE', 'HIDDEN'})
+
     @classmethod
     def poll(cls, context):
         if not core.is_work_window(context.scene):
@@ -350,9 +357,28 @@ class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
             return False
         return True
 
+    def invoke(self, context, event):
+        obj = core.work_object(context.scene)
+        old = _outdated(obj, context.scene) if self.how == 'ASK' else []
+        if not old:
+            return self.execute(context)
+        idname = self.bl_idname
+
+        def draw(menu, _context):
+            col = menu.layout.column()
+            op = col.operator(idname, text="Bake outdated + Send Back Final", icon='RENDER_STILL')
+            op.how = 'BAKE'
+            op = col.operator(idname, text="Send as it is (outdated)", icon='EXPORT')
+            op.how = 'AS_IS'
+        context.window_manager.popup_menu(draw, title="Outdated: " + "; ".join(old),
+                                          icon='ERROR')
+        return {'CANCELLED'}
+
     def execute(self, context):
         if context.mode != 'OBJECT':
             bpy.ops.object.mode_set(mode='OBJECT')
+        if self.how == 'BAKE':
+            return self._bake_and_send(context)
         try:
             faces = core.send_back(context)
         except Exception as e:
@@ -360,6 +386,30 @@ class MULTICAMPROJECT_OT_WorkSendBack(bpy.types.Operator):
             return {'CANCELLED'}
         self.report({'INFO'}, f"{faces:,} faces sent back: Receive in the main file")
         return {'FINISHED'}
+
+
+    def _bake_and_send(self, context):
+        """Finalize + Send Back: unlocked first when locked, every outdated bake made (the
+        whole object and each tile), locked, sent back."""
+        obj = core.work_object(context.scene)
+        if obj is None:
+            return {'CANCELLED'}
+        for o in context.selected_objects:
+            o.select_set(False)
+        obj.select_set(True)
+        context.view_layer.objects.active = obj
+        d = getattr(obj, "multicamproject_bake", None)
+        if d is not None and d.locked:
+            d.locked = False            # Finalize locks it again when the bakes are current
+        return bpy.ops.multicamproject.bake_final()
+
+
+def _outdated(obj, scene, cached=False):
+    try:
+        from ..baking import operators as bops
+    except ImportError:
+        return []
+    return bops.outdated_bakes(obj, scene, cached) if obj is not None else []
 
 
 class MULTICAMPROJECT_OT_ReloadFolder(bpy.types.Operator):

@@ -340,19 +340,39 @@ VIEW_ITEMS = (('PROJECTION', "Processing", "The Processing material (MCP_): the 
                                  "projection is switched off", 'SHADING_TEXTURE', 1))
 
 
+VIEW_TILES = ('TILES', "Baked Tiles", "Texture Tiles: each tile's own ALB_ / NOR_ on "
+              "uv_final - what the export writes", 'UV', 2)
+_VIEW_ITEMS_TILES = VIEW_ITEMS + (VIEW_TILES,)
+
+
+def _tiled(obj):
+    t = getattr(obj, "multicamproject_tiles", None)
+    return bool(t is not None and t.enabled and obj.type == 'MESH')
+
+
+def _view_items(self, context):
+    return _VIEW_ITEMS_TILES if _tiled(self) else VIEW_ITEMS
+
+
 def _get_obj_view(self):
     from . import gn_final
-    return 1 if gn_final.is_final(self) else 0
+    if not gn_final.is_final(self):
+        return 0
+    return 2 if _tiled(self) and self.multicamproject_tiles.final_tiles else 1
 
 
 def _set_obj_view(self, value):
-    """Clicking the toggle of the active object switches every selected mesh with it."""
+    """Clicking the toggle of the active object switches every selected mesh with it.
+    Baked (1) shows the object's own ALB_ / NOR_ on uv_normal, Baked Tiles (2) each tile's
+    on uv_final (Texture Tiles objects; the others take it as Baked)."""
     from . import common, gn_final
     ctx = bpy.context
     objs = common.selected_meshes(ctx)
     if self not in objs:
         objs.append(self)
     for o in objs:
+        if _tiled(o) and value:
+            o.multicamproject_tiles.final_tiles = value == 2
         gn_final.set_final(o, ctx.scene, bool(value))
 
 
@@ -452,7 +472,7 @@ def register():
     bpy.utils.register_class(MULTICAMPROJECT_BakeSettings)
     bpy.types.Object.multicamproject_bake = PointerProperty(type=MULTICAMPROJECT_BakeData)
     bpy.types.Object.multicamproject_view = EnumProperty(
-        name="View", items=VIEW_ITEMS, get=_get_obj_view, set=_set_obj_view,
+        name="View", items=_view_items, get=_get_obj_view, set=_set_obj_view,
         options={'SKIP_SAVE'}, description="Projection setup or Final baked result (GN-Final)")
     bpy.types.Scene.multicamproject_bake_settings = PointerProperty(type=MULTICAMPROJECT_BakeSettings)
     bpy.types.Scene.multicamproject_green = FloatVectorProperty(

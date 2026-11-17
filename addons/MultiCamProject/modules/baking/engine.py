@@ -951,7 +951,7 @@ def bake_albedo(context, obj):
     return jobs.run_sync(bake_albedo_steps(context, obj))
 
 
-def bake_albedo_steps(context, obj):
+def bake_albedo_steps(context, obj, _whole=False):
     """ALB_<name> by the object's Bake Route:
         From Original    a copy of BAo_ (baked from the source first when needed)
         From Projection  a copy of BAp_ (rendered first when needed)
@@ -963,12 +963,23 @@ def bake_albedo_steps(context, obj):
     (jobs); returns the seconds."""
     from . import route
     from . import tiles_bake
-    if tiles_bake.is_on(obj):           # Texture Tiles: one ALB_ per tile through uv_final
-        secs = yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=False)
+    if tiles_bake.is_on(obj) and not _whole:
+        # Texture Tiles: the object's own ALB_ on uv_normal (the Baked view) when it is not
+        # current, then one ALB_ per tile through uv_final (only the ones not current)
+        from ... import steps
+        t0 = time.perf_counter()
+        steps.forget()
+        if not steps.alb_fresh(obj):
+            yield jobs.Step("ALB_ of the whole object (uv_normal)", 0.0)
+            yield from bake_albedo_steps(context, obj, _whole=True)
+        yield jobs.Step("ALB_ of each tile (uv_final)", 0.0)
+        yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=False)
         material.build(obj, context.scene)
         from . import tiles_view
         tiles_view.build_materials(obj)
         gn_final.set_final(obj, context.scene, True)        # GN-Tiles follows
+        secs = time.perf_counter() - t0
+        common.data(obj).last_bake_seconds = secs
         return secs
     scene = context.scene
     d = common.data(obj)

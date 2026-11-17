@@ -74,6 +74,7 @@ _session = None
 _final = ""                 # the object an Inpaint Final starts on (its lock does not stop it)
 _direct = ""                # the object whose ALB_ an Inpaint from 07 edits in place (Save
                             # writes the file itself, a copy in _previous: baking.alb_history)
+_direct_tile = -1           # with _direct: that Texture Tile's ALB_ (export/tiles.py)
 _op = None                  # the running modal (one at a time)
 _draw_handle = None
 _panel_handles = []         # draw handlers measuring the overlapping sidebars (_measure_panels)
@@ -95,6 +96,7 @@ class Session:
         tris, islands = tris if tris is not None else (None, None)
         self.alb_name = img.name                # the edited image (any source)
         self.kind = src.kind
+        self.tile = getattr(src, "tile", -1)    # a Texture Tile's ALB_ (edited in place)
         self.obj_name = src.owner.name          # the object, or the camera of a BG
         self.temp_name = temp.name
         self.path = _baking()[0].image_file(img)
@@ -121,7 +123,7 @@ class Session:
         # from it again and locks it again (baking.operators.FinalInpaintDone)
         self.final = src.kind == 'ALB' and _final == src.owner.name
         # Inpaint from 07's ALB_ row: Save writes over the edited file itself (Undo there)
-        self.direct = src.kind == 'ALB' and _direct == src.owner.name
+        self.direct = src.kind == 'ALB' and (_direct == src.owner.name or self.tile >= 0)
 
     @property
     def temp(self):
@@ -138,7 +140,7 @@ class Session:
     @property
     def src(self):
         owner = self.obj
-        return sources.Source(self.kind, owner) if owner is not None else None
+        return sources.Source(self.kind, owner, self.tile) if owner is not None else None
 
     # selection
     def touch(self, rect):
@@ -451,12 +453,14 @@ def start_reason(context):
     return None
 
 
-def _uv_triangles(obj, w, h):
+def _uv_triangles(obj, w, h, tile=-1):
     """(uv_normal triangles of obj in image pixels (n, 3, 2), UV island per triangle), or
-    None."""
+    None. `tile` >= 0: that Texture Tile's faces on uv_final, moved into 0-1."""
     me = obj.data if obj.type == 'MESH' else None
     if me is not None and obj.mode == 'EDIT':
         obj.update_from_editmode()      # in Edit Mode the mesh's UV data reads empty
+    if tile >= 0 and me is not None:
+        return _tile_triangles(obj, w, h, tile)
     uv = me.uv_layers.get("uv_normal") if me is not None else None
     if uv is None:
         return None
@@ -486,6 +490,38 @@ def _uv_triangles(obj, w, h):
     return tris * np.array((w, h), dtype=np.float32), islands
 
 
+def _tile_triangles(obj, w, h, k):
+    """_uv_triangles of Texture Tile k: its faces' uv_final - (k, 0), Object Mode data."""
+    from ..export import tiles
+    me = obj.data
+    uv = me.uv_layers.get(tiles.UV_FINAL)
+    if uv is None:
+        return None
+    me.calc_loop_triangles()
+    n = len(me.loop_triangles)
+    if not n:
+        return None
+    loops = np.empty(n * 3, dtype=np.int32)
+    me.loop_triangles.foreach_get("loops", loops)
+    tp = np.empty(n, dtype=np.int32)
+    me.loop_triangles.foreach_get("polygon_index", tp)
+    ft, _over = tiles.face_tiles(obj)
+    keep = ft[tp] == k
+    if not keep.any():
+        return None
+    loops = loops.reshape(n, 3)[keep].ravel()
+    n = int(keep.sum())
+    uvs = np.empty(len(me.loops) * 2, dtype=np.float32)
+    uv.data.foreach_get("uv", uvs)
+    uvs = uvs.reshape(-1, 2)
+    uvs[:, 0] -= k
+    tris = uvs[loops].reshape(n, 3, 2)
+    vidx = np.empty(len(me.loops), dtype=np.int32)
+    me.loops.foreach_get("vertex_index", vidx)
+    islands = ipf.triangle_islands(vidx[loops].reshape(n, 3), tris)
+    return tris * np.array((w, h), dtype=np.float32), islands
+
+
 def start(context):
     """A working copy of the target ALB_, shown in this editor. Returns the session."""
     global _session
@@ -497,7 +533,10 @@ def start(context):
     common, _engine, _hm = _baking()
     alb, src = target(context)
     owner = bpy.data.objects.get(_direct) if _direct else None
-    if owner is not None:       # 07's brush: the ALB_ the model uses, whatever the editor shows
+    if owner is not None and _direct_tile >= 0:     # a Texture Tile's ALB_ row
+        src = sources.Source('ALB', owner, _direct_tile)
+        alb = sources.original(src)
+    elif owner is not None:     # 07's brush: the ALB_ the model uses, whatever the editor shows
         alb = common.alb_source(owner)    # (in Edit Mode it had switched to BAo_, 2026-11-03)
         src = sources.Source('ALB', owner)
     path = common.image_file(alb)
@@ -516,7 +555,8 @@ def start(context):
     temp[KEY] = alb.name
     margin = common.margin_px(common.settings(context.scene), w)
     # a baked texture fills per UV island of uv_normal; a photo is one piece
-    tris = _uv_triangles(src.owner, w, h) if src.kind != 'BG' else None
+    tris = (_uv_triangles(src.owner, w, h, getattr(src, "tile", -1)) if src.kind != 'BG'
+            else None)
     _session = Session(alb, src, temp, buf, tris, margin if src.kind != 'BG' else 0)
     _session.push()
     _ensure_handler()
@@ -602,7 +642,8 @@ def save():
     src, temp = s.src, s.temp
     if src is None or s.alb is None:
         raise ValueError(f"{s.alb_name} is gone - Discard")
-    if s.direct:            # 07 / Save into ALB_: the ALB_ file itself, Undo in 07
+    if s.direct or getattr(src, "tile", -1) >= 0:   # 07 / a tile / Save into ALB_: the
+        # ALB_ file itself, Undo in 07 (a tile's ALB_ has no _inpaint copy)
         img = _save_into_alb(s, src)
         _end(img)
         return img
@@ -624,14 +665,17 @@ def _save_into_alb(s, src):
     common = _baking()[0]
     obj = src.owner
     d = obj.multicamproject_bake
-    path = common.image_file(d.alb_image)
+    target = sources.original(src)      # the object's ALB_, or the tile's
+    path = common.image_file(target)
     if not path or not os.path.isfile(path):
-        raise ValueError(f"{d.alb_image.name if d.alb_image else 'ALB_'} has no file")
+        raise ValueError(f"{target.name if target else 'ALB_'} has no file")
     from ..camera_project import imgsize
-    size = imgsize.size(d.alb_image)
+    size = imgsize.size(target)
     if size and tuple(size) != (s.w, s.h):
         raise ValueError(f"ALB_ is {size[0]}px, this copy {s.w}px - not written")
     alb_history.write_rgb(obj, path, bpy.context.scene, s.buf)
+    if getattr(src, "tile", -1) >= 0:
+        return target
     if d.alb_inpaint is not None and d.alb_use_inpaint:
         d.alb_use_inpaint = False
         sources.relink(src, bpy.context.scene)
@@ -646,10 +690,11 @@ def discard():
 
 def _end(show):
     """Editors on the copy go back to `show`; the copy is removed."""
-    global _session, _final, _direct
+    global _session, _final, _direct, _direct_tile
     s, _session = _session, None
     _final = ""
     _direct = ""
+    _direct_tile = -1
     if s is None:
         return
     s.tex.clear()
@@ -1555,7 +1600,9 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
                                      description="Inpaint Final: the Finalized ALB_ of a "
                                                  "locked object"),
         direct=bpy.props.BoolProperty(options={'HIDDEN', 'SKIP_SAVE'},
-                                      description="07: Save writes the ALB_ file itself"))
+                                      description="07: Save writes the ALB_ file itself"),
+        tile=bpy.props.IntProperty(default=-1, options={'HIDDEN', 'SKIP_SAVE'},
+                                   description="A Texture Tile's ALB_ (in place)"))
 
     @classmethod
     def description(cls, context, props):
@@ -1569,8 +1616,13 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
         return cls.__doc__
 
     def execute(self, context):
-        global _final, _direct
+        global _final, _direct, _direct_tile
         src = _op_source(self, context)
+        if src is not None and self.tile >= 0:
+            src = sources.Source('ALB', src.owner, self.tile)
+            if sources.original(src) is None:
+                self.report({'ERROR'}, "This tile has no ALB_ yet - bake it first")
+                return {'CANCELLED'}
         if src is None:
             self.report({'ERROR'}, "Nothing to inpaint")
             return {'CANCELLED'}
@@ -1585,6 +1637,7 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
         else:
             _final = ""
         _direct = src.owner.name if self.direct and src.kind == 'ALB' else ""
+        _direct_tile = self.tile if _direct and self.tile >= 0 else -1
         why = locked(src)
         if why:
             self.report({'WARNING'}, why)
@@ -1594,8 +1647,8 @@ class MULTICAMPROJECT_OT_inpaint_load(bpy.types.Operator):
             from ..camera_project.operators import processing_preview
             processing_preview(context, context.active_object)
         img = sources.current(src)
-        if self.direct and src.kind == 'ALB':     # what the model uses (Load: the loaded file)
-            img = _baking()[0].alb_source(src.owner) or img
+        if self.direct and src.kind == 'ALB' and self.tile < 0:  # what the model uses
+            img = _baking()[0].alb_source(src.owner) or img          # (Load: the loaded file)
         if context.area is not None and context.area.type == 'VIEW_3D':
             return self._from_3d(context, img)
         win, area = _editor_area(context)

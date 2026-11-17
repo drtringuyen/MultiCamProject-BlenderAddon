@@ -231,13 +231,25 @@ def smooth_faces(obj):
         common.data(obj).bn_stale = True
 
 
-def generate_steps(context, obj, source):
+def generate_steps(context, obj, source, _whole=False):
     """07: NOR_<name> from ALB_ (see the module doc) at the object's resolution, into MAT_.
     All faces are set smooth first. A generator (jobs); returns the seconds."""
     import numpy as np
     from .. import tiles_bake
-    if tiles_bake.is_on(obj):           # Texture Tiles: High-pass NOR_ per tile
+    if tiles_bake.is_on(obj) and not _whole:
+        # Texture Tiles: the object's own ALB_ / NOR_ on uv_normal (the Baked view) when not
+        # current, then High-pass NOR_ per tile (ALB_ first where it is not current)
+        from .... import steps
         smooth_faces(obj)
+        steps.forget()
+        if not steps.alb_fresh(obj):
+            yield jobs.Step("ALB_ of the whole object (uv_normal)", 0.0)
+            yield from engine.bake_albedo_steps(context, obj, _whole=True)
+            steps.forget()
+        if not steps.nor_fresh(obj):
+            yield jobs.Step("NOR_ of the whole object (uv_normal)", 0.0)
+            yield from generate_steps(context, obj, source, _whole=True)
+        yield jobs.Step("Each tile (uv_final)", 0.0)
         secs = yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=True)
         material.build(obj, context.scene)
         final.write_inputs(obj, context.scene)

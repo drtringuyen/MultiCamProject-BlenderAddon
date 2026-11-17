@@ -7,12 +7,14 @@ Per tile k:
                     outside 0-1 and are not written) - full detail, not the processing BAo_
                     stretched (that one stays on uv_normal for the preview and the masks).
                     2D Only Project: the scan's own textures by EEVEE, the same way.
-  ALB_<obj>[_tile]  MCP_ rendered by EEVEE on the tile (uv_render flattened on the shifted
+  ALB_<obj>_<tile>  MCP_ rendered by EEVEE on the tile (uv_render flattened on the shifted
                     uv_final, the other tiles' faces deleted from the copy). MCP_'s BAo_ node
                     reads BAo_k through the shifted UV for that moment; the photos keep their
                     own UVs, CMX / MSK keep uv_normal. Original route: a copy of BAo_k.
-  NOR_<obj>[_tile]  high-pass of ALB_k.
-The first tile's ALB_ / NOR_ keep the object's names and are its alb_image / nor_image."""
+  NOR_<obj>_<tile>  high-pass of ALB_k.
+Every tile has its own names: the object's ALB_ / NOR_ (uv_normal, the Baked view) stay
+next to them and are baked as before. A tile on Load (alb_mode / nor_mode) points at
+02.Overrides/ALB_<obj>_<tile>.png instead of being baked."""
 import os
 import time
 from contextlib import contextmanager
@@ -43,9 +45,43 @@ def is_on(obj):
 def names(obj, k):
     """(BAo_, ALB_, NOR_) names of tile k."""
     t = _tiles().tiles_of(obj).tiles[k]
-    tail = "" if k == 0 else "_" + t.name
-    return (common.ba_name(obj) + "_" + t.name, common.alb_name(obj) + tail,
+    tail = "_" + t.name
+    return (common.ba_name(obj) + tail, common.alb_name(obj) + tail,
             common.nor_name(obj) + tail)
+
+
+def override_path(scene, obj, k, kind):
+    """02.Overrides/ALB_<obj>_<tile>.png (NOR_) - '' without an Overrides folder."""
+    from ..tex_override import core as tex
+    top = tex.folder(scene)
+    if not top:
+        return ""
+    return os.path.join(top, names(obj, k)[1 if kind == 'ALB' else 2] + ".png")
+
+
+def is_load(x, kind):
+    return (x.alb_mode if kind == 'ALB' else x.nor_mode) == 'LOAD'
+
+
+def override_available(scene, obj, k, kind):
+    path = override_path(scene, obj, k, kind)
+    return bool(path) and os.path.isfile(path)
+
+
+def point_at(scene, obj, k, kind, path):
+    """Tile k's ALB_ / NOR_ image on `path` (made when it has none)."""
+    x = _tiles().tiles_of(obj).tiles[k]
+    nm = names(obj, k)[1 if kind == 'ALB' else 2]
+    ptr = "alb_image" if kind == 'ALB' else "nor_image"
+    img = getattr(x, ptr) or bpy.data.images.get(nm)
+    if img is None:
+        img = bpy.data.images.load(path, check_existing=False)
+    if img.name != nm and not bpy.data.images.get(nm):
+        img.name = nm
+    img.colorspace_settings.name = 'Non-Color' if kind == 'NOR' else 'sRGB'
+    engine.link_file(img, path)
+    setattr(x, ptr, img)
+    return img
 
 
 def _tile_hash(obj, k):
@@ -87,16 +123,34 @@ def state(obj, scene=None):
         if not n:
             out.append((x.name, 0, 'empty'))
             continue
-        alb = x.alb_image
-        if alb is None or not common.file_ok(alb) or x.nor_image is None:
-            st = 'missing'
-        elif x.alb_stamp != alb_stamp(obj, k, scene) or \
-                x.nor_stamp != nor_stamp(obj, k, scene, alb):
-            st = 'outdated'
-        else:
-            st = 'ok'
-        out.append((x.name, n, st))
+        out.append((x.name, n, tile_state(obj, k, scene)))
     return out
+
+
+def kind_state(obj, k, scene, kind):
+    """'ok' | 'outdated' | 'missing' of tile k's ALB_ or NOR_ (Load: its file is there)."""
+    d = common.data(obj)
+    x = _tiles().tiles_of(obj).tiles[k]
+    img = x.alb_image if kind == 'ALB' else x.nor_image
+    if img is None or img in (d.alb_image, d.nor_image) or not common.file_ok(img):
+        return 'missing'            # (an older build shared the object's ALB_ / NOR_)
+    if is_load(x, kind):
+        return 'ok'
+    if kind == 'ALB':
+        return 'ok' if x.alb_stamp == alb_stamp(obj, k, scene) else 'outdated'
+    return 'ok' if x.nor_stamp == nor_stamp(obj, k, scene, x.alb_image) else 'outdated'
+
+
+def tile_state(obj, k, scene):
+    a, n = kind_state(obj, k, scene, 'ALB'), kind_state(obj, k, scene, 'NOR')
+    if 'missing' in (a, n):
+        return 'missing'
+    return 'outdated' if 'outdated' in (a, n) else 'ok'
+
+
+def all_fresh(obj, scene):
+    """Every tile with faces baked and current."""
+    return all(st in ('ok', 'empty') for _n, _f, st in state(obj, scene))
 
 
 def problem(obj):
@@ -364,9 +418,6 @@ def bake_steps(context, obj, albedo=True, normal=True, force=False):
     why = problem(obj) or route.problem(obj)
     if why:
         raise RuntimeError(why)
-    if any(getattr(d, a, 'BAKE') == 'LOAD' for a in ("alb_mode", "nor_mode")):
-        print(f"[MultiCamProject] {obj.name}: Texture Tiles bake every tile - the Load "
-              "override is not used per tile")
     size = common.resolution(obj, scene)
     r = route.get(obj)
     uses_original = r != route.PROJECTION
@@ -385,39 +436,34 @@ def bake_steps(context, obj, albedo=True, normal=True, force=False):
             continue
         ba = x.ba_image
         made = []
-        if uses_original and (force or ba is None or not common.file_ok(ba)
-                              or x.ba_stamp != ba_stamp(obj, k, scene)):
-            ba = yield from _bake_ba(context, obj, k, size)
-            made.append("BAo_")
-        alb = x.alb_image
-        if albedo and (force or alb is None or not common.file_ok(alb)
-                       or x.alb_stamp != alb_stamp(obj, k, scene)):
-            alb = yield from _bake_alb(context, obj, k, size, ba)
+        alb_load = is_load(x, 'ALB') and override_available(scene, obj, k, 'ALB')
+        nor_load = is_load(x, 'NOR') and override_available(scene, obj, k, 'NOR')
+        if is_load(x, 'ALB') and not alb_load:
+            x.alb_mode = 'BAKE'         # its file is gone: back to Bake
+        if is_load(x, 'NOR') and not nor_load:
+            x.nor_mode = 'BAKE'
+        if alb_load:
+            if albedo:
+                point_at(scene, obj, k, 'ALB', override_path(scene, obj, k, 'ALB'))
+                made.append("ALB_ Load")
+        elif albedo and (force or kind_state(obj, k, scene, 'ALB') != 'ok'):
+            if uses_original and (force or ba is None or not common.file_ok(ba)
+                                  or x.ba_stamp != ba_stamp(obj, k, scene)):
+                ba = yield from _bake_ba(context, obj, k, size)
+                made.append("BAo_")
+            yield from _bake_alb(context, obj, k, size, ba)
             made.append("ALB_")
-        if normal and alb is not None and (force or x.nor_image is None
-                                           or not common.file_ok(x.nor_image)
-                                           or x.nor_stamp != nor_stamp(obj, k, scene, alb)):
+        alb = x.alb_image
+        if nor_load:
+            if normal:
+                point_at(scene, obj, k, 'NOR', override_path(scene, obj, k, 'NOR'))
+                made.append("NOR_ Load")
+        elif normal and alb is not None and (force or kind_state(obj, k, scene, 'NOR') != 'ok'):
             yield from _make_nor(context, obj, k, size, alb)
             made.append("NOR_")
-        if k:
-            _free(x.ba_image, x.alb_image, x.nor_image)     # one tile in memory at a time
-        else:
-            _free(x.ba_image)
+        _free(x.ba_image, x.alb_image, x.nor_image)     # one tile in memory at a time
         if made:
             done.append(f"{x.name} ({' '.join(made)})")
-    first = t.tiles[0]
-    if first.alb_image is not None:
-        d.alb_image = first.alb_image
-        d.alb_size = size
-        d.fingerprint = fingerprint.compute(obj)
-    if first.nor_image is not None:
-        d.nor_image = first.nor_image
-        d.nor_size = size
-        try:
-            from .normal import state as nor_state
-            d.nor_fingerprint = nor_state(obj, scene)
-        except ImportError:
-            pass
     d.last_bake_seconds = time.perf_counter() - t0
     print(f"[MultiCamProject] {obj.name}: tiles baked {', '.join(done) or 'nothing (current)'} in "
           f"{d.last_bake_seconds:.0f} s")
@@ -427,15 +473,12 @@ def bake_steps(context, obj, albedo=True, normal=True, force=False):
 # ---------------------------------------------------------------- work file hand-off
 
 def image_slots(obj):
-    """[(tile, pointer)] of every tile image this object owns: each tile's BAo_, and the
-    ALB_ / NOR_ of the tiles after the first (the first one's are the object's own)."""
+    """[(tile, pointer)] of every tile image this object owns: BAo_, ALB_, NOR_ of each."""
     if not is_on(obj):
         return []
     out = []
-    for k, x in enumerate(_tiles().tiles_of(obj).tiles):
-        out.append((x, "ba_image"))
-        if k:
-            out += [(x, "alb_image"), (x, "nor_image")]
+    for x in _tiles().tiles_of(obj).tiles:
+        out += [(x, "ba_image"), (x, "alb_image"), (x, "nor_image")]
     return out
 
 
@@ -452,17 +495,18 @@ def to_manifest(obj, scene):
     for k, x in enumerate(t.tiles):
         files = {}
         for ptr in ("ba_image", "alb_image", "nor_image"):
-            if k == 0 and ptr != "ba_image":
-                continue
+            if ptr != "ba_image" and is_load(x, 'ALB' if ptr == "alb_image" else 'NOR'):
+                continue            # a Load: the main file reads the same 02.Overrides file
             path = common.image_file(getattr(x, ptr))
             if path and os.path.isfile(path):
                 files[ptr] = path
         ba_ok = bool(x.ba_image and x.ba_stamp == ba_stamp(obj, k, scene))
         tiles.append({"name": x.name, "uid": x.uid, "color": list(x.color), "files": files,
-                      "fresh": st.get(x.name) == 'ok', "ba_fresh": ba_ok})
+                      "fresh": st.get(x.name) == 'ok', "ba_fresh": ba_ok,
+                      "alb_mode": x.alb_mode, "nor_mode": x.nor_mode})
     return {"enabled": t.enabled, "tiles": tiles, "next_uid": t.next_uid, "built": t.built,
             "parts": [[p.name, p.tile] for p in t.parts],
-            "show_3d": t.show_3d, "show_uv": t.show_uv}
+            "show_3d": t.show_3d, "show_uv": t.show_uv, "final_tiles": t.final_tiles}
 
 
 def from_manifest(obj, scene, data):
@@ -484,6 +528,8 @@ def from_manifest(obj, scene, data):
         x = t.tiles.add()
         x.uid, x.color = item["uid"], item["color"]
         x.name = item["name"]
+        x.alb_mode = item.get("alb_mode", 'BAKE')
+        x.nor_mode = item.get("nor_mode", 'BAKE')
     t.next_uid = data.get("next_uid", len(t.tiles) + 1)
     t.parts.clear()
     for name, tile in data.get("parts", []):
@@ -495,6 +541,7 @@ def from_manifest(obj, scene, data):
             pass
     t.built = data.get("built", "")
     t.show_3d, t.show_uv = data.get("show_3d", True), data.get("show_uv", True)
+    t.final_tiles = data.get("final_tiles", True)
     taken = []
     for k, (x, item) in enumerate(zip(t.tiles, data["tiles"])):
         names_k = dict(zip(("ba_image", "alb_image", "nor_image"), names(obj, k)))
@@ -522,9 +569,10 @@ def from_manifest(obj, scene, data):
                 pass
     if data.get("enabled") and not t.enabled:
         t.enabled = True                # tiles are there: no start_tiles, a build if needed
-    d = common.data(obj)
-    if len(t.tiles):        # the first tile's ALB_ / NOR_ came as the object's own
-        t.tiles[0].alb_image, t.tiles[0].nor_image = d.alb_image, d.nor_image
+    for k, x in enumerate(t.tiles):     # a Load: the room's one 02.Overrides file
+        for kind in ('ALB', 'NOR'):
+            if is_load(x, kind) and override_available(scene, obj, k, kind):
+                point_at(scene, obj, k, kind, override_path(scene, obj, k, kind))
     for k, (x, item) in enumerate(zip(t.tiles, data["tiles"])):
         if item.get("ba_fresh") and x.ba_image is not None:
             x.ba_stamp = ba_stamp(obj, k, scene)

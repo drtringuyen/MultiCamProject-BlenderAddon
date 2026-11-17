@@ -5,7 +5,9 @@ runs right after it, only while Final is on:
   1. uv_normal = uv_final - (tile, 0) on every corner (MCP_TILE: the tile of each face,
      written by export/tiles.write_tile_attr) - so MAT_ and everything else that reads uv_normal
      (the exporter too) sees the tile's own 0-1 layout
-  2. Set Material MAT_<obj>_<tile> on the faces of tile 1.. (tile 0 keeps MAT_<obj>)
+  2. Set Material MAT_<obj>_<tile> on each tile's faces
+It is on in "Baked Tiles" (and always during an export); "Baked" shows the object's own
+MAT_ / ALB_ / NOR_ on uv_normal with GN-Tiles off.
 The tile materials carry their own tag (not MAT_'s): matsync never takes them for
 orphans, so it never recycles their files; the tile owns them (tile.material)."""
 import bpy
@@ -75,13 +77,11 @@ def _fill(mat, alb, nor):
 
 
 def build_materials(obj):
-    """MAT_<obj>_<tile> for every tile after the first, on the tile's ALB_ / NOR_."""
+    """MAT_<obj>_<tile> for every tile, on the tile's ALB_ / NOR_."""
     from ... import quality
     t = _tiles().tiles_of(obj)
     out = []
-    for k, x in enumerate(t.tiles):
-        if k == 0:
-            continue
+    for x in t.tiles:
         name = tile_mat_name(obj, x)
         mat = x.material
         if mat is None:
@@ -101,17 +101,17 @@ def build_materials(obj):
 
 
 def tile_images(obj):
-    """[(ALB_, NOR_)] of the tiles after the first (the first one's are the object's)."""
+    """[(ALB_, NOR_)] of every tile."""
     if not is_on(obj):
         return []
-    return [(x.alb_image, x.nor_image) for x in _tiles().tiles_of(obj).tiles[1:]]
+    return [(x.alb_image, x.nor_image) for x in _tiles().tiles_of(obj).tiles]
 
 
 def materials(obj):
     """The tile materials of obj (for the normal toggle, the export)."""
     if not is_on(obj):
         return []
-    return [x.material for x in _tiles().tiles_of(obj).tiles[1:] if x.material is not None]
+    return [x.material for x in _tiles().tiles_of(obj).tiles if x.material is not None]
 
 
 # ---------------------------------------------------------------- GN-Tiles
@@ -152,7 +152,7 @@ def _group(obj):
     g = st.outputs["Geometry"]
     g = _color_from_tiles(obj, b, g, tile, sub)
     for k, x in enumerate(_tiles().tiles_of(obj).tiles):
-        if k == 0 or x.material is None:
+        if x.material is None:
             continue
         eq = b.n("FunctionNodeCompare", (220 * k - 200, -300), data_type='INT',
                  operation='EQUAL')
@@ -170,8 +170,7 @@ def _group(obj):
 
 def _color_from_tiles(obj, b, g, tile, uv):
     """During an export (gn_final.albedo_on) that takes Color from ALB: Color sampled from
-    each face's own tile ALB_ (GN-Final sampled the first tile's through the processing
-    uv_normal). Outside an export no image is held: GN would make each 8K a 1 GB float."""
+    each face's own tile ALB_ (GN-Final sampled the object's own ALB_ through uv_normal). Outside an export no image is held: GN would make each 8K a 1 GB float."""
     from . import gn_final
     scene = bpy.context.scene
     if not gn_final._albedo_on or not gn_final.uses_alb(obj, scene):
@@ -179,7 +178,7 @@ def _color_from_tiles(obj, b, g, tile, uv):
     t = _tiles().tiles_of(obj)
     col = None
     for k, x in enumerate(t.tiles):
-        img = common.alb_source(obj) if k == 0 else x.alb_image
+        img = x.alb_image
         if img is None:
             continue
         tex = b.n("GeometryNodeImageTexture", (220 * k - 200, -700), interpolation='Linear',
@@ -224,14 +223,15 @@ def remove(obj):
 
 
 def sync(obj, final=None):
-    """GN-Tiles on (Final) / off (Projection), right after GN-Final; removed when the
-    object is not in Tiles mode."""
+    """GN-Tiles on (Baked Tiles, and in Baked during an export) / off (Processing, Baked on
+    uv_normal), right after GN-Final; removed when the object is not in Tiles mode."""
     from . import gn_final
     if not is_on(obj):
         remove(obj)
         return
     if final is None:
         final = gn_final.is_final(obj)
+    final = bool(final) and (_tiles().tiles_of(obj).final_tiles or gn_final._albedo_on)
     m = _modifier(obj)
     if m is None:
         if not final:

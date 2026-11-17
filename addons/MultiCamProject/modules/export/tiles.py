@@ -13,6 +13,7 @@ all tiles again with the buttons. Nothing re-unwraps it by itself; a reorder onl
 the tiles, and faces off their tile are reported. MCP_TILE (the face's tile) follows
 the parts automatically."""
 import hashlib
+import os
 
 import bpy
 import numpy as np
@@ -80,6 +81,55 @@ def _overlay_changed(self, context):
     _redraw()
 
 
+_MODE_ITEMS = (('BAKE', "Bake", "05 / 07 bake this tile's texture into 01.Bake"),
+               ('LOAD', "Load", "Use the finished file in 02.Overrides (<name>.png) as it is"))
+_mode_busy = set()
+
+
+def _mode_changed(x, kind):
+    """Bake | Load of one tile texture: Load points the image at 02.Overrides (back to Bake
+    when the file is not there), Bake at its baked file in 01.Bake (none: Not baked)."""
+    obj = x.id_data
+    key = (obj.name, x.uid, kind)
+    if key in _mode_busy:
+        return
+    t = tiles_of(obj)
+    k = next((i for i, y in enumerate(t.tiles) if y.uid == x.uid), None)
+    if k is None:
+        return
+    from ..baking import common, tiles_bake
+    scene = bpy.context.scene
+    ptr = "alb_image" if kind == 'ALB' else "nor_image"
+    _mode_busy.add(key)
+    try:
+        if tiles_bake.is_load(x, kind):
+            if not tiles_bake.override_available(scene, obj, k, kind):
+                setattr(x, "alb_mode" if kind == 'ALB' else "nor_mode", 'BAKE')
+                print(f"[MultiCamProject] {obj.name}: no "
+                      f"{os.path.basename(tiles_bake.override_path(scene, obj, k, kind)) or 'Overrides folder'}"
+                      " - stays on Bake")
+            else:
+                tiles_bake.point_at(scene, obj, k, kind,
+                                    tiles_bake.override_path(scene, obj, k, kind))
+        else:
+            name = tiles_bake.names(obj, k)[1 if kind == 'ALB' else 2]
+            path = common.texture_path(scene, name)
+            if os.path.isfile(path):
+                tiles_bake.point_at(scene, obj, k, kind, path)
+                if kind == 'ALB':
+                    x.alb_stamp = ""        # baked before the Load: bake it again
+                else:
+                    x.nor_stamp = ""
+            else:
+                setattr(x, ptr, None)
+        from ..baking import tiles_view
+        tiles_view.refresh(obj, scene)
+    finally:
+        _mode_busy.discard(key)
+    _bake_cache.pop(obj.name, None)
+    _redraw()
+
+
 class MULTICAMPROJECT_PG_Tile(bpy.types.PropertyGroup):
     name: StringProperty(name="Name", description="The tile's name: its ALB_ / NOR_ / MAT_ "
                          "end in _<name> (the first tile keeps the object's own names)",
@@ -96,6 +146,10 @@ class MULTICAMPROJECT_PG_Tile(bpy.types.PropertyGroup):
     ba_stamp: StringProperty()
     alb_stamp: StringProperty()
     nor_stamp: StringProperty()
+    alb_mode: EnumProperty(name="ALB_", items=_MODE_ITEMS, default='BAKE',
+                           update=lambda s, c: _mode_changed(s, 'ALB'))
+    nor_mode: EnumProperty(name="NOR_", items=_MODE_ITEMS, default='BAKE',
+                           update=lambda s, c: _mode_changed(s, 'NOR'))
 
 
 class MULTICAMPROJECT_PG_TilePart(bpy.types.PropertyGroup):
@@ -145,6 +199,11 @@ class MULTICAMPROJECT_PG_Tiles(bpy.types.PropertyGroup):
     parts: CollectionProperty(type=MULTICAMPROJECT_PG_TilePart)
     next_uid: IntProperty(default=1)
     built: StringProperty()         # unused (old automatic builds); kept in the manifest
+    final_tiles: BoolProperty(default=True)     # Baked shows the tiles (uv_final), else
+                                                # the object's own ALB_ / NOR_ (uv_normal)
+    show_textures: BoolProperty(name="Tile Textures", default=True,
+                                description="Each tile's ALB_ / NOR_: Bake | Load, show, "
+                                            "inpaint, export")
     note: StringProperty()          # the last build's message ('' = fine)
     show_3d: BoolProperty(name="Tiles in 3D View", default=True,
                           description="Tint the faces by their tile's color (Object Mode)",
@@ -634,7 +693,160 @@ class MULTICAMPROJECT_OT_TileRebuild(bpy.types.Operator):
         return {'FINISHED'}
 
 
+_KIND_ITEMS = (('ALB', "ALB_", ""), ('NOR', "NOR_", ""))
+
+
+def _tile_image(obj, k, kind):
+    t = tiles_of(obj)
+    if obj is None or t is None or not 0 <= k < len(t.tiles):
+        return None
+    x = t.tiles[k]
+    return x.alb_image if kind == 'ALB' else x.nor_image
+
+
+class MULTICAMPROJECT_OT_TileTexExport(bpy.types.Operator):
+    """Write this tile texture as you see it into 02.Overrides (<name>.png) - pick Load to
+    use it from there. An older file there goes to the Recycle Bin"""
+    bl_idname = "multicamproject.tile_tex_export"
+    bl_label = "Tile Texture to 02.Overrides"
+    bl_options = {'REGISTER'}
+
+    object_name: StringProperty(options={'SKIP_SAVE'})
+    tile: IntProperty(options={'SKIP_SAVE'})
+    kind: EnumProperty(items=_KIND_ITEMS, options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        from ..baking import cache, common, handmade, tiles_bake
+        from ..tex_override.operators import MULTICAMPROJECT_OT_TexExportOverride as Exp
+        from ..tex_override.operators import write_shown
+        obj = bpy.data.objects.get(self.object_name)
+        img = _tile_image(obj, self.tile, self.kind)
+        if img is None:
+            self.report({'WARNING'}, "This tile has no texture yet")
+            return {'CANCELLED'}
+        dst = tiles_bake.override_path(context.scene, obj, self.tile, self.kind)
+        if not dst:
+            self.report({'WARNING'}, "No Overrides folder set (Project Setup)")
+            return {'CANCELLED'}
+        dst = os.path.normpath(dst)
+        tmp = None
+        try:
+            tmp = write_shown(img, dst)
+            if os.path.isfile(dst) and \
+                    os.path.normcase(common.image_file(img)) == os.path.normcase(dst):
+                from ..baking import alb_history     # the file itself: Undo takes it back
+                alb_history.push(obj, dst, context.scene)
+            Exp._replace(tmp, dst)
+        except (OSError, RuntimeError) as e:
+            self.report({'ERROR'}, f"{os.path.basename(dst)}: {e}")
+            return {'CANCELLED'}
+        finally:
+            if tmp and os.path.isfile(tmp):
+                os.remove(tmp)
+        handmade._reload_file(dst)
+        cache.clear()
+        self.report({'INFO'}, f"{os.path.basename(dst)} written to 02.Overrides")
+        _redraw()
+        return {'FINISHED'}
+
+
+class MULTICAMPROJECT_OT_TileTexRefresh(bpy.types.Operator):
+    """Read this tile texture from its file again (edited outside Blender)"""
+    bl_idname = "multicamproject.tile_tex_refresh"
+    bl_label = "Reload Tile Texture"
+    bl_options = {'REGISTER'}
+
+    object_name: StringProperty(options={'SKIP_SAVE'})
+    tile: IntProperty(options={'SKIP_SAVE'})
+    kind: EnumProperty(items=_KIND_ITEMS, options={'SKIP_SAVE'})
+
+    def execute(self, context):
+        from ..baking import cache
+        obj = bpy.data.objects.get(self.object_name)
+        img = _tile_image(obj, self.tile, self.kind)
+        if img is None:
+            return {'CANCELLED'}
+        img.reload()
+        cache.clear()
+        _bake_cache.pop(obj.name, None)
+        _redraw()
+        return {'FINISHED'}
+
+
 # ---------------------------------------------------------------- panel
+
+def _draw_tex_row(col, context, obj, k, x, kind):
+    """[ALB_ Bed · state] [inpaint][undo] [Bake|Load] [file] [export] [folder] [refresh]."""
+    from ... import module_manager
+    from ..baking import alb_history, tiles_bake
+    from ..baking import ui as bake_ui
+    scene = context.scene
+    img = x.alb_image if kind == 'ALB' else x.nor_image
+    st = tiles_bake.kind_state(obj, k, scene, kind) if obj.mode == 'OBJECT' else ''
+    text = f"{'ALB_' if kind == 'ALB' else 'NOR_'} {x.name}"
+    if st and st != 'ok':
+        text += "  ·  " + {'outdated': "outdated", 'missing': "not baked"}[st]
+    split = col.split(factor=0.3, align=True)
+    left = split.row(align=True)
+    left.alert = st == 'outdated'
+    if img is not None:
+        left.alignment = 'LEFT'
+        left.operator("multicamproject.show_image", text=text,
+                      icon='IMAGE_RGB' if kind == 'ALB' else 'NORMALS_FACE',
+                      emboss=False).image_name = img.name
+    else:
+        left.label(text=text, icon='IMAGE_RGB' if kind == 'ALB' else 'NORMALS_FACE')
+    right = split.row(align=True)
+    locked = obj.multicamproject_bake.locked
+    if module_manager.is_loaded("image_editor"):
+        sub = right.row(align=True)
+        if kind == 'ALB' and img is not None:
+            sub.enabled = not locked
+            op = sub.operator("multicamproject.inpaint_load", text="", icon='ANCHOR_CENTER')
+            op.kind, op.owner, op.direct, op.tile = 'ALB', obj.name, True, k
+            u = sub.row(align=True)
+            u.enabled = bool(alb_history.count(obj))
+            u.operator("multicamproject.alb_undo", text="",
+                       icon='LOOP_BACK').object_name = obj.name
+        else:
+            for _i in range(2):
+                sub.label(text="", icon='BLANK1')
+        right.separator(factor=0.5)
+    sw = right.row(align=True)
+    sw.enabled = not locked
+    sw.ui_units_x = 5
+    sw.prop(x, "alb_mode" if kind == 'ALB' else "nor_mode", expand=True)
+    right.separator(factor=0.5)
+    if img is not None:
+        def export(row):
+            op = row.operator("multicamproject.tile_tex_export", text="", icon='EXPORT')
+            op.object_name, op.tile, op.kind = obj.name, k, kind
+        bake_ui.draw_file(right, img, extra=export)
+    else:
+        right.label(text="(none yet)")
+    op = right.operator("multicamproject.tile_tex_refresh", text="", icon='FILE_REFRESH')
+    op.object_name, op.tile, op.kind = obj.name, k, kind
+    if tiles_bake.is_load(x, kind) and not tiles_bake.override_available(scene, obj, k, kind):
+        r = col.row()
+        r.alert = True
+        r.label(text="Override not found - the next bake goes back to Bake", icon='ERROR')
+
+
+def draw_tile_textures(layout, context, obj):
+    """Every tile's ALB_ / NOR_ rows (like 07's), folded."""
+    t = tiles_of(obj)
+    header, body = layout.panel(f"multicamproject_tile_tex_{obj.name}", default_closed=False)
+    header.label(text="Tile Textures (uv_final)", icon='TEXTURE')
+    if body is None:
+        return
+    counts = _tile_counts(obj)
+    col = body.column(align=True)
+    for k, x in enumerate(t.tiles):
+        if obj.mode == 'OBJECT' and counts and k not in counts:
+            continue                    # an empty tile bakes nothing
+        _draw_tex_row(col, context, obj, k, x, 'ALB')
+        _draw_tex_row(col, context, obj, k, x, 'NOR')
+        col.separator(factor=0.4)
 
 def draw_part_tile(row, obj, name):
     """The Tile dropdown in a Split Parts row (Tiles mode)."""
@@ -705,14 +917,16 @@ def draw_tiles(layout, context, obj):
     used = len(counts) if counts else len(t.tiles)
     box.label(text=f"{used} textures of {res // 1024}K - parts pick their tile above",
               icon='TEXTURE')
-    box.label(text="05 / 07 / Bake Final bake every tile: BAo_ again from the Original, "
-                   "then ALB_ and NOR_", icon='INFO')
+    box.label(text="05 / 07 / Finalize bake what is outdated: the whole object (uv_normal), "
+                   "then each tile (uv_final)", icon='INFO')
     if obj.data.uv_layers.get(UV_FINAL) is None:
         box.label(text="uv_final not made yet", icon='ERROR')
     elif off:
         box.label(text="Not on their tile: " + ", ".join(
             f"{t.tiles[k].name} {n} faces" for k, n in sorted(off.items())
             if k < len(t.tiles)) + " - Unwrap (or move them by hand)", icon='ERROR')
+    if obj.data.uv_layers.get(UV_FINAL) is not None:
+        draw_tile_textures(box, context, obj)
     if t.note:
         box.label(text=t.note, icon='ERROR')
 
@@ -967,7 +1181,8 @@ def _pixel_projection(region):
 
 _classes = (MULTICAMPROJECT_PG_Tile, MULTICAMPROJECT_PG_TilePart, MULTICAMPROJECT_PG_Tiles,
             MULTICAMPROJECT_OT_TileAdd, MULTICAMPROJECT_OT_TileRemove,
-            MULTICAMPROJECT_OT_TileMove, MULTICAMPROJECT_OT_TileRebuild)
+            MULTICAMPROJECT_OT_TileMove, MULTICAMPROJECT_OT_TileRebuild,
+            MULTICAMPROJECT_OT_TileTexExport, MULTICAMPROJECT_OT_TileTexRefresh)
 
 
 def register():

@@ -115,8 +115,12 @@ def _bake_one(context, obj, albedo, nor_source, res, log, only_stale=False):
     with_albedo = albedo or (nor_source is not None and not alb_load
                              and d.alb_size not in (0, res))
     with_normal = nor_source is not None
-    if only_stale and with_albedo and not alb_load and steps.alb_fresh(obj):
-        with_albedo = False             # Finalize: a current ALB_ is kept
+    from . import tiles_bake
+    tiled = tiles_bake.is_on(obj)
+    if only_stale and with_albedo and not alb_load and steps.alb_fresh(obj) and             (not tiled or all(tiles_bake.kind_state(obj, k, context.scene, 'ALB') == 'ok'
+                              for k, (_n, f, _s) in enumerate(tiles_bake.state(obj, context.scene))
+                              if f)):
+        with_albedo = False             # Finalize: a current ALB_ is kept (every tile's too)
     if with_albedo and alb_load:
         yield jobs.Step("Albedo", 0.1)
         yield from engine.bake_albedo_steps(context, obj)
@@ -141,7 +145,7 @@ def _bake_one(context, obj, albedo, nor_source, res, log, only_stale=False):
         from . import cache
         cache.clear()                   # the ALB_ above may be new (its file date)
         steps.forget()
-        if steps.nor_fresh(obj):
+        if steps.nor_fresh(obj) and (not tiled or tiles_bake.all_fresh(obj, context.scene)):
             with_normal = False         # Finalize: a NOR_ current with its ALB_ is kept
     if with_normal:
         why = normal.problem(obj, context.scene, nor_source)
@@ -906,6 +910,9 @@ def lock_final(obj, scene, copy=True):
     steps.forget()
     if 7 not in steps.state(obj, scene, fresh=True).done:
         return "Finish 07 first: ALB_ and NOR_ baked and current (or loaded)"
+    from . import tiles_bake
+    if tiles_bake.is_on(obj) and not tiles_bake.all_fresh(obj, scene):
+        return "Texture Tiles: a tile's ALB_ / NOR_ is outdated or not baked (07)"
     folder = common.export_textures_dir(scene) if copy else ""
     if folder:          # the Export folder holds them from now on
         from ..export import fbx
@@ -913,6 +920,35 @@ def lock_final(obj, scene, copy=True):
     common.data(obj).locked = True
     steps.forget()
     return ""
+
+
+def outdated_bakes(obj, scene, cached=False):
+    """What a Finalize would bake for `obj`: ['ALB_', 'NOR_', 'tiles Bed, Blanket'] - []
+    when everything is current (handmade: never). `cached`: for a panel (the steps memo,
+    the tiles' 2 s cache)."""
+    from ... import steps
+    from . import tiles_bake
+    if common.data(obj).handmade:
+        return []
+    if not cached:
+        steps.forget()
+    out = []
+    if not steps.alb_fresh(obj):
+        out.append("ALB_")
+    if not steps.nor_fresh(obj):
+        out.append("NOR_")
+    if tiles_bake.is_on(obj) and obj.mode == 'OBJECT':
+        if cached:
+            from ..export import tiles
+            t = tiles.tiles_of(obj)
+            old = [t.tiles[k].name for k, st in tiles._bake_states(obj, scene).items()
+                   if st not in ('ok', 'empty') and k < len(t.tiles)]
+        else:
+            old = [n for n, _f, st in tiles_bake.state(obj, scene)
+                   if st not in ('ok', 'empty')]
+        if old:
+            out.append("tiles " + ", ".join(old))
+    return out
 
 
 def drop_alb_inpaint(obj, scene):

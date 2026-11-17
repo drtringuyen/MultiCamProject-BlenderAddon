@@ -17,7 +17,17 @@ import bpy
 SUFFIX = "_inpaint"
 BG_DIR = "_inpaint"         # <bake folder>/_inpaint: the photos' copies (Clean never looks there)
 
-Source = namedtuple("Source", "kind owner")      # 'ALB' / 'BAO' / 'BG', object or camera
+# 'ALB' / 'BAO' / 'BG', object or camera; tile >= 0: that Texture Tile's ALB_ (no _inpaint
+# copy: it is only edited in place, see inpaint._save_into_alb)
+Source = namedtuple("Source", "kind owner tile", defaults=(-1,))
+
+
+def _tile(src):
+    """The Texture Tile of a tile source, else None."""
+    if getattr(src, "tile", -1) < 0 or src.kind != 'ALB':
+        return None
+    t = getattr(src.owner, "multicamproject_tiles", None)
+    return t.tiles[src.tile] if t is not None and src.tile < len(t.tiles) else None
 KINDS = {'ALB': "ALB_", 'BAO': "BAo_", 'BG': "Camera BG"}
 
 
@@ -44,12 +54,17 @@ def original(src):
         if cd is not None and cd.bg_original is not None:
             return cd.bg_original
         return _cp().cam_image(src.owner)
+    x = _tile(src)
+    if x is not None:
+        return x.alb_image
     d = src.owner.multicamproject_bake
     return d.alb_image if src.kind == 'ALB' else d.ba_image
 
 
 def inpaint_image(src):
     """The source's _inpaint image, or None."""
+    if _tile(src) is not None:
+        return None
     if src.kind == 'BG':
         cd = _cam_data(src.owner)
         if cd is None or cd.bg_original is None:
@@ -66,6 +81,8 @@ def uses_inpaint(src):
     if src.kind == 'BG':
         cd = _cam_data(src.owner)
         return cd is None or cd.bg_inpaint_off is None
+    if _tile(src) is not None:
+        return False
     d = src.owner.multicamproject_bake
     return d.alb_use_inpaint if src.kind == 'ALB' else d.ba_use_inpaint
 
@@ -93,6 +110,9 @@ def current(src):
 def label(src):
     if src.kind == 'BG':
         return f"Camera BG of {src.owner.name}"
+    x = _tile(src)
+    if x is not None:
+        return f"ALB_ of {src.owner.name}, tile {x.name}"
     return f"{KINDS[src.kind]} of {src.owner.name}"
 
 
@@ -108,6 +128,11 @@ def classify(img):
             return Source('ALB', o)
         if img in (d.ba_image, d.ba_inpaint):
             return Source('BAO', o)
+        t = getattr(o, "multicamproject_tiles", None)
+        if t is not None and t.enabled:
+            for k, x in enumerate(t.tiles):
+                if img == x.alb_image:
+                    return Source('ALB', o, k)
     for cam in bpy.data.objects:
         if cam.type != 'CAMERA':
             continue

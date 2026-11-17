@@ -54,8 +54,21 @@ def copy_textures(objs, folder):
         d = common.data(obj)
         entries = [('ALB', d.alb_image, common.alb_source(obj)),
                    ('NOR', d.nor_image, d.nor_image)]
-        for alb, nor in tiles_view.tile_images(obj):         # Texture Tiles: 2 more per tile
-            entries += [('TILE', alb, alb), ('TILE', nor, nor)]
+        if tiles_view.is_on(obj):       # Texture Tiles: the tiles' textures instead
+            entries = []
+            from ..baking import tiles_bake
+            from . import tiles
+            for k, (alb, nor) in enumerate(tiles_view.tile_images(obj)):
+                x = tiles.tiles_of(obj).tiles[k]
+                for kind, img in (('ALB', alb), ('NOR', nor)):
+                    if img is None:
+                        continue
+                    if tiles_bake.is_load(x, kind) and \
+                            tiles_bake.override_available(None, obj, k, kind):
+                        p = tiles_bake.override_path(None, obj, k, kind)
+                        if os.path.normcase(common.image_file(img)) != os.path.normcase(p):
+                            tiles_bake.point_at(bpy.context.scene, obj, k, kind, p)
+                    entries.append(('TILE', img, img))
         for kind, img, src_img in entries:
             if img is None or src_img is None:
                 continue
@@ -128,14 +141,14 @@ def _trim(me, mat):
 
 
 def _tile_materials(obj, me, copies, temps, mat):
-    """Texture Tiles: one material per tile (the first: MAT_), each face on its tile's
-    (MCP_TILE, which GN-Tiles used too). Returns what is missing."""
-    from ..baking import tiles_view
+    """Texture Tiles: one material per tile (MAT_<obj>_<tile>; the object's own MAT_ is not
+    exported), each face on its tile's (MCP_TILE, which GN-Tiles used too). Returns what is
+    missing."""
     from . import tiles
     t = tiles.tiles_of(obj)
-    mats = [mat]
+    mats = []
     missing = []
-    for x in t.tiles[1:]:
+    for x in t.tiles:
         m = _export_material(obj, copies, temps, x.material) if x.material else None
         if m is None:
             missing.append(f"MAT_ of tile {x.name}")

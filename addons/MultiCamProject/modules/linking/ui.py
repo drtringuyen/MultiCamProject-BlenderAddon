@@ -251,6 +251,8 @@ def _send_back_text(context, budget):
     obj = core.work_object(context.scene)
     if getattr(getattr(obj, "multicamproject_bake", None), "locked", False):
         text = text.replace("Send Back", "Send Back Final")
+    if obj is not None and obj.mode == 'OBJECT' and ops._outdated(obj, context.scene, cached=True):
+        text = "Bake outdated + " + text
     if budget is None:
         return text
     from ..estimation import core as est
