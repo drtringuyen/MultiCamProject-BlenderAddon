@@ -1,7 +1,7 @@
 import bpy
 from bpy.app.handlers import persistent
 
-from . import operators, poly_cut, silhouette, surface_cut, tool, ui
+from . import knife_heal, operators, poly_cut, silhouette, surface_cut, tool, ui
 
 
 def _repair():
@@ -34,6 +34,7 @@ def register():
     silhouette.register()
     tool.register()
     ui.register()
+    knife_heal.register()
     bpy.app.handlers.load_post.append(_on_load)
     bpy.app.timers.register(_repair, first_interval=0.1)
 
@@ -44,6 +45,7 @@ def unregister():
         decimate_session.stop()
     if _on_load in bpy.app.handlers.load_post:
         bpy.app.handlers.load_post.remove(_on_load)
+    knife_heal.unregister()
     ui.unregister()
     tool.unregister()
     silhouette.unregister()
