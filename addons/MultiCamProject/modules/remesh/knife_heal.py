@@ -92,12 +92,16 @@ def _seam_degree(v):
     return sum(1 for e in v.link_edges if e.seam)
 
 
-def _close(bm, ends, find, size, targets=(), gap=GAP):
+def _close(bm, ends, find, size, targets=(), gap=GAP, limit=None):
     """Join open ends: to each other, or to a vertex in `targets` (a seam they should end on).
     Nearest first, each end once. An end joins its own piece's other end only when that piece
     is a real line (MIN_LOOP edges), so a short piece is never folded into a triangle.
+    limit: a fixed distance (m) instead of GAP x the longest edge at the end.
     Returns (new edges, gaps closed)."""
-    reach = {v: max(e.calc_length() for e in v.link_edges) for v in ends}
+    if limit is None:
+        reach = {v: gap * max(e.calc_length() for e in v.link_edges) for v in ends}
+    else:
+        reach = dict.fromkeys(ends, limit)
     targets = list(targets)
     tree = None
     if targets:
@@ -109,7 +113,7 @@ def _close(bm, ends, find, size, targets=(), gap=GAP):
     for i, a in enumerate(ends):
         for b in ends[i + 1:]:
             d = (a.co - b.co).length
-            if d > gap * max(reach[a], reach[b]):
+            if d > max(reach[a], reach[b]):
                 continue
             if find(a) is find(b) and size[find(a)] < MIN_LOOP:
                 continue
@@ -118,7 +122,7 @@ def _close(bm, ends, find, size, targets=(), gap=GAP):
                 continue
             cands.append((d, 0, a, b))
         if tree is not None:
-            for _co, k, d in tree.find_range(a.co, gap * reach[a]):
+            for _co, k, d in tree.find_range(a.co, reach[a]):
                 w = targets[k]
                 if w is not a and find(w) is not find(a):
                     cands.append((d, 1, a, w))
