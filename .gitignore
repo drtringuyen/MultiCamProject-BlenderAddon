@@ -20,6 +20,9 @@ env/
 !*.cs
 !*.bat
 
+# The add-on's own icons
+!addons/MultiCamProject/icons/*.png
+
 # Always ignore build outputs and Blender temp files
 *.zip
 *.blend
