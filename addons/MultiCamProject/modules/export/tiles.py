@@ -889,6 +889,9 @@ def _draw_uv():
     obj = _active_tiled(context)
     if obj is None or not tiles_of(obj).show_uv:
         return
+    uvs = obj.data.uv_layers
+    if uvs.active is None or uvs.active.name != UV_FINAL:
+        return              # Work on uv_normal: the plain UV Editor, no tiles
     space = context.space_data
     if space is None or getattr(space, "mode", "") != 'UV':
         return              # the UV Editor only, not over an image being inpainted
