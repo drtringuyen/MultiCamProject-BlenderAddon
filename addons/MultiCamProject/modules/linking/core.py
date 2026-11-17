@@ -1048,6 +1048,8 @@ def send_back(context):
         man["meta"] = {k: getattr(d, k) for k in META}
         man["size"] = {"tex_size": d.tex_size, "resolution": common.resolution(obj, scene)}
         man["final"] = bool(d.locked)       # Bake Final here: Receive locks it in the main file
+        from ..baking import tiles_bake
+        man["tiles"] = tiles_bake.to_manifest(obj, scene)     # Texture Tiles (or None)
     except ImportError:
         pass
     tmp = os.path.join(folder, MANIFEST + ".tmp")
@@ -1471,6 +1473,13 @@ def receive(context, obj, action='REPLACE'):
             cache.clear()
         except ImportError:
             pass
+        tile_files = []
+        if "tiles" in man:              # Texture Tiles: after the object's own stamps
+            try:
+                from ..baking import tiles_bake
+                tile_files = tiles_bake.from_manifest(obj, scene, man["tiles"])
+            except ImportError:
+                pass
         try:            # Load: the image at 02.Overrides (never sent, never copied to 01.Bake)
             from ..tex_override import core as tex
             tex.apply_modes(scene, obj)
@@ -1478,6 +1487,8 @@ def receive(context, obj, action='REPLACE'):
             print(f"[MultiCamProject] Receive {obj.name}: TexOverride - {e}")
         notes = [("Textures: " + ", ".join(TAKEN_LABELS.get(p, p) for p in taken)) if taken
                  else "No new textures"]
+        if tile_files:
+            notes.append(f"Texture Tiles: {len(tile_files)} tile textures")
         if gone:
             notes.append("missing (bake again in the window): " + ", ".join(gone))
         try:                        # after apply_modes: wherever the images point by now

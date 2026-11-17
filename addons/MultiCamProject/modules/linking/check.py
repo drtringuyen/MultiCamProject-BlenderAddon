@@ -289,6 +289,15 @@ def _object_textures(scene, obj, bake, overrides):
         if ptr == "alb_inpaint":
             users = bpy.data.user_map(subset=[img]).get(img, set())
             t.droppable = all(u == obj for u in users)
+    from ..baking import tiles_bake
+    for x, ptr in tiles_bake.image_slots(obj):      # Texture Tiles: their own files
+        path = common.image_file(getattr(x, ptr, None))
+        if not path:
+            continue
+        name = os.path.basename(path)
+        t = out.setdefault(name, Tex(name, os.path.join(bake, name)))
+        t.main = path
+        t.locked = bool(getattr(d, "locked", False))
     return out
 
 
@@ -688,8 +697,10 @@ def _fix_object(context, rep, it, bake):
         d.alb_inpaint = None        # its file is gone and nothing shows it
         if img.users == 0:
             bpy.data.images.remove(img)
-    for ptr, _fn, _n_ in core.TEXTURES:
-        img = getattr(d, ptr, None)
+    from ..baking import tiles_bake
+    holders = [(d, ptr) for ptr, _fn, _n_ in core.TEXTURES] + tiles_bake.image_slots(obj)
+    for holder, ptr in holders:
+        img = getattr(holder, ptr, None)
         path = common.image_file(img)
         target = targets.get(os.path.basename(path)) if path else None
         if target and _n(path) != _n(target) and os.path.isfile(target):

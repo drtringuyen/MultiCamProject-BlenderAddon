@@ -339,6 +339,11 @@ def _make_nor(context, obj, k, size, alb):
     engine.link_file(img, path)
     x.nor_image = img
     x.nor_stamp = nor_stamp(obj, k, scene, alb)
+    try:
+        from . import owned
+        owned.add(scene, [path])
+    except ImportError:
+        pass
     return img
 
 
@@ -418,3 +423,117 @@ def bake_steps(context, obj, albedo=True, normal=True, force=False):
     print(f"[MultiCamProject] {obj.name}: tiles baked {', '.join(done) or 'nothing (current)'} in "
           f"{d.last_bake_seconds:.0f} s")
     return d.last_bake_seconds
+
+
+# ---------------------------------------------------------------- work file hand-off
+
+def image_slots(obj):
+    """[(tile, pointer)] of every tile image this object owns: each tile's BAo_, and the
+    ALB_ / NOR_ of the tiles after the first (the first one's are the object's own)."""
+    if not is_on(obj):
+        return []
+    out = []
+    for k, x in enumerate(_tiles().tiles_of(obj).tiles):
+        out.append((x, "ba_image"))
+        if k:
+            out += [(x, "alb_image"), (x, "nor_image")]
+    return out
+
+
+def to_manifest(obj, scene):
+    """Send Back: the tiles as JSON - names, colors, the part map, uv_final's build record,
+    each tile's files and whether they are current here (stamps cannot travel: Receive
+    stamps the current ones again in the main file)."""
+    tt = _tiles()
+    t = tt.tiles_of(obj)
+    if t is None or not len(t.tiles):
+        return None
+    st = {n: s for n, _f, s in state(obj, scene)} if t.enabled else {}
+    tiles = []
+    for k, x in enumerate(t.tiles):
+        files = {}
+        for ptr in ("ba_image", "alb_image", "nor_image"):
+            if k == 0 and ptr != "ba_image":
+                continue
+            path = common.image_file(getattr(x, ptr))
+            if path and os.path.isfile(path):
+                files[ptr] = path
+        ba_ok = bool(x.ba_image and x.ba_stamp == ba_stamp(obj, k, scene))
+        tiles.append({"name": x.name, "uid": x.uid, "color": list(x.color), "files": files,
+                      "fresh": st.get(x.name) == 'ok', "ba_fresh": ba_ok})
+    return {"enabled": t.enabled, "tiles": tiles, "next_uid": t.next_uid, "built": t.built,
+            "parts": [[p.name, p.tile] for p in t.parts],
+            "show_3d": t.show_3d, "show_uv": t.show_uv}
+
+
+def from_manifest(obj, scene, data):
+    """Receive: the window's tiles here - files copied into this file's bake folder (the old
+    ones to the Recycle Bin), images pointed at them, current tiles stamped by this file.
+    Returns the tile files taken."""
+    import shutil
+    tt = _tiles()
+    t = tt.tiles_of(obj)
+    if t is None:
+        return []
+    if not data:
+        if t.enabled:
+            t.enabled = False           # the window switched Texture Tiles off
+        return []
+    from ..export import fixes
+    t.tiles.clear()
+    for item in data["tiles"]:
+        x = t.tiles.add()
+        x.uid, x.color = item["uid"], item["color"]
+        x.name = item["name"]
+    t.next_uid = data.get("next_uid", len(t.tiles) + 1)
+    t.parts.clear()
+    for name, tile in data.get("parts", []):
+        p = t.parts.add()
+        p.name = name
+        try:
+            p.tile = tile
+        except TypeError:
+            pass
+    t.built = data.get("built", "")
+    t.show_3d, t.show_uv = data.get("show_3d", True), data.get("show_uv", True)
+    taken = []
+    for k, (x, item) in enumerate(zip(t.tiles, data["tiles"])):
+        names_k = dict(zip(("ba_image", "alb_image", "nor_image"), names(obj, k)))
+        for ptr, src in item.get("files", {}).items():
+            if not os.path.isfile(src):
+                continue
+            dst = common.texture_path(scene, names_k[ptr])
+            os.makedirs(os.path.dirname(dst), exist_ok=True)
+            if os.path.normcase(os.path.abspath(src)) != os.path.normcase(os.path.abspath(dst)):
+                if os.path.isfile(dst):
+                    fixes.to_recycle_bin([dst])
+                shutil.copyfile(src, dst)
+            img = getattr(x, ptr) or bpy.data.images.get(names_k[ptr])
+            if img is None:
+                img = bpy.data.images.load(dst, check_existing=False)
+                img.name = names_k[ptr]
+            img.colorspace_settings.name = 'Non-Color' if ptr == "nor_image" else 'sRGB'
+            engine.link_file(img, dst)
+            setattr(x, ptr, img)
+            taken.append(os.path.basename(dst))
+            try:
+                from . import owned
+                owned.add(scene, [dst])
+            except ImportError:
+                pass
+    if data.get("enabled") and not t.enabled:
+        t.enabled = True                # tiles are there: no start_tiles, a build if needed
+    d = common.data(obj)
+    if len(t.tiles):        # the first tile's ALB_ / NOR_ came as the object's own
+        t.tiles[0].alb_image, t.tiles[0].nor_image = d.alb_image, d.nor_image
+    for k, (x, item) in enumerate(zip(t.tiles, data["tiles"])):
+        if item.get("ba_fresh") and x.ba_image is not None:
+            x.ba_stamp = ba_stamp(obj, k, scene)
+        if item.get("fresh"):
+            alb = x.alb_image
+            if alb is not None:
+                x.alb_stamp = alb_stamp(obj, k, scene)
+                x.nor_stamp = nor_stamp(obj, k, scene, alb)
+    from . import tiles_view
+    tiles_view.refresh(obj, scene)
+    return taken
