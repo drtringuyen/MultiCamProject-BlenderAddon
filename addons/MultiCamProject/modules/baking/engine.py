@@ -219,9 +219,10 @@ def _bake(context, obj, selected, bake_type, size, image, **kw):
     """One bpy.ops.object.bake into `image` (the one of target_nodes), on uv_normal - a
     generator: yields the jobs.BakeJob (`yield from` it)."""
     s = common.settings(context.scene)
-    yield jobs.BakeJob(context, obj, selected, image,
-                       dict(type=bake_type, margin=common.margin_px(s, size), use_clear=True,
-                            target='IMAGE_TEXTURES', uv_layer=common.UV_NORMAL, **kw))
+    params = dict(type=bake_type, margin=common.margin_px(s, size), use_clear=True,
+                  target='IMAGE_TEXTURES', uv_layer=common.UV_NORMAL)
+    params.update(kw)               # uv_layer: a Texture Tile bakes into its own UV
+    yield jobs.BakeJob(context, obj, selected, image, params)
 
 
 def _uv_normal_active(obj):
@@ -339,9 +340,10 @@ UV_TMP = "MCP_UV_RENDER_TMP"
 _OFFS = ((0, 1), (0, -1), (1, 0), (-1, 0), (1, 1), (1, -1), (-1, 1), (-1, -1))
 
 
-def _flat_group():
+def _flat_group(flat_uv=common.UV_NORMAL):
     """GN: every face on its own, each corner at its uv_normal (u, v, 0) - the mesh laid out
-    in UV space, every attribute kept."""
+    in UV space, every attribute kept. `flat_uv`: another UV map to lay it out by (a
+    Texture Tile's shifted uv_final)."""
     ng = bpy.data.node_groups.new(UV_TMP, 'GeometryNodeTree')
     ng.interface.new_socket("Geometry", in_out='INPUT', socket_type='NodeSocketGeometry')
     ng.interface.new_socket("Geometry", in_out='OUTPUT', socket_type='NodeSocketGeometry')
@@ -351,7 +353,7 @@ def _flat_group():
     split = nodes.new("GeometryNodeSplitEdges")         # one corner per vertex
     uv = nodes.new("GeometryNodeInputNamedAttribute")
     uv.data_type = 'FLOAT_VECTOR'
-    uv.inputs["Name"].default_value = common.UV_NORMAL
+    uv.inputs["Name"].default_value = flat_uv
     pos = nodes.new("GeometryNodeSetPosition")
     links.new(gi.outputs[0], split.inputs["Mesh"])
     links.new(split.outputs[0], pos.inputs["Geometry"])
@@ -360,15 +362,15 @@ def _flat_group():
     return ng
 
 
-def uv_render(context, obj, size, emit=True, prepare=None):
+def uv_render(context, obj, size, emit=True, prepare=None, flat_uv=common.UV_NORMAL):
     """_uv_render with obj's MCP_ / MAT_ on their BSDF output and no texture cap (Preview
     must not reach a bake)."""
     from ... import quality
     with quality.final(quality.object_materials(obj)):
-        return _uv_render(context, obj, size, emit, prepare)
+        return _uv_render(context, obj, size, emit, prepare, flat_uv)
 
 
-def _uv_render(context, obj, size, emit=True, prepare=None):
+def _uv_render(context, obj, size, emit=True, prepare=None, flat_uv=common.UV_NORMAL):
     """obj as its materials show it, rendered by EEVEE on uv_normal: (size, size, 4) linear
     floats, rows bottom-up, alpha > 0 where a face covers the pixel. `emit`: every material
     shows its color as Emission (the Diffuse Color a Cycles bake would read); else the
@@ -391,15 +393,15 @@ def _uv_render(context, obj, size, emit=True, prepare=None):
     flat = bpy.data.objects.new(UV_TMP, me)
     cam_data = bpy.data.cameras.new(UV_TMP)
     cam = bpy.data.objects.new(UV_TMP + "_cam", cam_data)
-    ng = _flat_group()
+    ng = _flat_group(flat_uv)
     fd, path = tempfile.mkstemp(".exr", "mcp_uv_")
     os.close(fd)
     mats = list(dict.fromkeys(m for m in me.materials if m is not None))
     culled = [m for m in mats if m.use_backface_culling]      # mirrored islands face away
     img = None
     try:
-        if me.attributes.get(common.UV_NORMAL) is None:
-            raise RuntimeError(f"No '{common.UV_NORMAL}' after the modifiers")
+        if me.attributes.get(flat_uv) is None:
+            raise RuntimeError(f"No '{flat_uv}' after the modifiers")
         for m in culled:
             m.use_backface_culling = False
         sc.collection.objects.link(flat)
@@ -849,7 +851,8 @@ def needs_projection_bake(obj):
 
 # ---------------------------------------------------------------- 06: BAp_ from the Projection
 
-def _render_albedo(context, obj, size, route_view=None):
+def _render_albedo(context, obj, size, route_view=None, prepare=None,
+                   flat_uv=common.UV_NORMAL, ensure=True):
     """MCP_ rendered by EEVEE on uv_normal (as `route_view` shows it, else as the object's
     route does) with a temporary subdivision against sliding photos, margin filled:
     (size, size, 4) sRGB-encoded floats. A generator (jobs)."""
@@ -858,12 +861,13 @@ def _render_albedo(context, obj, size, route_view=None):
     if missing:
         raise RuntimeError(f"Camera slot(s) {', '.join(map(str, missing))} have no "
                            "image - it would bake pink (Reload All / pick the photo)")
-    cp.ensure_material(obj)
+    if ensure:          # False: the caller swapped an image in MCP_ (a Texture Tile's BAo_)
+        cp.ensure_material(obj)
     gn_final.set_final(obj, context.scene, False)
     context.view_layer.update()
     with subdivided(context, obj), paint_soften.softened(obj), (
             cp.route_override(obj, route_view) if route_view else _nothing()):
-        px = uv_render(context, obj, size)
+        px = uv_render(context, obj, size, prepare=prepare, flat_uv=flat_uv)
     if not px[..., :3].any():
         raise RuntimeError(BLACK_TEXT.format("The render"))
     yield jobs.Step("Albedo: margin")
@@ -958,6 +962,11 @@ def bake_albedo_steps(context, obj):
     them). Builds MAT_, stores the fingerprint; the object ends up in Final. A generator
     (jobs); returns the seconds."""
     from . import route
+    from . import tiles_bake
+    if tiles_bake.is_on(obj):           # Texture Tiles: one ALB_ per tile through uv_final
+        secs = yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=False)
+        material.build(obj, context.scene)
+        return secs
     scene = context.scene
     d = common.data(obj)
     size = common.resolution(obj, scene)

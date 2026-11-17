@@ -235,6 +235,13 @@ def generate_steps(context, obj, source):
     """07: NOR_<name> from ALB_ (see the module doc) at the object's resolution, into MAT_.
     All faces are set smooth first. A generator (jobs); returns the seconds."""
     import numpy as np
+    from .. import tiles_bake
+    if tiles_bake.is_on(obj):           # Texture Tiles: High-pass NOR_ per tile
+        smooth_faces(obj)
+        secs = yield from tiles_bake.bake_steps(context, obj, albedo=True, normal=True)
+        material.build(obj, context.scene)
+        final.write_inputs(obj, context.scene)
+        return secs
     source = usable(source)
     scene = context.scene
     s = common.settings(scene)

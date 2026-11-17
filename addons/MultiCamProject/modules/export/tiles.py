@@ -21,6 +21,7 @@ from bpy.props import (BoolProperty, CollectionProperty, EnumProperty, FloatVect
 from . import split
 
 UV_FINAL = "uv_final"
+UNWRAP_TMP = "MCP_TILE_UNWRAP"
 MAIN = "Main"
 PALETTE = ((0.95, 0.55, 0.15), (0.20, 0.65, 0.95), (0.95, 0.80, 0.15), (0.45, 0.85, 0.35),
            (0.85, 0.35, 0.75), (0.30, 0.85, 0.80), (0.95, 0.35, 0.35), (0.65, 0.55, 0.95))
@@ -78,6 +79,14 @@ class MULTICAMPROJECT_PG_Tile(bpy.types.PropertyGroup):
     uid: IntProperty()
     color: FloatVectorProperty(name="Color", subtype='COLOR_GAMMA', size=3, min=0, max=1,
                                default=(0.95, 0.55, 0.15), update=_overlay_changed)
+    # the tile's bakes (baking/tiles_bake.py); the first tile's ALB_ / NOR_ are also the
+    # object's own alb_image / nor_image
+    ba_image: PointerProperty(type=bpy.types.Image)
+    alb_image: PointerProperty(type=bpy.types.Image)
+    nor_image: PointerProperty(type=bpy.types.Image)
+    ba_stamp: StringProperty()
+    alb_stamp: StringProperty()
+    nor_stamp: StringProperty()
 
 
 class MULTICAMPROJECT_PG_TilePart(bpy.types.PropertyGroup):
@@ -150,10 +159,11 @@ def start_tiles(obj):
     sync_parts(obj)
 
 
-def face_tiles(obj):
+def face_tiles(obj, me=None):
     """(tile index per face, faces in two parts). Parts with no tile and faces in no part
-    go to tile 0. Object Mode (the mesh data)."""
-    me = obj.data
+    go to tile 0. Object Mode (the mesh data). `me`: another mesh carrying obj's SPLIT_
+    attributes (an evaluated copy for a bake)."""
+    me = me or obj.data
     t = tiles_of(obj)
     n = len(me.polygons)
     names = split.part_names(me)
@@ -224,12 +234,17 @@ def _loop_faces(me):
     return np.repeat(np.arange(len(me.polygons), dtype=np.int32), lt)
 
 
+TILE_ANGLE = 1.5533             # 89 degrees: a scan's noisy faces make thousands of tiny
+                                # islands at 66, and their margins eat the tile
+
+
 def _smart_uv(context, obj, select):
-    """Smart UV Project of the faces in `select` into the active UV map (0-1)."""
+    """Smart UV Project of the faces in `select` into the active UV map (0-1), then packed
+    again by their concave shape (the Bed test tile: 7% -> about 2.5x the fill)."""
     from ..baking import common
-    from .autofix import SMART_UV_ANGLE
     s = common.settings(context.scene)
     res = common.resolution(obj, context.scene)
+    margin = 2.0 * common.margin_px(s, res) / res
     me = obj.data
     me.vertices.foreach_set("select", np.zeros(len(me.vertices), dtype=bool))
     me.edges.foreach_set("select", np.zeros(len(me.edges), dtype=bool))
@@ -238,9 +253,11 @@ def _smart_uv(context, obj, select):
     bpy.ops.object.mode_set(mode='EDIT')
     try:
         bpy.ops.mesh.select_mode(type='FACE', use_extend=False, use_expand=False)
-        bpy.ops.uv.smart_project(angle_limit=SMART_UV_ANGLE,
-                                 island_margin=2.0 * common.margin_px(s, res) / res,
+        bpy.ops.uv.smart_project(angle_limit=TILE_ANGLE, island_margin=margin,
                                  area_weight=0.0, correct_aspect=True, scale_to_bounds=False)
+        bpy.ops.uv.select_all(action='SELECT')
+        bpy.ops.uv.pack_islands(shape_method='CONCAVE', margin_method='FRACTION',
+                                margin=margin, rotate=True)
     finally:
         bpy.ops.object.mode_set(mode='OBJECT')
 
@@ -274,7 +291,9 @@ def build(context, obj, force=False):
     select_mode = tuple(ts.mesh_select_mode)
     done = {'unwrap': [], 'shift': []}
     try:
-        uvs.active = layer
+        uv = np.empty(nl * 2, dtype=np.float32)
+        layer.uv.foreach_get("vector", uv)
+        uv = uv.reshape(-1, 2)
         from ..baking.engine import selection
         jobs_ = [(u, k, ok) for u, (h, k, act, ok) in p.items() if act == 'unwrap']
         if jobs_:
@@ -286,20 +305,25 @@ def build(context, obj, force=False):
                         faces = ft == k
                         if not faces.any():
                             continue
-                        _smart_uv(context, obj, faces)
+                        # a UV map of its own: the other tiles' islands would share the
+                        # packing (the Bed tile filled 7% instead of 15%)
+                        tmp = uvs.new(name=UNWRAP_TMP, do_init=False)
+                        try:
+                            uvs.active = tmp
+                            _smart_uv(context, obj, faces)
+                            t_uv = np.empty(nl * 2, dtype=np.float32)
+                            uvs[UNWRAP_TMP].uv.foreach_get("vector", t_uv)
+                        finally:
+                            uvs.remove(uvs[UNWRAP_TMP])
+                        loops = faces[lf]
+                        uv[loops] = t_uv.reshape(-1, 2)[loops]
+                        uv[loops, 0] += k               # Smart UV packed it into 0-1
                         done['unwrap'].append(k)
-        uv = np.empty(nl * 2, dtype=np.float32)
-        layer = uvs[UV_FINAL]
-        layer.uv.foreach_get("vector", uv)
-        uv = uv.reshape(-1, 2)
         for u, (h, k, act, ok) in p.items():
-            loops = ft[lf] == k
-            if act == 'unwrap':
-                uv[loops, 0] += k                       # Smart UV packed it into 0-1
-            elif act == 'shift' and k != ok:
-                uv[loops, 0] += k - ok
+            if act == 'shift' and k != ok:
+                uv[ft[lf] == k, 0] += k - ok
                 done['shift'].append(k)
-        layer.uv.foreach_set("vector", uv.ravel())
+        uvs[UV_FINAL].uv.foreach_set("vector", uv.ravel())
     finally:
         for coll, a in saved.items():
             if len(getattr(me, coll)) == len(a):
@@ -506,6 +530,7 @@ def draw_tiles(layout, context, obj):
     from ..baking import common
     res = common.resolution(obj, context.scene)
     counts = _tile_counts(obj)
+    baked = _bake_states(obj, context.scene)
     col = box.column(align=True)
     for i, x in enumerate(t.tiles):
         row = col.row(align=True)
@@ -524,6 +549,12 @@ def draw_tiles(layout, context, obj):
             text = f"{n} faces"
         info.label(text=text + (" · first" if i == 0 else ""),
                    icon='ERROR' if obj.mode == 'OBJECT' and n is None else 'NONE')
+        st = baked.get(i)
+        if st and st != 'empty':
+            b = row.row(align=True)
+            b.ui_units_x = 4
+            b.label(text={'ok': "Baked", 'outdated': "Outdated", 'missing': "Not baked"}[st],
+                    icon={'ok': 'CHECKMARK', 'outdated': 'TIME', 'missing': 'DOT'}[st])
         op = row.operator("multicamproject.tile_move", text="", icon='TRIA_LEFT')
         op.index, op.step = i, -1
         op = row.operator("multicamproject.tile_move", text="", icon='TRIA_RIGHT')
@@ -532,8 +563,11 @@ def draw_tiles(layout, context, obj):
     row = box.row(align=True)
     row.operator("multicamproject.tile_add", icon='ADD')
     row.operator("multicamproject.tile_rebuild", icon='FILE_REFRESH')
-    box.label(text=f"{len(t.tiles)} textures of {res // 1024}K - parts pick their tile above",
+    used = len(counts) if counts else len(t.tiles)
+    box.label(text=f"{used} textures of {res // 1024}K - parts pick their tile above",
               icon='TEXTURE')
+    box.label(text="05 / 07 / Bake Final bake every tile: BAo_ again from the Original, "
+                   "then ALB_ and NOR_", icon='INFO')
     if obj.data.uv_layers.get(UV_FINAL) is None:
         box.label(text="uv_final not made yet", icon='ERROR')
     elif obj.mode == 'OBJECT' and outdated(obj):
@@ -556,6 +590,26 @@ def _tile_counts(obj):
 
 
 _counts_cache = {}
+_bake_cache = {}
+
+
+def _bake_states(obj, scene):
+    """{tile index: 'ok'|'outdated'|'missing'|'empty'}, at most every 2 s (the stamps hash
+    the projection)."""
+    import time
+    if obj.mode != 'OBJECT':
+        return {}
+    hit = _bake_cache.get(obj.name)
+    now = time.monotonic()
+    if hit and now - hit[0] < 2.0:
+        return hit[1]
+    try:
+        from ..baking import tiles_bake
+        out = {i: st for i, (_n, _f, st) in enumerate(tiles_bake.state(obj, scene))}
+    except Exception:       # noqa: BLE001 - the panel never breaks on a stamp
+        out = {}
+    _bake_cache[obj.name] = (now, out)
+    return out
 
 
 # ---------------------------------------------------------------- GPU overlays
