@@ -492,6 +492,8 @@ class MULTICAMPROJECT_PT_SplitParts(bpy.types.Panel):
 def draw_parts(layout, context, obj):
     """The Split Parts list + buttons for `obj` (Object Data, and the work window's IO
     Folders & Collections)."""
+    from . import tiles
+    tiled = tiles.is_on(obj)
     edit = obj.mode == 'EDIT' and context.edit_object == obj
     st = shown_stats(obj)
     names = part_names(obj.data)
@@ -505,6 +507,8 @@ def draw_parts(layout, context, obj):
         n = st[0].get(name) if st is not None else None
         row.label(text=label(name), icon='MESH_DATA')
         row.label(text="" if n is None else f"{n} faces")
+        if tiled:
+            tiles.draw_part_tile(row, obj, name)
         sub = row.row(align=True)
         sub.enabled = edit
         op = sub.operator("multicamproject.split_assign", text="", icon='ADD')
@@ -520,11 +524,13 @@ def draw_parts(layout, context, obj):
         _counts, over, none = st
         box = layout.column(align=True)
         if over:
-            box.label(text=f"{over} faces in two parts - export gives them to the first",
+            box.label(text=(f"{over} faces in two parts - each face needs one tile"
+                            if tiled else
+                            f"{over} faces in two parts - export gives them to the first"),
                       icon='ERROR')
         box.label(text=(f"{none} faces stay on this object" if none
-                        else "Every face in a part - this object becomes an empty"),
-                  icon='INFO')
+                        else "Every face in a part - this object becomes an empty")
+                  + (" (first tile)" if none and tiled else ""), icon='INFO')
     row = layout.row(align=True)
     row.enabled = edit
     row.operator("multicamproject.split_add", icon='ADD')
@@ -537,6 +543,7 @@ def draw_parts(layout, context, obj):
         layout.operator("multicamproject.split_from_vgroups", icon='GROUP_VERTEX')
     if not edit:
         layout.label(text="Edit Mode: select faces, then Add / + / -")
+    tiles.draw_tiles(layout, context, obj)
 
 
 _classes = (MULTICAMPROJECT_OT_SplitAdd, MULTICAMPROJECT_OT_SplitAssign,

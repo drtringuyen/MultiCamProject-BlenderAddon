@@ -131,7 +131,8 @@ def apply(obj):
         me.uv_layers.remove(old)
     new = me.uv_layers[geo.UV_NEW]
     new.name = geo.UV_SRC
-    for layer in [l for l in me.uv_layers if l.name != geo.UV_SRC]:
+    keep_too = ("uv_final",)            # Texture Tiles' layout (export/tiles.py)
+    for layer in [l for l in me.uv_layers if l.name != geo.UV_SRC and l.name not in keep_too]:
         me.uv_layers.remove(layer)
     keep = me.uv_layers[geo.UV_SRC]
     me.uv_layers.active = keep
